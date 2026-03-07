@@ -242,6 +242,10 @@ func (c *Config) Validate() error {
 
 	traderIDs := make(map[string]bool)
 	for i, trader := range c.Traders {
+		if (trader.DemoMode || trader.Exchange == "demo") && trader.AIModel == "" {
+			trader.AIModel = "deepseek"
+		}
+
 		if trader.ID == "" {
 			return fmt.Errorf("trader[%d]: ID cannot be empty", i)
 		}

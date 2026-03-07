@@ -75,6 +75,7 @@ Frontend default dev port: `3000`
 - IBKR paper: `run_ibkr_paper.cmd`
 - IBKR live: `run_ibkr_live.cmd`
 - Live dashboard demo (paper synthetic feed): `run_dashboard_demo.cmd`
+- Live dashboard demo full startup (backend + frontend): `run_dashboard_demo_full.cmd`
 
 ## Live dashboard demo mode
 
@@ -90,6 +91,11 @@ Demo mode behavior:
 - no AI model API calls
 - synthetic paper equity updates every cycle
 - decision log and equity history continue to build for charts
+
+Quick launch options:
+
+- Backend only: `run_dashboard_demo.cmd`
+- Backend + frontend windows + auto-open browser: `run_dashboard_demo_full.cmd`
 
 ## Build and test
 

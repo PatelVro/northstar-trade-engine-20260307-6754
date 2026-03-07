@@ -17,5 +17,8 @@ echo.
 echo [2/2] Starting engine in demo paper mode...
 echo Dashboard: http://localhost:3000
 echo API:       http://localhost:8080
+echo.
+echo Note: Start frontend in another terminal:
+echo       cd web ^&^& npm run dev
 
 go run main.go config.demo.json

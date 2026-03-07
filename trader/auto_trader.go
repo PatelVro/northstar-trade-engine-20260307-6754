@@ -421,7 +421,21 @@ func (at *AutoTrader) runDemoCycle() error {
 		at.demoMarginUsedPct = 0
 	}
 	at.demoSnapshotSeed = time.Now().UnixNano()
-	at.demoAvailableBalance = at.demoEquity * (1.0 - at.demoMarginUsedPct/100.0)
+
+	positions := at.buildDemoPositions()
+	totalMarginUsed := 0.0
+	for _, pos := range positions {
+		if v, ok := pos["margin_used"].(float64); ok {
+			totalMarginUsed += v
+		}
+	}
+	if at.demoEquity > 0 {
+		at.demoMarginUsedPct = (totalMarginUsed / at.demoEquity) * 100.0
+	} else {
+		at.demoMarginUsedPct = 0
+	}
+	at.demoPositionCount = len(positions)
+	at.demoAvailableBalance = at.demoEquity - totalMarginUsed
 	if at.demoAvailableBalance < 0 {
 		at.demoAvailableBalance = 0
 	}
@@ -437,7 +451,7 @@ func (at *AutoTrader) runDemoCycle() error {
 			TotalBalance:          at.demoEquity,
 			AvailableBalance:      at.demoAvailableBalance,
 			TotalUnrealizedProfit: totalPnL,
-			PositionCount:         at.demoPositionCount,
+			PositionCount:         len(positions),
 			MarginUsedPct:         at.demoMarginUsedPct,
 		},
 		Decisions:    []logger.DecisionAction{},
@@ -1297,9 +1311,9 @@ func (at *AutoTrader) buildDemoPositions() []map[string]interface{} {
 
 	symbols := []string{"AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "SHOP", "RY", "TD", "BNS", "ENB"}
 	positions := make([]map[string]interface{}, 0, at.demoPositionCount)
-	totalNotional := at.demoEquity * (at.demoMarginUsedPct / 100.0)
-	if totalNotional < 0 {
-		totalNotional = 0
+	totalMarginBudget := at.demoEquity * (at.demoMarginUsedPct / 100.0)
+	if totalMarginBudget < 0 {
+		totalMarginBudget = 0
 	}
 
 	for i := 0; i < at.demoPositionCount; i++ {
@@ -1314,12 +1328,12 @@ func (at *AutoTrader) buildDemoPositions() []map[string]interface{} {
 		entryPrice := base * (0.97 + r.Float64()*0.06)
 		drift := (r.Float64() - 0.5) * 0.04 // +/-2%
 		markPrice := entryPrice * (1.0 + drift)
-		allocatedNotional := totalNotional / float64(at.demoPositionCount)
-		if allocatedNotional <= 0 {
-			allocatedNotional = at.demoEquity * 0.02
+		allocatedMargin := totalMarginBudget / float64(at.demoPositionCount)
+		if allocatedMargin <= 0 {
+			allocatedMargin = at.demoEquity * 0.02
 		}
 
-		quantity := allocatedNotional / entryPrice
+		quantity := (allocatedMargin * float64(leverage)) / entryPrice
 		unrealized := (markPrice - entryPrice) * quantity
 		if side == "short" {
 			unrealized = -unrealized
@@ -1331,6 +1345,11 @@ func (at *AutoTrader) buildDemoPositions() []map[string]interface{} {
 		}
 
 		marginUsed := (quantity * markPrice) / float64(leverage)
+		entryMarginUsed := (quantity * entryPrice) / float64(leverage)
+		unrealizedPct := 0.0
+		if entryMarginUsed > 0 {
+			unrealizedPct = (unrealized / entryMarginUsed) * 100.0
+		}
 
 		positions = append(positions, map[string]interface{}{
 			"symbol":             symbol,
@@ -1340,7 +1359,7 @@ func (at *AutoTrader) buildDemoPositions() []map[string]interface{} {
 			"quantity":           quantity,
 			"leverage":           leverage,
 			"unrealized_pnl":     unrealized,
-			"unrealized_pnl_pct": (unrealized / (quantity * entryPrice / float64(leverage))) * 100.0,
+			"unrealized_pnl_pct": unrealizedPct,
 			"liquidation_price":  liqPrice,
 			"margin_used":        marginUsed,
 		})
