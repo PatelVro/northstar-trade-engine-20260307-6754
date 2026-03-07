@@ -1,100 +1,61 @@
-# AegisTrade Web Dashboard
+# Web Dashboard
 
- Vite + React + TypeScript AI
+React + TypeScript frontend for the trading engine.
 
-## 
+## Stack
 
-- **React 18** - UI
-- **TypeScript** - 
-- **Vite** - 
-- **Tailwind CSS** - 
-- **SWR** - 
-- **Zustand** - 
-- **Recharts** - 
+- React 18
+- TypeScript
+- Vite
+- Tailwind CSS
+- SWR
+- Recharts
 
-## 
+## Run locally
 
 ```bash
 npm install
-```
-
-## 
-
-```bash
 npm run dev
 ```
 
- http://localhost:3000
+Default dev URL: `http://localhost:3000`
 
-## 
+## Build
 
 ```bash
 npm run build
 ```
 
-## 
+## Backend dependency
 
-### 
-- **** - AI
-- **** - 
-- **** - 
-- **** - AI
+The dashboard expects the backend API at `http://localhost:8080`.
 
-### AI
-AI
-- ****
-- ****
-- ****
-- ****//
+Main endpoints used:
 
- " AI" 
+- `GET /api/traders`
+- `GET /api/competition`
+- `GET /api/status`
+- `GET /api/account`
+- `GET /api/positions`
+- `GET /api/decisions`
+- `GET /api/decisions/latest`
+- `GET /api/statistics`
+- `GET /api/equity-history`
+- `GET /api/performance`
+- `GET /api/candles`
+- `GET /ws`
 
-### 
-- 5
-- 10
+## Directory overview
 
-### API
-ViteAPIhttp://localhost:8080
-
-**API**
-- `GET /api/status` - 
-- `GET /api/account` - 
-- `GET /api/positions` - 
-- `GET /api/decisions` - 30
-- `GET /api/decisions/latest` - 5
-- `GET /api/statistics` - 
-
-## 
-
-```
+```text
 web/
- src/
-    components/      # React
-    lib/
-       api.ts      # API
-    store/          # Zustand
-    types/
-       index.ts    # TypeScript
-    App.tsx         # 
-    main.tsx        # 
-    index.css       # 
- index.html          # HTML
- vite.config.ts      # Vite
- tailwind.config.js  # Tailwind
- tsconfig.json       # TypeScript
- package.json        # 
+  src/
+    components/   UI views/widgets
+    contexts/     app contexts
+    i18n/         translations/resources
+    lib/          API client
+    types/        TypeScript models
+  index.html
+  vite.config.ts
+  package.json
 ```
-
-## 
-
-1. **API**8080
-2. **Node.js**>= 18.0.0
-3. ****Binance API
-
-## 
-
-- [ ] 
-- [ ] CoT
-- [ ] 
-- [ ] 
-- [ ] 
