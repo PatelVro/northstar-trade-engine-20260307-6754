@@ -1,8 +1,8 @@
-# 🐳 Docker One-Click Deployment Guide
+#  Docker One-Click Deployment Guide
 
-This guide will help you quickly deploy the NOFX AI Trading Competition System using Docker.
+This guide will help you quickly deploy the AegisTrade AI Trading Competition System using Docker.
 
-## 📋 Prerequisites
+##  Prerequisites
 
 Before you begin, ensure your system has:
 
@@ -44,7 +44,7 @@ docker --version
 docker compose --version  # Docker 24+ includes this, no separate installation needed
 ```
 
-## 🚀 Quick Start (3 Steps)
+##  Quick Start (3 Steps)
 
 ### Step 1: Prepare Configuration File
 
@@ -64,9 +64,9 @@ nano config.json  # or use any other editor
       "id": "my_trader",
       "name": "My AI Trader",
       "ai_model": "deepseek",
-      "binance_api_key": "YOUR_BINANCE_API_KEY",       // ← Your Binance API Key
-      "binance_secret_key": "YOUR_BINANCE_SECRET_KEY", // ← Your Binance Secret Key
-      "deepseek_key": "YOUR_DEEPSEEK_API_KEY",         // ← Your DeepSeek API Key
+      "binance_api_key": "YOUR_BINANCE_API_KEY",       //  Your Binance API Key
+      "binance_secret_key": "YOUR_BINANCE_SECRET_KEY", //  Your Binance Secret Key
+      "deepseek_key": "YOUR_DEEPSEEK_API_KEY",         //  Your DeepSeek API Key
       "initial_balance": 1000.0,
       "scan_interval_minutes": 3
     }
@@ -97,7 +97,7 @@ Once deployed, open your browser and visit:
 - **Web Interface**: http://localhost:3000
 - **API Health Check**: http://localhost:8080/health
 
-## 📊 Service Management
+##  Service Management
 
 ### View Running Status
 ```bash
@@ -156,7 +156,7 @@ git pull
 docker compose up -d --build
 ```
 
-## 🔧 Advanced Configuration
+##  Advanced Configuration
 
 ### Change Ports
 
@@ -210,7 +210,7 @@ services:
       - "${BACKEND_PORT}:8080"
 ```
 
-## 📁 Data Persistence
+##  Data Persistence
 
 The system automatically persists data to local directories:
 
@@ -231,7 +231,7 @@ tar -czf backup_$(date +%Y%m%d).tar.gz decision_logs/ coin_pool_cache/ config.js
 tar -xzf backup_20241029.tar.gz
 ```
 
-## 🐛 Troubleshooting
+##  Troubleshooting
 
 ### Container Won't Start
 
@@ -272,8 +272,8 @@ cp config.json.example config.json
 
 ```bash
 # Check health status
-docker inspect nofx-backend | jq '.[0].State.Health'
-docker inspect nofx-frontend | jq '.[0].State.Health'
+docker inspect AegisTrade-backend | jq '.[0].State.Health'
+docker inspect AegisTrade-frontend | jq '.[0].State.Health'
 
 # Manually test health endpoints
 curl http://localhost:8080/health
@@ -303,7 +303,7 @@ docker volume prune
 docker system prune -a --volumes
 ```
 
-## 🔐 Security Recommendations
+##  Security Recommendations
 
 1. **Don't commit config.json to Git**
    ```bash
@@ -336,12 +336,12 @@ docker system prune -a --volumes
    docker compose up -d
    ```
 
-## 🌐 Production Deployment
+##  Production Deployment
 
 ### Using Nginx Reverse Proxy
 
 ```nginx
-# /etc/nginx/sites-available/nofx
+# /etc/nginx/sites-available/AegisTrade
 server {
     listen 80;
     server_name your-domain.com;
@@ -380,16 +380,16 @@ sudo certbot renew --dry-run
 docker swarm init
 
 # Deploy stack
-docker stack deploy -c docker-compose.yml nofx
+docker stack deploy -c docker-compose.yml AegisTrade
 
 # View service status
-docker stack services nofx
+docker stack services AegisTrade
 
 # Scale services
-docker service scale nofx_backend=3
+docker service scale AegisTrade_backend=3
 ```
 
-## 📈 Monitoring & Logging
+##  Monitoring & Logging
 
 ### Log Management
 
@@ -425,13 +425,13 @@ services:
       - "3001:3000"
 ```
 
-## 🆘 Get Help
+##  Get Help
 
-- **GitHub Issues**: [Submit an issue](https://github.com/yourusername/open-nofx/issues)
+- **GitHub Issues**: [Submit an issue](https://github.com/yourusername/open-AegisTrade/issues)
 - **Documentation**: Check [README.md](README.md)
 - **Community**: Join our Discord/Telegram group
 
-## 📝 Command Cheat Sheet
+##  Command Cheat Sheet
 
 ```bash
 # Start
@@ -462,6 +462,6 @@ docker system prune -a             # Clean Docker resources
 
 ---
 
-🎉 Congratulations! You've successfully deployed the NOFX AI Trading Competition System!
+ Congratulations! You've successfully deployed the AegisTrade AI Trading Competition System!
 
 If you encounter any issues, please check the [Troubleshooting](#-troubleshooting) section or submit an issue.

@@ -39,6 +39,8 @@ interface PerformanceAnalysis {
   avg_loss: number;
   profit_factor: number;
   sharpe_ratio: number;
+  max_drawdown: number;
+  equity_growth: number;
   recent_trades: TradeOutcome[];
   symbol_stats: { [key: string]: SymbolPerformance };
   best_symbol: string;
@@ -55,7 +57,7 @@ export default function AILearning({ traderId }: AILearningProps) {
     traderId ? `performance-${traderId}` : 'performance',
     () => api.getPerformance(traderId),
     {
-      refreshInterval: 30000, // 30秒刷新（AI学习分析数据更新频率较低）
+      refreshInterval: 30000, // 30AI
       revalidateOnFocus: false,
       dedupingInterval: 20000,
     }
@@ -72,7 +74,7 @@ export default function AILearning({ traderId }: AILearningProps) {
   if (!performance) {
     return (
       <div className="rounded p-6" style={{ background: '#1E2329', border: '1px solid #2B3139' }}>
-        <div style={{ color: '#848E9C' }}>📊 {t('loading', language)}</div>
+        <div style={{ color: '#848E9C' }}> {t('loading', language)}</div>
       </div>
     );
   }
@@ -81,7 +83,7 @@ export default function AILearning({ traderId }: AILearningProps) {
     return (
       <div className="rounded p-6" style={{ background: '#1E2329', border: '1px solid #2B3139' }}>
         <div className="flex items-center gap-2 mb-2">
-          <span className="text-xl">🧠</span>
+          <span className="text-xl"></span>
           <h2 className="text-lg font-bold" style={{ color: '#EAECEF' }}>{t('aiLearning', language)}</h2>
         </div>
         <div style={{ color: '#848E9C' }}>
@@ -98,7 +100,7 @@ export default function AILearning({ traderId }: AILearningProps) {
 
   return (
     <div className="space-y-8">
-      {/* 标题区 - 优化设计 */}
+      {/*  -  */}
       <div className="relative rounded-2xl p-6 overflow-hidden" style={{
         background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(99, 102, 241, 0.1) 50%, rgba(30, 35, 41, 0.8) 100%)',
         border: '1px solid rgba(139, 92, 246, 0.3)',
@@ -114,7 +116,7 @@ export default function AILearning({ traderId }: AILearningProps) {
             boxShadow: '0 8px 24px rgba(139, 92, 246, 0.5)',
             border: '2px solid rgba(255, 255, 255, 0.1)'
           }}>
-            🧠
+            
           </div>
           <div>
             <h2 className="text-3xl font-bold mb-1" style={{
@@ -130,9 +132,9 @@ export default function AILearning({ traderId }: AILearningProps) {
         </div>
       </div>
 
-      {/* 核心指标卡片 - 4列网格 */}
+      {/*  - 4 */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* 总交易数 */}
+        {/*  */}
         <div className="rounded-2xl p-5 relative overflow-hidden group hover:scale-105 transition-transform" style={{
           background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(30, 35, 41, 0.8) 100%)',
           border: '1px solid rgba(99, 102, 241, 0.3)',
@@ -149,11 +151,11 @@ export default function AILearning({ traderId }: AILearningProps) {
             <div className="text-4xl font-bold mono mb-1" style={{ color: '#E0E7FF' }}>
               {performance.total_trades}
             </div>
-            <div className="text-xs" style={{ color: '#6366F1' }}>📊 Trades</div>
+            <div className="text-xs" style={{ color: '#6366F1' }}> Trades</div>
           </div>
         </div>
 
-        {/* 胜率 */}
+        {/*  */}
         <div className="rounded-2xl p-5 relative overflow-hidden group hover:scale-105 transition-transform" style={{
           background: (performance.win_rate || 0) >= 50
             ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(30, 35, 41, 0.8) 100%)'
@@ -182,7 +184,7 @@ export default function AILearning({ traderId }: AILearningProps) {
           </div>
         </div>
 
-        {/* 平均盈利 */}
+        {/*  */}
         <div className="rounded-2xl p-5 relative overflow-hidden group hover:scale-105 transition-transform" style={{
           background: 'linear-gradient(135deg, rgba(14, 203, 129, 0.2) 0%, rgba(30, 35, 41, 0.8) 100%)',
           border: '1px solid rgba(14, 203, 129, 0.3)',
@@ -199,11 +201,11 @@ export default function AILearning({ traderId }: AILearningProps) {
             <div className="text-4xl font-bold mono mb-1" style={{ color: '#10B981' }}>
               +{(performance.avg_win || 0).toFixed(2)}
             </div>
-            <div className="text-xs" style={{ color: '#6EE7B7' }}>📈 USDT Average</div>
+            <div className="text-xs" style={{ color: '#6EE7B7' }}> USDT Average</div>
           </div>
         </div>
 
-        {/* 平均亏损 */}
+        {/*  */}
         <div className="rounded-2xl p-5 relative overflow-hidden group hover:scale-105 transition-transform" style={{
           background: 'linear-gradient(135deg, rgba(246, 70, 93, 0.2) 0%, rgba(30, 35, 41, 0.8) 100%)',
           border: '1px solid rgba(246, 70, 93, 0.3)',
@@ -220,14 +222,14 @@ export default function AILearning({ traderId }: AILearningProps) {
             <div className="text-4xl font-bold mono mb-1" style={{ color: '#F87171' }}>
               {(performance.avg_loss || 0).toFixed(2)}
             </div>
-            <div className="text-xs" style={{ color: '#FCA5A5' }}>📉 USDT Average</div>
+            <div className="text-xs" style={{ color: '#FCA5A5' }}> USDT Average</div>
           </div>
         </div>
       </div>
 
-      {/* 关键指标：夏普比率 & 盈亏比 - 2列网格 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* 夏普比率 */}
+      {/*  - 4 */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {/*  */}
         <div className="rounded-2xl p-6 relative overflow-hidden" style={{
           background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.25) 0%, rgba(99, 102, 241, 0.15) 50%, rgba(30, 35, 41, 0.9) 100%)',
           border: '2px solid rgba(139, 92, 246, 0.5)',
@@ -243,19 +245,19 @@ export default function AILearning({ traderId }: AILearningProps) {
                 background: 'rgba(139, 92, 246, 0.3)',
                 border: '1px solid rgba(139, 92, 246, 0.5)'
               }}>
-                🧬
+                
               </div>
               <div>
-                <div className="text-lg font-bold" style={{ color: '#C4B5FD' }}>夏普比率</div>
-                <div className="text-xs" style={{ color: '#94A3B8' }}>风险调整后收益 · AI自我进化指标</div>
+                <div className="text-lg font-bold" style={{ color: '#C4B5FD' }}></div>
+                <div className="text-xs" style={{ color: '#94A3B8' }}>  AI</div>
               </div>
             </div>
 
             <div className="flex items-end justify-between mb-4">
               <div className="text-6xl font-bold mono" style={{
                 color: (performance.sharpe_ratio || 0) >= 2 ? '#10B981' :
-                       (performance.sharpe_ratio || 0) >= 1 ? '#22D3EE' :
-                       (performance.sharpe_ratio || 0) >= 0 ? '#F0B90B' : '#F87171',
+                  (performance.sharpe_ratio || 0) >= 1 ? '#22D3EE' :
+                    (performance.sharpe_ratio || 0) >= 0 ? '#F0B90B' : '#F87171',
                 textShadow: '0 4px 12px rgba(0, 0, 0, 0.3)'
               }}>
                 {performance.sharpe_ratio ? performance.sharpe_ratio.toFixed(2) : 'N/A'}
@@ -265,15 +267,15 @@ export default function AILearning({ traderId }: AILearningProps) {
                 <div className="text-right mb-2">
                   <div className="text-sm font-bold px-3 py-1 rounded-lg" style={{
                     color: (performance.sharpe_ratio || 0) >= 2 ? '#10B981' :
-                           (performance.sharpe_ratio || 0) >= 1 ? '#22D3EE' :
-                           (performance.sharpe_ratio || 0) >= 0 ? '#F0B90B' : '#F87171',
+                      (performance.sharpe_ratio || 0) >= 1 ? '#22D3EE' :
+                        (performance.sharpe_ratio || 0) >= 0 ? '#F0B90B' : '#F87171',
                     background: (performance.sharpe_ratio || 0) >= 2 ? 'rgba(16, 185, 129, 0.2)' :
-                               (performance.sharpe_ratio || 0) >= 1 ? 'rgba(34, 211, 238, 0.2)' :
-                               (performance.sharpe_ratio || 0) >= 0 ? 'rgba(240, 185, 11, 0.2)' : 'rgba(248, 113, 113, 0.2)'
+                      (performance.sharpe_ratio || 0) >= 1 ? 'rgba(34, 211, 238, 0.2)' :
+                        (performance.sharpe_ratio || 0) >= 0 ? 'rgba(240, 185, 11, 0.2)' : 'rgba(248, 113, 113, 0.2)'
                   }}>
-                    {performance.sharpe_ratio >= 2 ? '🟢 卓越表现' :
-                     performance.sharpe_ratio >= 1 ? '🟢 良好表现' :
-                     performance.sharpe_ratio >= 0 ? '🟡 波动较大' : '🔴 需要调整'}
+                    {performance.sharpe_ratio >= 2 ? ' ' :
+                      performance.sharpe_ratio >= 1 ? ' ' :
+                        performance.sharpe_ratio >= 0 ? ' ' : ' '}
                   </div>
                 </div>
               )}
@@ -285,17 +287,17 @@ export default function AILearning({ traderId }: AILearningProps) {
                 border: '1px solid rgba(139, 92, 246, 0.3)'
               }}>
                 <div className="text-sm leading-relaxed" style={{ color: '#DDD6FE' }}>
-                  {performance.sharpe_ratio >= 2 && '✨ AI策略非常有效！风险调整后收益优异，可适度扩大仓位但保持纪律。'}
-                  {performance.sharpe_ratio >= 1 && performance.sharpe_ratio < 2 && '✅ 策略表现稳健，风险收益平衡良好，继续保持当前策略。'}
-                  {performance.sharpe_ratio >= 0 && performance.sharpe_ratio < 1 && '⚠️ 收益为正但波动较大，AI正在优化策略，降低风险。'}
-                  {performance.sharpe_ratio < 0 && '🚨 当前策略需要调整！AI已自动进入保守模式，减少仓位和交易频率。'}
+                  {performance.sharpe_ratio >= 2 && ' AI'}
+                  {performance.sharpe_ratio >= 1 && performance.sharpe_ratio < 2 && ' '}
+                  {performance.sharpe_ratio >= 0 && performance.sharpe_ratio < 1 && ' AI'}
+                  {performance.sharpe_ratio < 0 && ' AI'}
                 </div>
               </div>
             )}
           </div>
         </div>
 
-        {/* 盈亏比 */}
+        {/*  */}
         <div className="rounded-2xl p-6 relative overflow-hidden" style={{
           background: 'linear-gradient(135deg, rgba(240, 185, 11, 0.25) 0%, rgba(252, 213, 53, 0.15) 50%, rgba(30, 35, 41, 0.9) 100%)',
           border: '2px solid rgba(240, 185, 11, 0.5)',
@@ -311,7 +313,7 @@ export default function AILearning({ traderId }: AILearningProps) {
                 background: 'rgba(240, 185, 11, 0.3)',
                 border: '1px solid rgba(240, 185, 11, 0.5)'
               }}>
-                💰
+                
               </div>
               <div>
                 <div className="text-lg font-bold" style={{ color: '#FCD34D' }}>
@@ -326,8 +328,8 @@ export default function AILearning({ traderId }: AILearningProps) {
             <div className="flex items-end justify-between mb-4">
               <div className="text-6xl font-bold mono" style={{
                 color: (performance.profit_factor || 0) >= 2.0 ? '#10B981' :
-                       (performance.profit_factor || 0) >= 1.5 ? '#F0B90B' :
-                       (performance.profit_factor || 0) >= 1.0 ? '#FB923C' : '#F87171',
+                  (performance.profit_factor || 0) >= 1.5 ? '#F0B90B' :
+                    (performance.profit_factor || 0) >= 1.0 ? '#FB923C' : '#F87171',
                 textShadow: '0 4px 12px rgba(0, 0, 0, 0.3)'
               }}>
                 {(performance.profit_factor || 0) > 0 ? (performance.profit_factor || 0).toFixed(2) : 'N/A'}
@@ -336,9 +338,9 @@ export default function AILearning({ traderId }: AILearningProps) {
               <div className="text-right mb-2">
                 <div className="text-sm font-bold px-3 py-1 rounded-lg" style={{
                   color: (performance.profit_factor || 0) >= 2.0 ? '#10B981' :
-                         (performance.profit_factor || 0) >= 1.5 ? '#F0B90B' : '#94A3B8',
+                    (performance.profit_factor || 0) >= 1.5 ? '#F0B90B' : '#94A3B8',
                   background: (performance.profit_factor || 0) >= 2.0 ? 'rgba(16, 185, 129, 0.2)' :
-                             (performance.profit_factor || 0) >= 1.5 ? 'rgba(240, 185, 11, 0.2)' : 'rgba(148, 163, 184, 0.2)'
+                    (performance.profit_factor || 0) >= 1.5 ? 'rgba(240, 185, 11, 0.2)' : 'rgba(148, 163, 184, 0.2)'
                 }}>
                   {(performance.profit_factor || 0) >= 2.0 && t('excellent', language)}
                   {(performance.profit_factor || 0) >= 1.5 && (performance.profit_factor || 0) < 2.0 && t('good', language)}
@@ -353,17 +355,142 @@ export default function AILearning({ traderId }: AILearningProps) {
               border: '1px solid rgba(240, 185, 11, 0.3)'
             }}>
               <div className="text-sm leading-relaxed" style={{ color: '#FEF3C7' }}>
-                {(performance.profit_factor || 0) >= 2.0 && '🔥 盈利能力出色！每亏1元能赚' + (performance.profit_factor || 0).toFixed(1) + '元，AI策略表现优异。'}
-                {(performance.profit_factor || 0) >= 1.5 && (performance.profit_factor || 0) < 2.0 && '✓ 策略稳定盈利，盈亏比健康，继续保持纪律性交易。'}
-                {(performance.profit_factor || 0) >= 1.0 && (performance.profit_factor || 0) < 1.5 && '⚠️ 策略略有盈利但需优化，AI正在调整仓位和止损策略。'}
-                {(performance.profit_factor || 0) > 0 && (performance.profit_factor || 0) < 1.0 && '❌ 平均亏损大于盈利，需要调整策略或降低交易频率。'}
+                {(performance.profit_factor || 0) >= 2.0 && ' 1' + (performance.profit_factor || 0).toFixed(1) + 'AI'}
+                {(performance.profit_factor || 0) >= 1.5 && (performance.profit_factor || 0) < 2.0 && ' '}
+                {(performance.profit_factor || 0) >= 1.0 && (performance.profit_factor || 0) < 1.5 && ' AI'}
+                {(performance.profit_factor || 0) > 0 && (performance.profit_factor || 0) < 1.0 && ' '}
               </div>
             </div>
           </div>
         </div>
+
+        {/* Maximum Drawdown */}
+        <div className="rounded-2xl p-6 relative overflow-hidden" style={{
+          background: 'linear-gradient(135deg, rgba(246, 70, 93, 0.25) 0%, rgba(220, 38, 38, 0.15) 50%, rgba(30, 35, 41, 0.9) 100%)',
+          border: '2px solid rgba(246, 70, 93, 0.5)',
+          boxShadow: '0 12px 40px rgba(246, 70, 93, 0.3)'
+        }}>
+          <div className="absolute top-0 right-0 w-48 h-48 rounded-full opacity-20" style={{
+            background: 'radial-gradient(circle, #F6465D 0%, transparent 70%)',
+            filter: 'blur(40px)'
+          }} />
+          <div className="relative">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl" style={{
+                background: 'rgba(246, 70, 93, 0.3)',
+                border: '1px solid rgba(246, 70, 93, 0.5)'
+              }}>
+                
+              </div>
+              <div>
+                <div className="text-lg font-bold" style={{ color: '#FCA5A5' }}>
+                  {t('maxDrawdown', language)}
+                </div>
+                <div className="text-xs" style={{ color: '#94A3B8' }}>
+                  {t('peakToValleyDrop', language)}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-end justify-between mb-4">
+              <div className="text-6xl font-bold mono" style={{
+                color: (performance.max_drawdown || 0) <= 5.0 ? '#10B981' :
+                  (performance.max_drawdown || 0) <= 15.0 ? '#F0B90B' :
+                    '#F87171',
+                textShadow: '0 4px 12px rgba(0, 0, 0, 0.3)'
+              }}>
+                {(performance.max_drawdown || 0).toFixed(1)}%
+              </div>
+
+              <div className="text-right mb-2">
+                <div className="text-sm font-bold px-3 py-1 rounded-lg" style={{
+                  color: (performance.max_drawdown || 0) <= 5.0 ? '#10B981' :
+                    (performance.max_drawdown || 0) <= 15.0 ? '#F0B90B' : '#FCA5A5',
+                  background: (performance.max_drawdown || 0) <= 5.0 ? 'rgba(16, 185, 129, 0.2)' :
+                    (performance.max_drawdown || 0) <= 15.0 ? 'rgba(240, 185, 11, 0.2)' : 'rgba(248, 113, 113, 0.2)'
+                }}>
+                  {(performance.max_drawdown || 0) <= 5.0 && t('excellent', language)}
+                  {(performance.max_drawdown || 0) > 5.0 && (performance.max_drawdown || 0) <= 15.0 && t('good', language)}
+                  {(performance.max_drawdown || 0) > 15.0 && t('poor', language)}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-xl p-4" style={{
+              background: 'rgba(0, 0, 0, 0.4)',
+              border: '1px solid rgba(246, 70, 93, 0.3)'
+            }}>
+              <div className="text-sm leading-relaxed" style={{ color: '#FECACA' }}>
+                {(performance.max_drawdown || 0) <= 5.0 && ' '}
+                {(performance.max_drawdown || 0) > 5.0 && (performance.max_drawdown || 0) <= 15.0 && ' '}
+                {(performance.max_drawdown || 0) > 15.0 && ' '}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Equity Growth */}
+        <div className="rounded-2xl p-6 relative overflow-hidden" style={{
+          background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.25) 0%, rgba(5, 150, 105, 0.15) 50%, rgba(30, 35, 41, 0.9) 100%)',
+          border: '2px solid rgba(16, 185, 129, 0.5)',
+          boxShadow: '0 12px 40px rgba(16, 185, 129, 0.3)'
+        }}>
+          <div className="absolute top-0 right-0 w-48 h-48 rounded-full opacity-20" style={{
+            background: 'radial-gradient(circle, #10B981 0%, transparent 70%)',
+            filter: 'blur(40px)'
+          }} />
+          <div className="relative">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl" style={{
+                background: 'rgba(16, 185, 129, 0.3)',
+                border: '1px solid rgba(16, 185, 129, 0.5)'
+              }}>
+                
+              </div>
+              <div>
+                <div className="text-lg font-bold" style={{ color: '#6EE7B7' }}>
+                  {t('equityGrowth', language)}
+                </div>
+                <div className="text-xs" style={{ color: '#94A3B8' }}>
+                  {t('totalAccountGrowth', language)}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-end justify-between mb-4">
+              <div className="text-6xl font-bold mono" style={{
+                color: (performance.equity_growth || 0) >= 0 ? '#10B981' : '#F87171',
+                textShadow: '0 4px 12px rgba(0, 0, 0, 0.3)'
+              }}>
+                {(performance.equity_growth || 0) > 0 ? '+' : ''}{(performance.equity_growth || 0).toFixed(1)}%
+              </div>
+
+              <div className="text-right mb-2">
+                <div className="text-sm font-bold px-3 py-1 rounded-lg" style={{
+                  color: (performance.equity_growth || 0) >= 0 ? '#10B981' : '#FCA5A5',
+                  background: (performance.equity_growth || 0) >= 0 ? 'rgba(16, 185, 129, 0.2)' : 'rgba(248, 113, 113, 0.2)'
+                }}>
+                  {(performance.equity_growth || 0) >= 0 ? t('growing', language) : t('declining', language)}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-xl p-4" style={{
+              background: 'rgba(0, 0, 0, 0.4)',
+              border: '1px solid rgba(16, 185, 129, 0.3)'
+            }}>
+              <div className="text-sm leading-relaxed" style={{ color: '#A7F3D0' }}>
+                {(performance.equity_growth || 0) > 0 && ' AI'}
+                {(performance.equity_growth || 0) === 0 && ' '}
+                {(performance.equity_growth || 0) < 0 && ' '}
+              </div>
+            </div>
+          </div>
+        </div>
+
       </div>
 
-      {/* 最佳/最差币种 - 独立行 */}
+      {/* / -  */}
       {(performance.best_symbol || performance.worst_symbol) && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {performance.best_symbol && (
@@ -373,7 +500,7 @@ export default function AILearning({ traderId }: AILearningProps) {
               boxShadow: '0 4px 16px rgba(16, 185, 129, 0.1)'
             }}>
               <div className="flex items-center gap-2 mb-3">
-                <span className="text-2xl">🏆</span>
+                <span className="text-2xl"></span>
                 <span className="text-sm font-semibold" style={{ color: '#6EE7B7' }}>{t('bestPerformer', language)}</span>
               </div>
               <div className="text-3xl font-bold mono mb-1" style={{ color: '#10B981' }}>
@@ -395,7 +522,7 @@ export default function AILearning({ traderId }: AILearningProps) {
               boxShadow: '0 4px 16px rgba(248, 113, 113, 0.1)'
             }}>
               <div className="flex items-center gap-2 mb-3">
-                <span className="text-2xl">📉</span>
+                <span className="text-2xl"></span>
                 <span className="text-sm font-semibold" style={{ color: '#FCA5A5' }}>{t('worstPerformer', language)}</span>
               </div>
               <div className="text-3xl font-bold mono mb-1" style={{ color: '#F87171' }}>
@@ -412,9 +539,9 @@ export default function AILearning({ traderId }: AILearningProps) {
         </div>
       )}
 
-      {/* 币种表现 & 历史成交 - 左右分屏 2列布局 */}
+      {/*  &  -  2 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* 左侧：币种表现统计表格 */}
+        {/*  */}
         {symbolStatsList.length > 0 && (
           <div className="rounded-2xl overflow-hidden" style={{
             background: 'rgba(30, 35, 41, 0.4)',
@@ -428,7 +555,7 @@ export default function AILearning({ traderId }: AILearningProps) {
               backdropFilter: 'blur(10px)'
             }}>
               <h3 className="font-bold flex items-center gap-2 text-lg" style={{ color: '#E0E7FF' }}>
-                📊 {t('symbolPerformance', language)}
+                 {t('symbolPerformance', language)}
               </h3>
             </div>
             <div className="overflow-y-auto" style={{ maxHeight: 'calc(100vh - 280px)' }}>
@@ -476,7 +603,7 @@ export default function AILearning({ traderId }: AILearningProps) {
           </div>
         )}
 
-        {/* 右侧：历史成交记录 */}
+        {/*  */}
         <div className="rounded-2xl overflow-hidden" style={{
           background: 'rgba(30, 35, 41, 0.4)',
           border: '1px solid rgba(240, 185, 11, 0.2)',
@@ -488,7 +615,7 @@ export default function AILearning({ traderId }: AILearningProps) {
             backdropFilter: 'blur(10px)'
           }}>
             <div className="flex items-center gap-2">
-              <span className="text-2xl">📜</span>
+              <span className="text-2xl"></span>
               <div>
                 <h3 className="font-bold text-lg" style={{ color: '#FCD34D' }}>{t('tradeHistory', language)}</h3>
                 <p className="text-xs" style={{ color: '#94A3B8' }}>
@@ -604,7 +731,7 @@ export default function AILearning({ traderId }: AILearningProps) {
                     </div>
 
                     <div className="flex items-center justify-between text-xs" style={{ color: '#94A3B8' }}>
-                      <span>⏱️ {formatDuration(trade.duration)}</span>
+                      <span> {formatDuration(trade.duration)}</span>
                       {trade.was_stop_loss && (
                         <span className="px-2 py-0.5 rounded font-semibold" style={{
                           background: 'rgba(248, 113, 113, 0.2)',
@@ -631,7 +758,7 @@ export default function AILearning({ traderId }: AILearningProps) {
               })
             ) : (
               <div className="p-6 text-center">
-                <div className="text-4xl mb-2 opacity-50">📜</div>
+                <div className="text-4xl mb-2 opacity-50"></div>
                 <div style={{ color: '#94A3B8' }}>{t('noCompletedTrades', language)}</div>
               </div>
             )}
@@ -639,7 +766,7 @@ export default function AILearning({ traderId }: AILearningProps) {
         </div>
       </div>
 
-      {/* AI学习说明 - 现代化设计 */}
+      {/* AI -  */}
       <div className="rounded-2xl p-6 backdrop-blur-sm" style={{
         background: 'linear-gradient(135deg, rgba(240, 185, 11, 0.1) 0%, rgba(252, 213, 53, 0.05) 100%)',
         border: '1px solid rgba(240, 185, 11, 0.2)',
@@ -650,25 +777,25 @@ export default function AILearning({ traderId }: AILearningProps) {
             background: 'rgba(240, 185, 11, 0.2)',
             border: '1px solid rgba(240, 185, 11, 0.3)'
           }}>
-            💡
+            
           </div>
           <div>
             <h3 className="font-bold mb-3 text-base" style={{ color: '#FCD34D' }}>{t('howAILearns', language)}</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
               <div className="flex items-start gap-2">
-                <span style={{ color: '#F0B90B' }}>•</span>
+                <span style={{ color: '#F0B90B' }}></span>
                 <span style={{ color: '#CBD5E1' }}>{t('aiLearningPoint1', language)}</span>
               </div>
               <div className="flex items-start gap-2">
-                <span style={{ color: '#F0B90B' }}>•</span>
+                <span style={{ color: '#F0B90B' }}></span>
                 <span style={{ color: '#CBD5E1' }}>{t('aiLearningPoint2', language)}</span>
               </div>
               <div className="flex items-start gap-2">
-                <span style={{ color: '#F0B90B' }}>•</span>
+                <span style={{ color: '#F0B90B' }}></span>
                 <span style={{ color: '#CBD5E1' }}>{t('aiLearningPoint3', language)}</span>
               </div>
               <div className="flex items-start gap-2">
-                <span style={{ color: '#F0B90B' }}>•</span>
+                <span style={{ color: '#F0B90B' }}></span>
                 <span style={{ color: '#CBD5E1' }}>{t('aiLearningPoint4', language)}</span>
               </div>
             </div>
@@ -679,7 +806,7 @@ export default function AILearning({ traderId }: AILearningProps) {
   );
 }
 
-// 格式化持仓时长
+// 
 function formatDuration(duration: string | undefined): string {
   if (!duration) return '-';
 
@@ -691,9 +818,9 @@ function formatDuration(duration: string | undefined): string {
   const seconds = match[3] || '';
 
   let result = '';
-  if (hours) result += hours.replace('h', '小时');
-  if (minutes) result += minutes.replace('m', '分');
-  if (!hours && seconds) result += seconds.replace(/(\d+)\.?\d*s/, '$1秒');
+  if (hours) result += hours.replace('h', '');
+  if (minutes) result += minutes.replace('m', '');
+  if (!hours && seconds) result += seconds.replace(/(\d+)\.?\d*s/, '$1');
 
   return result || duration;
 }

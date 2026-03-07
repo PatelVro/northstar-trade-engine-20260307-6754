@@ -3,35 +3,35 @@ package manager
 import (
 	"fmt"
 	"log"
-	"nofx/config"
-	"nofx/trader"
+	"aegistrade/config"
+	"aegistrade/trader"
 	"sync"
 	"time"
 )
 
-// TraderManager 管理多个trader实例
+// TraderManager configures and oversees multiple trader instances
 type TraderManager struct {
 	traders map[string]*trader.AutoTrader // key: trader ID
 	mu      sync.RWMutex
 }
 
-// NewTraderManager 创建trader管理器
+// NewTraderManager instantiates a trader manager
 func NewTraderManager() *TraderManager {
 	return &TraderManager{
 		traders: make(map[string]*trader.AutoTrader),
 	}
 }
 
-// AddTrader 添加一个trader
+// AddTrader initializes a new trader setup
 func (tm *TraderManager) AddTrader(cfg config.TraderConfig, coinPoolURL string, maxDailyLoss, maxDrawdown float64, stopTradingMinutes int, leverage config.LeverageConfig) error {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
 	if _, exists := tm.traders[cfg.ID]; exists {
-		return fmt.Errorf("trader ID '%s' 已存在", cfg.ID)
+		return fmt.Errorf("trader ID '%s' already exists", cfg.ID)
 	}
 
-	// 构建AutoTraderConfig
+	// Construct AutoTraderConfig parameter map
 	traderConfig := trader.AutoTraderConfig{
 		ID:                    cfg.ID,
 		Name:                  cfg.Name,
@@ -45,6 +45,13 @@ func (tm *TraderManager) AddTrader(cfg config.TraderConfig, coinPoolURL string, 
 		AsterUser:             cfg.AsterUser,
 		AsterSigner:           cfg.AsterSigner,
 		AsterPrivateKey:       cfg.AsterPrivateKey,
+		AlpacaAPIKey:          cfg.AlpacaAPIKey,
+		AlpacaSecretKey:       cfg.AlpacaSecretKey,
+		AlpacaPaperTrading:    cfg.AlpacaPaperTrading,
+		IBKRGatewayURL:        cfg.IBKRGatewayURL,
+		IBKRAccountID:         cfg.IBKRAccountID,
+		IBKRSessionCookie:     cfg.IBKRSessionCookie,
+		StrictLiveMode:        cfg.StrictLiveMode,
 		CoinPoolAPIURL:        coinPoolURL,
 		UseQwen:               cfg.AIModel == "qwen",
 		DeepSeekKey:           cfg.DeepSeekKey,
@@ -54,37 +61,50 @@ func (tm *TraderManager) AddTrader(cfg config.TraderConfig, coinPoolURL string, 
 		CustomModelName:       cfg.CustomModelName,
 		ScanInterval:          cfg.GetScanInterval(),
 		InitialBalance:        cfg.InitialBalance,
-		BTCETHLeverage:        leverage.BTCETHLeverage,  // 使用配置的杠杆倍数
-		AltcoinLeverage:       leverage.AltcoinLeverage, // 使用配置的杠杆倍数
+		BTCETHLeverage:        leverage.BTCETHLeverage,  // Bind configured leverage sizing
+		AltcoinLeverage:       leverage.AltcoinLeverage, // Bind configured leverage sizing
 		MaxDailyLoss:          maxDailyLoss,
 		MaxDrawdown:           maxDrawdown,
 		StopTradingTime:       time.Duration(stopTradingMinutes) * time.Minute,
+
+		// Exec mode and data provider settings integration
+		Mode:                cfg.Mode,
+		DataProvider:        cfg.DataProvider,
+		Broker:              cfg.Broker,
+		CSVDataDir:          cfg.CSVDataDir,
+		InstrumentType:      cfg.InstrumentType,
+		BarsAdjustment:      cfg.BarsAdjustment,
+		CandidateBatchSize:  cfg.CandidateBatchSize,
+		TrustedSymbolsFile:  cfg.TrustedSymbolsFile,
+		StrategyMode:        cfg.StrategyMode,
+		MomentumMinScore:    cfg.MomentumMinScore,
+		FallbackPositionPct: cfg.FallbackPositionPct,
 	}
 
-	// 创建trader实例
+	// Create new AutoTrader execution wrapper
 	at, err := trader.NewAutoTrader(traderConfig)
 	if err != nil {
-		return fmt.Errorf("创建trader失败: %w", err)
+		return fmt.Errorf("failed generating new trader: %w", err)
 	}
 
 	tm.traders[cfg.ID] = at
-	log.Printf("✓ Trader '%s' (%s) 已添加", cfg.Name, cfg.AIModel)
+	log.Printf(" Trader '%s' (%s) added", cfg.Name, cfg.AIModel)
 	return nil
 }
 
-// GetTrader 获取指定ID的trader
+// GetTrader extracts mapping logic execution handler
 func (tm *TraderManager) GetTrader(id string) (*trader.AutoTrader, error) {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
 
 	t, exists := tm.traders[id]
 	if !exists {
-		return nil, fmt.Errorf("trader ID '%s' 不存在", id)
+		return nil, fmt.Errorf("trader ID '%s' does not exist", id)
 	}
 	return t, nil
 }
 
-// GetAllTraders 获取所有trader
+// GetAllTraders pulls map indexing logic references structure
 func (tm *TraderManager) GetAllTraders() map[string]*trader.AutoTrader {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
@@ -96,7 +116,7 @@ func (tm *TraderManager) GetAllTraders() map[string]*trader.AutoTrader {
 	return result
 }
 
-// GetTraderIDs 获取所有trader ID列表
+// GetTraderIDs tracks configured string indexing execution IDs
 func (tm *TraderManager) GetTraderIDs() []string {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
@@ -108,34 +128,34 @@ func (tm *TraderManager) GetTraderIDs() []string {
 	return ids
 }
 
-// StartAll 启动所有trader
+// StartAll wraps execution triggering logic for concurrent setups
 func (tm *TraderManager) StartAll() {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
 
-	log.Println("🚀 启动所有Trader...")
+	log.Println(" Starting all traders...")
 	for id, t := range tm.traders {
 		go func(traderID string, at *trader.AutoTrader) {
-			log.Printf("▶️  启动 %s...", at.GetName())
+			log.Printf("  Starting %s...", at.GetName())
 			if err := at.Run(); err != nil {
-				log.Printf("❌ %s 运行错误: %v", at.GetName(), err)
+				log.Printf(" %s runtime error: %v", at.GetName(), err)
 			}
 		}(id, t)
 	}
 }
 
-// StopAll 停止所有trader
+// StopAll interrupts and halts ongoing tracking events execution loops
 func (tm *TraderManager) StopAll() {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
 
-	log.Println("⏹  停止所有Trader...")
+	log.Println("  Stopping all traders...")
 	for _, t := range tm.traders {
 		t.Stop()
 	}
 }
 
-// GetComparisonData 获取对比数据
+// GetComparisonData aggregates comparative metrics data
 func (tm *TraderManager) GetComparisonData() (map[string]interface{}, error) {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()

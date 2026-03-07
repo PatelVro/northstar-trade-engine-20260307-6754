@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  ibeam:
+    image: voyz/ibeam:latest
+    container_name: ibeam_gateway
+    env_file:
+      - .env.ibkr
+    environment:
+      - TZ=America/Toronto
+    ports:
+      - "5002:5002"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "-s", "https://localhost:5000/v1/api/iserver/auth/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ./ibeam_outputs:/srv/ibeam/outputs
+  
+  nginx_proxy:
+    image: nginx:alpine
+    container_name: ibeam_proxy
+    network_mode: "service:ibeam"
+    volumes:
+      - ./nginx_ibeam.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx_certs:/etc/nginx/certs:ro
+    restart: unless-stopped

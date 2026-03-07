@@ -12,7 +12,7 @@ export function CompetitionPage() {
     'competition',
     api.getCompetition,
     {
-      refreshInterval: 15000, // 15秒刷新（竞赛数据不需要太频繁更新）
+      refreshInterval: 15000, // 15
       revalidateOnFocus: false,
       dedupingInterval: 10000,
     }
@@ -41,24 +41,24 @@ export function CompetitionPage() {
     );
   }
 
-  // 按收益率排序
+  // 
   const sortedTraders = [...competition.traders].sort(
     (a, b) => b.total_pnl_pct - a.total_pnl_pct
   );
 
-  // 找出领先者
+  // 
   const leader = sortedTraders[0];
 
   return (
     <div className="space-y-5 animate-fade-in">
-      {/* Competition Header - 精简版 */}
+      {/* Competition Header -  */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl" style={{
             background: 'linear-gradient(135deg, #F0B90B 0%, #FCD535 100%)',
             boxShadow: '0 4px 14px rgba(240, 185, 11, 0.4)'
           }}>
-            🏆
+            AI
           </div>
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2" style={{ color: '#EAECEF' }}>
@@ -125,7 +125,7 @@ export function CompetitionPage() {
                     {/* Rank & Name */}
                     <div className="flex items-center gap-3">
                       <div className="text-2xl w-6">
-                        {index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉'}
+                        {index === 0 ? '#1' : index === 1 ? '#2' : '#3'}
                       </div>
                       <div>
                         <div className="font-bold text-sm" style={{ color: '#EAECEF' }}>{trader.trader_name}</div>
@@ -180,7 +180,7 @@ export function CompetitionPage() {
                             : { background: 'rgba(246, 70, 93, 0.1)', color: '#F6465D' }
                           }
                         >
-                          {trader.is_running ? '●' : '○'}
+                          {trader.is_running ? 'RUNNING' : 'STOPPED'}
                         </div>
                       </div>
                     </div>

@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# ═══════════════════════════════════════════════════════════════
-# NOFX AI Trading System - Docker Quick Start Script
+# 
+# AegisTrade AI Trading System - Docker Quick Start Script
 # Usage: ./start.sh [command]
-# ═══════════════════════════════════════════════════════════════
+# 
 
 set -e
 
@@ -44,10 +44,10 @@ detect_compose_cmd() {
     elif command -v docker-compose &> /dev/null; then
         COMPOSE_CMD="docker-compose"
     else
-        print_error "Docker Compose 未安装！请先安装 Docker Compose"
+        print_error "Docker Compose  Docker Compose"
         exit 1
     fi
-    print_info "使用 Docker Compose 命令: $COMPOSE_CMD"
+    print_info " Docker Compose : $COMPOSE_CMD"
 }
 
 # ------------------------------------------------------------------------
@@ -55,12 +55,12 @@ detect_compose_cmd() {
 # ------------------------------------------------------------------------
 check_docker() {
     if ! command -v docker &> /dev/null; then
-        print_error "Docker 未安装！请先安装 Docker: https://docs.docker.com/get-docker/"
+        print_error "Docker  Docker: https://docs.docker.com/get-docker/"
         exit 1
     fi
 
     detect_compose_cmd
-    print_success "Docker 和 Docker Compose 已安装"
+    print_success "Docker  Docker Compose "
 }
 
 # ------------------------------------------------------------------------
@@ -68,13 +68,13 @@ check_docker() {
 # ------------------------------------------------------------------------
 check_env() {
     if [ ! -f ".env" ]; then
-        print_warning ".env 不存在，从模板复制..."
+        print_warning ".env ..."
         cp .env.example .env
-        print_info "请编辑 .env 填入你的环境变量配置"
-        print_info "运行: nano .env 或使用其他编辑器"
+        print_info " .env "
+        print_info ": nano .env "
         exit 1
     fi
-    print_success "环境变量文件存在"
+    print_success ""
 }
 
 # ------------------------------------------------------------------------
@@ -82,49 +82,49 @@ check_env() {
 # ------------------------------------------------------------------------
 check_config() {
     if [ ! -f "config.json" ]; then
-        print_warning "config.json 不存在，从模板复制..."
+        print_warning "config.json ..."
         cp config.json.example config.json
-        print_info "请编辑 config.json 填入你的 API 密钥"
-        print_info "运行: nano config.json 或使用其他编辑器"
+        print_info " config.json  API "
+        print_info ": nano config.json "
         exit 1
     fi
-    print_success "配置文件存在"
+    print_success ""
 }
 
 # ------------------------------------------------------------------------
 # Build: Frontend (Node.js Based)
 # ------------------------------------------------------------------------
 # build_frontend() {
-#     print_info "检查前端构建环境..."
+#     print_info "..."
 
 #     if ! command -v node &> /dev/null; then
-#         print_error "Node.js 未安装！请先安装 Node.js"
+#         print_error "Node.js  Node.js"
 #         exit 1
 #     fi
 
 #     if ! command -v npm &> /dev/null; then
-#         print_error "npm 未安装！请先安装 npm"
+#         print_error "npm  npm"
 #         exit 1
 #     fi
 
-#     print_info "正在构建前端..."
+#     print_info "..."
 #     cd web
 
-#     print_info "安装 Node.js 依赖..."
+#     print_info " Node.js ..."
 #     npm install
 
-#     print_info "构建前端应用..."
+#     print_info "..."
 #     npm run build
 
 #     cd ..
-#     print_success "前端构建完成"
+#     print_success ""
 # }
 
 # ------------------------------------------------------------------------
 # Service Management: Start
 # ------------------------------------------------------------------------
 start() {
-    print_info "正在启动 NOFX AI Trading System..."
+    print_info " AegisTrade AI Trading System..."
 
     # Auto-build frontend if missing or forced
     # if [ ! -d "web/dist" ] || [ "$1" == "--build" ]; then
@@ -133,37 +133,37 @@ start() {
 
     # Rebuild images if flag set
     if [ "$1" == "--build" ]; then
-        print_info "重新构建镜像..."
+        print_info "..."
         $COMPOSE_CMD up -d --build
     else
-        print_info "启动容器..."
+        print_info "..."
         $COMPOSE_CMD up -d
     fi
 
-    print_success "服务已启动！"
-    print_info "Web 界面: http://localhost:3000"
-    print_info "API 端点: http://localhost:8080"
+    print_success ""
+    print_info "Web : http://localhost:3000"
+    print_info "API : http://localhost:8080"
     print_info ""
-    print_info "查看日志: ./start.sh logs"
-    print_info "停止服务: ./start.sh stop"
+    print_info ": ./start.sh logs"
+    print_info ": ./start.sh stop"
 }
 
 # ------------------------------------------------------------------------
 # Service Management: Stop
 # ------------------------------------------------------------------------
 stop() {
-    print_info "正在停止服务..."
+    print_info "..."
     $COMPOSE_CMD stop
-    print_success "服务已停止"
+    print_success ""
 }
 
 # ------------------------------------------------------------------------
 # Service Management: Restart
 # ------------------------------------------------------------------------
 restart() {
-    print_info "正在重启服务..."
+    print_info "..."
     $COMPOSE_CMD restart
-    print_success "服务已重启"
+    print_success ""
 }
 
 # ------------------------------------------------------------------------
@@ -181,25 +181,25 @@ logs() {
 # Monitoring: Status
 # ------------------------------------------------------------------------
 status() {
-    print_info "服务状态:"
+    print_info ":"
     $COMPOSE_CMD ps
     echo ""
-    print_info "健康检查:"
-    curl -s http://localhost:8080/health | jq '.' || echo "后端未响应"
+    print_info ":"
+    curl -s http://localhost:8080/health | jq '.' || echo ""
 }
 
 # ------------------------------------------------------------------------
 # Maintenance: Clean (Destructive)
 # ------------------------------------------------------------------------
 clean() {
-    print_warning "这将删除所有容器和数据！"
-    read -p "确认删除？(yes/no): " confirm
+    print_warning ""
+    read -p "(yes/no): " confirm
     if [ "$confirm" == "yes" ]; then
-        print_info "正在清理..."
+        print_info "..."
         $COMPOSE_CMD down -v
-        print_success "清理完成"
+        print_success ""
     else
-        print_info "已取消"
+        print_info ""
     fi
 }
 
@@ -207,34 +207,34 @@ clean() {
 # Maintenance: Update
 # ------------------------------------------------------------------------
 update() {
-    print_info "正在更新..."
+    print_info "..."
     git pull
     $COMPOSE_CMD up -d --build
-    print_success "更新完成"
+    print_success ""
 }
 
 # ------------------------------------------------------------------------
 # Help: Usage Information
 # ------------------------------------------------------------------------
 show_help() {
-    echo "NOFX AI Trading System - Docker 管理脚本"
+    echo "AegisTrade AI Trading System - Docker "
     echo ""
-    echo "用法: ./start.sh [command] [options]"
+    echo ": ./start.sh [command] [options]"
     echo ""
-    echo "命令:"
-    echo "  start [--build]    启动服务（可选：重新构建）"
-    echo "  stop               停止服务"
-    echo "  restart            重启服务"
-    echo "  logs [service]     查看日志（可选：指定服务名 backend/frontend）"
-    echo "  status             查看服务状态"
-    echo "  clean              清理所有容器和数据"
-    echo "  update             更新代码并重启"
-    echo "  help               显示此帮助信息"
+    echo ":"
+    echo "  start [--build]    "
+    echo "  stop               "
+    echo "  restart            "
+    echo "  logs [service]      backend/frontend"
+    echo "  status             "
+    echo "  clean              "
+    echo "  update             "
+    echo "  help               "
     echo ""
-    echo "示例:"
-    echo "  ./start.sh start --build    # 构建并启动"
-    echo "  ./start.sh logs backend     # 查看后端日志"
-    echo "  ./start.sh status           # 查看状态"
+    echo ":"
+    echo "  ./start.sh start --build    # "
+    echo "  ./start.sh logs backend     # "
+    echo "  ./start.sh status           # "
 }
 
 # ------------------------------------------------------------------------
@@ -271,7 +271,7 @@ main() {
             show_help
             ;;
         *)
-            print_error "未知命令: $1"
+            print_error ": $1"
             show_help
             exit 1
             ;;

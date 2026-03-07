@@ -3,23 +3,16 @@ import type { Language } from '../i18n/translations';
 
 interface LanguageContextType {
   language: Language;
-  setLanguage: (lang: Language) => void;
+  setLanguage: (_lang: Language) => void;
 }
 
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
-  // Initialize language from localStorage or default to English
-  const [language, setLanguage] = useState<Language>(() => {
-    const saved = localStorage.getItem('language');
-    return (saved === 'en' || saved === 'zh') ? saved : 'en';
-  });
+  const [language] = useState<Language>('en');
 
-  // Save language to localStorage whenever it changes
-  const handleSetLanguage = (lang: Language) => {
-    setLanguage(lang);
-    localStorage.setItem('language', lang);
-  };
+  // English-only mode: keep API compatibility for existing components.
+  const handleSetLanguage = (_lang: Language) => {};
 
   return (
     <LanguageContext.Provider value={{ language, setLanguage: handleSetLanguage }}>

@@ -1,12 +1,12 @@
-# 🚀 [BOUNTY] Integrate Aster Exchange Support
+#  [BOUNTY] Integrate Aster Exchange Support
 
-## 💰 Bounty Reward
+##  Bounty Reward
 **To be discussed** - Open to proposals from contributors
 
-## 📋 Overview
-We're looking for contributors to add Aster exchange support to NOFX AI Trading System. Currently supports Binance Futures, seeking to expand to Aster perpetual contracts.
+##  Overview
+We're looking for contributors to add Aster exchange support to AegisTrade AI Trading System. Currently supports Binance Futures, seeking to expand to Aster perpetual contracts.
 
-## 🎯 Task Requirements
+##  Task Requirements
 
 ### Core Features to Implement
 
@@ -51,29 +51,29 @@ We're looking for contributors to add Aster exchange support to NOFX AI Trading 
 - [ ] Update README with Aster setup guide
 - [ ] Add Aster-specific troubleshooting docs
 
-## 📚 Technical References
+##  Technical References
 
 **Aster Resources:**
 - Official Website: [Add Aster exchange URL]
 - API Documentation: [Add Aster API docs URL]
 - SDK/Libraries: [Add if available]
 
-**NOFX Architecture:**
+**AegisTrade Architecture:**
 - See `trader/binance_futures.go` as reference implementation
 - Main trading logic: `trader/auto_trader.go`
 - Configuration: `config.json` structure
 
-## 🔧 Implementation Guidelines
+##  Implementation Guidelines
 
 ### File Structure
 ```
 trader/
-├── binance_futures.go     (existing reference)
-├── aster_perpetual.go     (NEW - to implement)
-└── exchange_interface.go  (NEW - unified interface)
+ binance_futures.go     (existing reference)
+ aster_perpetual.go     (NEW - to implement)
+ exchange_interface.go  (NEW - unified interface)
 
 config/
-└── config.go              (UPDATE - add Aster config)
+ config.go              (UPDATE - add Aster config)
 ```
 
 ### Interface to Implement
@@ -97,7 +97,7 @@ type ExchangeClient interface {
 }
 ```
 
-## ✅ Acceptance Criteria
+##  Acceptance Criteria
 
 **Minimum Requirements:**
 - [ ] Can connect to Aster testnet/mainnet
@@ -113,7 +113,7 @@ type ExchangeClient interface {
 - [ ] Multi-exchange competition mode (Binance vs Aster)
 - [ ] Performance comparison dashboard
 
-## 📝 How to Contribute
+##  How to Contribute
 
 1. **Comment on this issue** to express interest
 2. **Fork the repository** and create a feature branch
@@ -125,20 +125,20 @@ type ExchangeClient interface {
    - Documentation updates
    - Demo video/screenshots
 
-## 🤝 Support & Questions
+##  Support & Questions
 
 - Ask questions in this issue's comments
-- Join our Telegram: [NOFX Developer Community](https://t.me/nofx_dev_community)
+- Join our Telegram: [AegisTrade Developer Community](https://t.me/AegisTrade_dev_community)
 - Reference existing code: `trader/binance_futures.go`
 
-## ⚠️ Important Notes
+##  Important Notes
 
 - **Test on testnet first** - Do NOT test with real funds initially
 - **Maintain backward compatibility** - Existing Binance users should not be affected
 - **Code quality** - Follow existing code style and patterns
 - **Security** - Handle API keys securely, no hardcoded credentials
 
-## 🔍 Research Needed
+##  Research Needed
 
 **Before starting, please investigate:**
 - [ ] Does Aster provide a public API? (REST/Websocket)

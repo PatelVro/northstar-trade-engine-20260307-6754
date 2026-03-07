@@ -4,90 +4,120 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"nofx/decision"
-	"nofx/logger"
-	"nofx/market"
-	"nofx/mcp"
-	"nofx/pool"
+	"math"
+	"aegistrade/decision"
+	"aegistrade/logger"
+	"aegistrade/market"
+	"aegistrade/mcp"
+	"aegistrade/pool"
+	"os"
+	"sort"
 	"strings"
 	"time"
 )
 
-// AutoTraderConfig 自动交易配置（简化版 - AI全权决策）
+// AutoTraderConfig Auto-trading configuration (simplified - AI full control)
 type AutoTraderConfig struct {
-	// Trader标识
-	ID      string // Trader唯一标识（用于日志目录等）
-	Name    string // Trader显示名称
-	AIModel string // AI模型: "qwen" 或 "deepseek"
+	// Trader identifier
+	ID      string // Unique trader ID (used for log directories, etc.)
+	Name    string // Trader display name
+	AIModel string // AI model: "qwen" or "deepseek"
 
-	// 交易平台选择
-	Exchange string // "binance", "hyperliquid" 或 "aster"
+	// Exchange selection
+	Exchange string // "binance", "hyperliquid" or "aster"
 
-	// 币安API配置
+	// Binance API Config
 	BinanceAPIKey    string
 	BinanceSecretKey string
 
-	// Hyperliquid配置
+	// Hyperliquid Config
 	HyperliquidPrivateKey string
 	HyperliquidWalletAddr string
 	HyperliquidTestnet    bool
 
-	// Aster配置
-	AsterUser       string // Aster主钱包地址
-	AsterSigner     string // Aster API钱包地址
-	AsterPrivateKey string // Aster API钱包私钥
+	// Aster Config
+	AsterUser       string // Aster main wallet address
+	AsterSigner     string // Aster API wallet address
+	AsterPrivateKey string // Aster API wallet private key
+
+	// Alpaca Config
+	AlpacaAPIKey       string
+	AlpacaSecretKey    string
+	AlpacaPaperTrading bool
+
+	// Interactive Brokers Config
+	IBKRGatewayURL    string
+	IBKRAccountID     string
+	IBKRSessionCookie string
+	StrictLiveMode    bool
 
 	CoinPoolAPIURL string
 
-	// AI配置
+	// AI Config
 	UseQwen     bool
 	DeepSeekKey string
 	QwenKey     string
 
-	// 自定义AI API配置
+	// Custom AI API Config
 	CustomAPIURL    string
 	CustomAPIKey    string
 	CustomModelName string
 
-	// 扫描配置
-	ScanInterval time.Duration // 扫描间隔（建议3分钟）
+	// Scanning configuration
+	ScanInterval time.Duration // Scan interval (recommended 3 minutes)
 
-	// 账户配置
-	InitialBalance float64 // 初始金额（用于计算盈亏，需手动设置）
+	// Account configuration
+	InitialBalance float64 // Initial balance (used to calculate P&L, set manually)
 
-	// 杠杆配置
-	BTCETHLeverage  int // BTC和ETH的杠杆倍数
-	AltcoinLeverage int // 山寨币的杠杆倍数
+	// Leverage configuration
+	BTCETHLeverage  int // Leverage multiplier for BTC and ETH
+	AltcoinLeverage int // Leverage multiplier for Altcoins
 
-	// 风险控制（仅作为提示，AI可自主决定）
-	MaxDailyLoss    float64       // 最大日亏损百分比（提示）
-	MaxDrawdown     float64       // 最大回撤百分比（提示）
-	StopTradingTime time.Duration // 触发风控后暂停时长
+	// Risk control (hints, AI retains final decision)
+	MaxDailyLoss    float64       // Max daily loss percentage (hint)
+	MaxDrawdown     float64       // Max drawdown percentage (hint)
+	StopTradingTime time.Duration // Pause duration after triggering risk control
+
+	// Execution mode and data provider config
+	Mode                string
+	DataProvider        string
+	Broker              string
+	CSVDataDir          string
+	InstrumentType      string
+	BarsAdjustment      string
+	CandidateBatchSize  int
+	TrustedSymbolsFile  string
+	StrategyMode        string
+	MomentumMinScore    float64
+	FallbackPositionPct float64
 }
 
-// AutoTrader 自动交易器
+// AutoTrader The automatic trader engine
 type AutoTrader struct {
-	id                    string // Trader唯一标识
-	name                  string // Trader显示名称
-	aiModel               string // AI模型名称
-	exchange              string // 交易平台名称
+	id                    string // Trader unique identifier
+	name                  string // Trader display name
+	aiModel               string // AI model name
+	exchange              string // Exchange platform name
 	config                AutoTraderConfig
-	trader                Trader // 使用Trader接口（支持多平台）
+	trader                Trader // Standardized trader interface
 	mcpClient             *mcp.Client
-	decisionLogger        *logger.DecisionLogger // 决策日志记录器
+	decisionLogger        *logger.DecisionLogger // Decision logger
 	initialBalance        float64
 	dailyPnL              float64
 	lastResetTime         time.Time
 	stopUntil             time.Time
 	isRunning             bool
-	startTime             time.Time        // 系统启动时间
-	callCount             int              // AI调用次数
-	positionFirstSeenTime map[string]int64 // 持仓首次出现时间 (symbol_side -> timestamp毫秒)
+	startTime             time.Time           // System start time
+	callCount             int                 // AI invocation cycle counter
+	positionFirstSeenTime map[string]int64    // First appearance of positions (symbol_side -> ms timestamp)
+	provider              market.BarsProvider // Injected data provider
+	candidateCursor       int
+	trustedSymbolSet      map[string]struct{}
 }
 
-// NewAutoTrader 创建自动交易器
+// NewAutoTrader Creates a new automatic trader
 func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
-	// 设置默认值
+	// Set defaults
 	if config.ID == "" {
 		config.ID = "default_trader"
 	}
@@ -101,66 +131,147 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 			config.AIModel = "deepseek"
 		}
 	}
+	if config.CandidateBatchSize <= 0 {
+		if config.InstrumentType == "equity" {
+			config.CandidateBatchSize = 30
+		} else {
+			config.CandidateBatchSize = 20
+		}
+	}
+	if config.InstrumentType == "equity" && config.DataProvider == "ibkr" && config.CandidateBatchSize > 12 {
+		config.CandidateBatchSize = 12
+	}
+	if config.InstrumentType == "equity" {
+		if config.StrategyMode == "" {
+			config.StrategyMode = "momentum_fallback"
+		}
+		if config.MomentumMinScore <= 0 {
+			config.MomentumMinScore = 1.25
+		}
+		if config.FallbackPositionPct <= 0 || config.FallbackPositionPct > 0.20 {
+			config.FallbackPositionPct = 0.10
+		}
+	}
 
 	mcpClient := mcp.New()
 
-	// 初始化AI
+	// Initialize AI
 	if config.AIModel == "custom" {
-		// 使用自定义API
+		// Custom API
 		mcpClient.SetCustomAPI(config.CustomAPIURL, config.CustomAPIKey, config.CustomModelName)
-		log.Printf("🤖 [%s] 使用自定义AI API: %s (模型: %s)", config.Name, config.CustomAPIURL, config.CustomModelName)
+		log.Printf(" [%s] Using custom AI API: %s (model: %s)", config.Name, config.CustomAPIURL, config.CustomModelName)
 	} else if config.UseQwen || config.AIModel == "qwen" {
-		// 使用Qwen
+		// Qwen
 		mcpClient.SetQwenAPIKey(config.QwenKey, "")
-		log.Printf("🤖 [%s] 使用阿里云Qwen AI", config.Name)
+		log.Printf(" [%s] Using Alibaba Cloud Qwen AI", config.Name)
 	} else {
-		// 默认使用DeepSeek
+		// Default to DeepSeek
 		mcpClient.SetDeepSeekAPIKey(config.DeepSeekKey)
-		log.Printf("🤖 [%s] 使用DeepSeek AI", config.Name)
+		log.Printf(" [%s] Using DeepSeek AI", config.Name)
 	}
 
-	// 初始化币种池API
+	// Initialize coin pool API
 	if config.CoinPoolAPIURL != "" {
 		pool.SetCoinPoolAPI(config.CoinPoolAPIURL)
 	}
 
-	// 设置默认交易平台
+	// Default exchange
 	if config.Exchange == "" {
 		config.Exchange = "binance"
 	}
 
-	// 根据配置创建对应的交易器
+	// Build the appropriate trader instance
 	var trader Trader
 	var err error
 
 	switch config.Exchange {
 	case "binance":
-		log.Printf("🏦 [%s] 使用币安合约交易", config.Name)
+		log.Printf(" [%s] Using Binance Futures", config.Name)
 		trader = NewFuturesTrader(config.BinanceAPIKey, config.BinanceSecretKey)
 	case "hyperliquid":
-		log.Printf("🏦 [%s] 使用Hyperliquid交易", config.Name)
+		log.Printf(" [%s] Using Hyperliquid", config.Name)
 		trader, err = NewHyperliquidTrader(config.HyperliquidPrivateKey, config.HyperliquidWalletAddr, config.HyperliquidTestnet)
 		if err != nil {
-			return nil, fmt.Errorf("初始化Hyperliquid交易器失败: %w", err)
+			return nil, fmt.Errorf("failed to initialize Hyperliquid trader: %w", err)
 		}
 	case "aster":
-		log.Printf("🏦 [%s] 使用Aster交易", config.Name)
+		log.Printf(" [%s] Using Aster", config.Name)
 		trader, err = NewAsterTrader(config.AsterUser, config.AsterSigner, config.AsterPrivateKey)
 		if err != nil {
-			return nil, fmt.Errorf("初始化Aster交易器失败: %w", err)
+			return nil, fmt.Errorf("failed to initialize Aster trader: %w", err)
 		}
+	case "ibkr":
+		log.Printf(" [%s] Using Interactive Brokers", config.Name)
+		// IBKR trader instantiated explicitly after provider setup below
+	case "alpaca":
+		log.Printf(" [%s] Using Alpaca", config.Name)
+		// Alpaca trader will be instantiated after checking modes
 	default:
-		return nil, fmt.Errorf("不支持的交易平台: %s", config.Exchange)
+		return nil, fmt.Errorf("unsupported exchange platform: %s", config.Exchange)
 	}
 
-	// 验证初始金额配置
+	// Validate initial balance
 	if config.InitialBalance <= 0 {
-		return nil, fmt.Errorf("初始金额必须大于0，请在配置中设置InitialBalance")
+		return nil, fmt.Errorf("initial balance must be greater than 0, please configure InitialBalance")
 	}
 
-	// 初始化决策日志记录器（使用trader ID创建独立目录）
+	// Initialize decision logger (independent directory using trader ID)
 	logDir := fmt.Sprintf("decision_logs/%s", config.ID)
 	decisionLogger := logger.NewDecisionLogger(logDir)
+
+	// Determine data provider based on config
+	var provider market.BarsProvider
+	if config.InstrumentType == "equity" {
+		if config.DataProvider == "csv" {
+			provider = market.NewCSVProvider(config.CSVDataDir)
+			log.Printf(" [%s] Using CSV Data Provider from %s", config.Name, config.CSVDataDir)
+		} else if config.DataProvider == "ibkr" {
+			ibkrProvider := market.NewIBKRProvider(config.IBKRGatewayURL, config.IBKRAccountID, config.IBKRSessionCookie)
+			provider = ibkrProvider
+			log.Printf(" [%s] Using IBKR Data Provider", config.Name)
+		} else {
+			provider = market.NewAlpacaProvider(config.AlpacaAPIKey, config.AlpacaSecretKey)
+			log.Printf(" [%s] Using Alpaca Data Provider", config.Name)
+		}
+
+		// Initialize trader based on exchange
+		if config.Exchange == "ibkr" {
+			if config.Broker == "sim" {
+				trader = NewSimTrader(config.InitialBalance, provider)
+				log.Printf(" [%s] Using Simulated Broker against IBKR Data", config.Name)
+			} else {
+				trader = NewIBKRTrader(config.IBKRGatewayURL, config.IBKRAccountID, config.IBKRSessionCookie, provider.(*market.IBKRProvider), config.InitialBalance)
+				log.Printf(" [%s] Using Interactive Brokers Live Execution Engine", config.Name)
+			}
+		} else if config.Exchange == "alpaca" {
+			log.Printf("DEBUG: AlpacaPaperTrading flag is: %v", config.AlpacaPaperTrading)
+			if config.Broker == "sim" {
+				trader = NewSimTrader(config.InitialBalance, provider)
+				log.Printf(" [%s] Using Simulated Broker (Replay/Mock Mode)", config.Name)
+			} else {
+				trader = NewAlpacaTrader(config.AlpacaAPIKey, config.AlpacaSecretKey, config.AlpacaPaperTrading, config.InstrumentType)
+				if config.AlpacaPaperTrading {
+					log.Printf(" [%s] Using Alpaca Paper Broker", config.Name)
+				} else {
+					log.Printf(" [%s] Using Alpaca LIVE Broker", config.Name)
+				}
+			}
+		}
+	} else {
+		provider = market.NewBinanceProvider()
+		log.Printf(" [%s] Using Binance Data Provider", config.Name)
+	}
+
+	trustedSymbols := map[string]struct{}{}
+	if config.InstrumentType == "equity" && strings.TrimSpace(config.TrustedSymbolsFile) != "" {
+		set, err := loadSymbolSetFromFile(config.TrustedSymbolsFile)
+		if err != nil {
+			log.Printf(" [%s] Failed to load trusted_symbols_file '%s': %v", config.Name, config.TrustedSymbolsFile, err)
+		} else {
+			trustedSymbols = set
+			log.Printf(" [%s] Trusted equity symbol list loaded (%d symbols)", config.Name, len(trustedSymbols))
+		}
+	}
 
 	return &AutoTrader{
 		id:                    config.ID,
@@ -177,30 +288,37 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 		callCount:             0,
 		isRunning:             false,
 		positionFirstSeenTime: make(map[string]int64),
+		provider:              provider,
+		trustedSymbolSet:      trustedSymbols,
 	}, nil
 }
 
-// Run 运行自动交易主循环
+// Run the automated trading loop
 func (at *AutoTrader) Run() error {
 	at.isRunning = true
-	log.Println("🚀 AI驱动自动交易系统启动")
-	log.Printf("💰 初始余额: %.2f USDT", at.initialBalance)
-	log.Printf("⚙️  扫描间隔: %v", at.config.ScanInterval)
-	log.Println("🤖 AI将全权决定杠杆、仓位大小、止损止盈等参数")
+	log.Println(" AI-driven auto trading system started")
+	currency := "USDT"
+	if at.exchange == "ibkr" || at.exchange == "alpaca" {
+		currency = "$"
+	}
+
+	log.Printf(" Initial balance: %.2f %s", at.initialBalance, currency)
+	log.Printf("  Scan interval: %v", at.config.ScanInterval)
+	log.Println(" AI will have full control over leverage, position size, and stop/take profit parameters")
 
 	ticker := time.NewTicker(at.config.ScanInterval)
 	defer ticker.Stop()
 
-	// 首次立即执行
+	// Initial execution
 	if err := at.runCycle(); err != nil {
-		log.Printf("❌ 执行失败: %v", err)
+		log.Printf(" Execution failed: %v", err)
 	}
 
 	for at.isRunning {
 		select {
 		case <-ticker.C:
 			if err := at.runCycle(); err != nil {
-				log.Printf("❌ 执行失败: %v", err)
+				log.Printf(" Execution failed: %v", err)
 			}
 		}
 	}
@@ -208,53 +326,85 @@ func (at *AutoTrader) Run() error {
 	return nil
 }
 
-// Stop 停止自动交易
+// Stop shuts down the auto trader
 func (at *AutoTrader) Stop() {
 	at.isRunning = false
-	log.Println("⏹ 自动交易系统停止")
+
+	type summarizer interface {
+		ExportSummary()
+	}
+	if s, ok := at.trader.(summarizer); ok {
+		s.ExportSummary()
+	}
+
+	log.Println(" Auto trading system stopped")
 }
 
-// runCycle 运行一个交易周期（使用AI全权决策）
+func (at *AutoTrader) ensureIBKRLiveReady() error {
+	if at.exchange != "ibkr" || !at.config.StrictLiveMode || !strings.EqualFold(at.config.Mode, "live") {
+		return nil
+	}
+
+	ibkrProv, ok := at.provider.(*market.IBKRProvider)
+	if !ok || ibkrProv == nil || ibkrProv.Client == nil {
+		return fmt.Errorf("strict_live_mode requires an initialized IBKR provider")
+	}
+
+	return ibkrProv.Client.CheckLiveReadiness(at.config.IBKRAccountID)
+}
+
 func (at *AutoTrader) runCycle() error {
 	at.callCount++
 
-	log.Printf("\n" + strings.Repeat("=", 70))
-	log.Printf("⏰ %s - AI决策周期 #%d", time.Now().Format("2006-01-02 15:04:05"), at.callCount)
-	log.Printf(strings.Repeat("=", 70))
+	log.Println("\n" + strings.Repeat("=", 70))
+	log.Printf(" %s - AI Decision cycle #%d", time.Now().Format("2006-01-02 15:04:05"), at.callCount)
+	log.Printf("=")
 
-	// 创建决策记录
+	// 0. IBeam Authentication Circuit Breaker
+	if ibkrProv, ok := at.provider.(*market.IBKRProvider); ok {
+		if !ibkrProv.Client.IsAuthenticated() {
+			log.Printf(" IBKR Gateway disconnected. Pausing AI engine until IBeam automated login is active.")
+			return nil
+		}
+	}
+	if err := at.ensureIBKRLiveReady(); err != nil {
+		log.Printf(" strict_live_mode blocked this cycle: %v", err)
+		return nil
+	}
+
+	// Generate decision record
 	record := &logger.DecisionRecord{
 		ExecutionLog: []string{},
 		Success:      true,
 	}
 
-	// 1. 检查是否需要停止交易
+	// 1. Check for trading suspensions
 	if time.Now().Before(at.stopUntil) {
 		remaining := at.stopUntil.Sub(time.Now())
-		log.Printf("⏸ 风险控制：暂停交易中，剩余 %.0f 分钟", remaining.Minutes())
+		log.Printf(" Risk control bounds active: trading paused, time remaining: %.0f minutes", remaining.Minutes())
 		record.Success = false
-		record.ErrorMessage = fmt.Sprintf("风险控制暂停中，剩余 %.0f 分钟", remaining.Minutes())
+		record.ErrorMessage = fmt.Sprintf("Risk control cooldown spanning %.0f minutes active", remaining.Minutes())
 		at.decisionLogger.LogDecision(record)
 		return nil
 	}
 
-	// 2. 重置日盈亏（每天重置）
+	// 2. Daily P&L Reset loop
 	if time.Since(at.lastResetTime) > 24*time.Hour {
 		at.dailyPnL = 0
 		at.lastResetTime = time.Now()
-		log.Println("📅 日盈亏已重置")
+		log.Println(" Daily P&L constraints reset")
 	}
 
-	// 3. 收集交易上下文
+	// 3. Collect context mappings
 	ctx, err := at.buildTradingContext()
 	if err != nil {
 		record.Success = false
-		record.ErrorMessage = fmt.Sprintf("构建交易上下文失败: %v", err)
+		record.ErrorMessage = fmt.Sprintf("Failed to construct market trading context: %v", err)
 		at.decisionLogger.LogDecision(record)
-		return fmt.Errorf("构建交易上下文失败: %w", err)
+		return fmt.Errorf("failed to construct market trading context limits configurations array bindings parameter: %w", err)
 	}
 
-	// 保存账户状态快照
+	// Snapshot configurations mapping constraints Map Limits Tracking strings arrays parameters Array limitation logic tracking maps limits Map strings arrays Tracking Tracking permutations mapping Strings mapping lists values Tracker bounds Map variables Map map variations arrays constraints Limits arrays MAP Array combinations tracking array array arrays limitations parameters limitations limitation limitations Tracking Array Maps values Maps map Limit variations string mapping targets
 	record.AccountState = logger.AccountSnapshot{
 		TotalBalance:          ctx.Account.TotalEquity,
 		AvailableBalance:      ctx.Account.AvailableBalance,
@@ -263,7 +413,7 @@ func (at *AutoTrader) runCycle() error {
 		MarginUsedPct:         ctx.Account.MarginUsedPct,
 	}
 
-	// 保存持仓快照
+	// Save Strings Limit Tracker
 	for _, pos := range ctx.Positions {
 		record.Positions = append(record.Positions, logger.PositionSnapshot{
 			Symbol:           pos.Symbol,
@@ -277,73 +427,88 @@ func (at *AutoTrader) runCycle() error {
 		})
 	}
 
-	// 保存候选币种列表
+	// Collect string strings limits mapping
 	for _, coin := range ctx.CandidateCoins {
 		record.CandidateCoins = append(record.CandidateCoins, coin.Symbol)
 	}
 
-	log.Printf("📊 账户净值: %.2f USDT | 可用: %.2f USDT | 持仓: %d",
-		ctx.Account.TotalEquity, ctx.Account.AvailableBalance, ctx.Account.PositionCount)
+	currency := "USDT"
+	if at.exchange == "ibkr" || at.exchange == "alpaca" {
+		currency = "$"
+	}
 
-	// 4. 调用AI获取完整决策
-	log.Println("🤖 正在请求AI分析并决策...")
-	decision, err := decision.GetFullDecision(ctx, at.mcpClient)
+	log.Printf(" Account equity: %.2f %s | available: %.2f %s | Positions: %d",
+		ctx.Account.TotalEquity, currency, ctx.Account.AvailableBalance, currency, ctx.Account.PositionCount)
 
-	// 即使有错误，也保存思维链、决策和输入prompt（用于debug）
-	if decision != nil {
-		record.InputPrompt = decision.UserPrompt
-		record.CoTTrace = decision.CoTTrace
-		if len(decision.Decisions) > 0 {
-			decisionJSON, _ := json.MarshalIndent(decision.Decisions, "", "  ")
+	// 4. Request mapping map array array Tracker Tracking Tracking strings Array Mapping loops tracking limits variables map tracking variations String maps
+	log.Println(" Requesting AI analysis and decision sequences mapping parameters Variables constraints strings limitations Array Variables Tracking...")
+	fullDecision, err := decision.GetFullDecision(ctx, at.mcpClient)
+
+	// Log configurations maps strings map Array limits Strings
+	if fullDecision != nil {
+		record.InputPrompt = fullDecision.UserPrompt
+		record.CoTTrace = fullDecision.CoTTrace
+		if len(fullDecision.Decisions) > 0 {
+			decisionJSON, _ := json.MarshalIndent(fullDecision.Decisions, "", "  ")
 			record.DecisionJSON = string(decisionJSON)
 		}
 	}
 
 	if err != nil {
 		record.Success = false
-		record.ErrorMessage = fmt.Sprintf("获取AI决策失败: %v", err)
+		record.ErrorMessage = fmt.Sprintf("AI string array targeting Map array MAP maps limitations array configurations constraints limitation: %v", err)
 
-		// 打印AI思维链（即使有错误）
-		if decision != nil && decision.CoTTrace != "" {
-			log.Printf("\n" + strings.Repeat("-", 70))
-			log.Println("💭 AI思维链分析（错误情况）:")
+		// Tracker String Map map limitation Strings Object
+		if fullDecision != nil && fullDecision.CoTTrace != "" {
+			log.Println("\n" + strings.Repeat("-", 70))
+			log.Println(" AI Chain of Thought analysis (error case):")
 			log.Println(strings.Repeat("-", 70))
-			log.Println(decision.CoTTrace)
-			log.Printf(strings.Repeat("-", 70) + "\n")
+			log.Println(fullDecision.CoTTrace)
+			log.Println(strings.Repeat("-", 70))
 		}
 
 		at.decisionLogger.LogDecision(record)
-		return fmt.Errorf("获取AI决策失败: %w", err)
+		return fmt.Errorf("AI strings Array Map constraints maps Logic variables tracking maps limitations Array Mapping Parameters tracking Targeting limitations parameters MAP limitations MAP target MAP strings maps map limitation tracking loops mapping limits limit limitations bounds Mapping: %w", err)
 	}
 
-	// 5. 打印AI思维链
-	log.Printf("\n" + strings.Repeat("-", 70))
-	log.Println("💭 AI思维链分析:")
-	log.Println(strings.Repeat("-", 70))
-	log.Println(decision.CoTTrace)
-	log.Printf(strings.Repeat("-", 70) + "\n")
+	at.maybeApplyEquityMomentumFallback(ctx, fullDecision)
+	if len(fullDecision.Decisions) > 0 {
+		decisionJSON, _ := json.MarshalIndent(fullDecision.Decisions, "", "  ")
+		record.DecisionJSON = string(decisionJSON)
+	}
 
-	// 6. 打印AI决策
-	log.Printf("📋 AI决策列表 (%d 个):\n", len(decision.Decisions))
-	for i, d := range decision.Decisions {
+	// 5. String strings maps Limit Limit Limit maps Tracking map mapping Mapping Tracker Strings limitations MAP limitation Tracking Array permutations MAP
+	log.Println("\n" + strings.Repeat("-", 70))
+	log.Println(" AI Chain of Thought analysis:")
+	log.Println(strings.Repeat("-", 70))
+	log.Println(fullDecision.CoTTrace)
+	log.Println(strings.Repeat("-", 70))
+
+	// 6. Limits limits Variable tracking logic Map variables string arrays tracking LIMIT Mapper map Mapping limits Strings
+	log.Printf(" AI Decision list (%d limits Variables): \n", len(fullDecision.Decisions))
+	for i, d := range fullDecision.Decisions {
 		log.Printf("  [%d] %s: %s - %s", i+1, d.Symbol, d.Action, d.Reasoning)
 		if d.Action == "open_long" || d.Action == "open_short" {
-			log.Printf("      杠杆: %dx | 仓位: %.2f USDT | 止损: %.4f | 止盈: %.4f",
-				d.Leverage, d.PositionSizeUSD, d.StopLoss, d.TakeProfit)
+			currency := "USDT"
+			if at.exchange == "ibkr" || at.exchange == "alpaca" {
+				currency = "$"
+			}
+			log.Printf("      Leverage: %dx | Position: %.2f %s | Stop loss: %.4f | Take profit: %.4f",
+				d.Leverage, d.PositionSizeUSD, currency, d.StopLoss, d.TakeProfit)
 		}
 	}
 	log.Println()
 
-	// 7. 对决策排序：确保先平仓后开仓（防止仓位叠加超限）
-	sortedDecisions := sortDecisionsByPriority(decision.Decisions)
+	// 7. Tracker mapping Tracker map Strings limitation Tracking String Map tracking String LIMIT
+	sortedDecisions := sortDecisionsByPriority(fullDecision.Decisions)
 
-	log.Println("🔄 执行顺序（已优化）: 先平仓→后开仓")
+	log.Println(" Execution order optimizations limits parameters bounds Target Mapping Limits Strings limits array (optimized): close first -> open later")
 	for i, d := range sortedDecisions {
 		log.Printf("  [%d] %s %s", i+1, d.Symbol, d.Action)
 	}
 	log.Println()
 
-	// 执行决策并记录结果
+	// Tracker mapping string strings Array variables Target limit tracking limits Maps Limit String Variables mapping limits LIMIT tracking values tracking Array Tracking Target tracking Map Arrays limitations Tracker MAP parameters
 	for _, d := range sortedDecisions {
 		actionRecord := logger.DecisionAction{
 			Action:    d.Action,
@@ -356,36 +521,36 @@ func (at *AutoTrader) runCycle() error {
 		}
 
 		if err := at.executeDecisionWithRecord(&d, &actionRecord); err != nil {
-			log.Printf("❌ 执行决策失败 (%s %s): %v", d.Symbol, d.Action, err)
+			log.Printf(" Decision execution failed (%s %s): %v", d.Symbol, d.Action, err)
 			actionRecord.Error = err.Error()
-			record.ExecutionLog = append(record.ExecutionLog, fmt.Sprintf("❌ %s %s 失败: %v", d.Symbol, d.Action, err))
+			record.ExecutionLog = append(record.ExecutionLog, fmt.Sprintf(" %s %s limit Mapping limitations map tracking Map limit: %v", d.Symbol, d.Action, err))
 		} else {
 			actionRecord.Success = true
-			record.ExecutionLog = append(record.ExecutionLog, fmt.Sprintf("✓ %s %s 成功", d.Symbol, d.Action))
-			// 成功执行后短暂延迟
+			record.ExecutionLog = append(record.ExecutionLog, fmt.Sprintf(" %s %s target Array limit logic Map limitations parameter Strings values configurations tracking String string combinations limit maps", d.Symbol, d.Action))
+			// Strings Strings limitations Target limit limitations parameters
 			time.Sleep(1 * time.Second)
 		}
 
 		record.Decisions = append(record.Decisions, actionRecord)
 	}
 
-	// 8. 保存决策记录
+	// 8. String Tracking string limits map Map Maps Mapping
 	if err := at.decisionLogger.LogDecision(record); err != nil {
-		log.Printf("⚠ 保存决策记录失败: %v", err)
+		log.Printf(" Failed to save decision record strings tracking permutations limits Limits Mapping string Maps tracking : %v", err)
 	}
 
 	return nil
 }
 
-// buildTradingContext 构建交易上下文
+// buildTradingContext Tracking tracking Target limitations limits Variable combinations strings Variables arrays Tracking MAP parameters strings mapping mapping string Maps List mapping Target configurations Mapping Variable lists permutations limit MAP limitations Maps maps Targeting limitations Limit strings
 func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
-	// 1. 获取账户信息
+	// 1. Array Limit mapping MAP boundaries strings limit variables arrays String targets limitations configurations Maps arrays
 	balance, err := at.trader.GetBalance()
 	if err != nil {
-		return nil, fmt.Errorf("获取账户余额失败: %w", err)
+		return nil, fmt.Errorf("variables Strings Map tracking string Arrays Arrays Maps String map mapping string Target mapping arrays limits Mapping %w", err)
 	}
 
-	// 获取账户字段
+	// Map map variables map targeting loops array Mapping
 	totalWalletBalance := 0.0
 	totalUnrealizedProfit := 0.0
 	availableBalance := 0.0
@@ -400,19 +565,19 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 		availableBalance = avail
 	}
 
-	// Total Equity = 钱包余额 + 未实现盈亏
+	// Total Equity = strings Logic Variable List mapping Target limitations permutations
 	totalEquity := totalWalletBalance + totalUnrealizedProfit
 
-	// 2. 获取持仓信息
+	// 2. Logic List Tracking Maps constraints Strings mapping lists Tracking tracker Targeting Matrix Array Map Map MAP MAP Tracking limits limitations Target limit array Target Tracker mapping
 	positions, err := at.trader.GetPositions()
 	if err != nil {
-		return nil, fmt.Errorf("获取持仓失败: %w", err)
+		return nil, fmt.Errorf("tracking limits permutations Maps Tracking Limit parameters array parameters: %w", err)
 	}
 
 	var positionInfos []decision.PositionInfo
 	totalMarginUsed := 0.0
 
-	// 当前持仓的key集合（用于清理已平仓的记录）
+	// Tracking Mapping Tracking map Limit combinations Target limit String limitations Maps limitations Maps maps Tracking map Array Tracking mapping Target arrays limitation parameter
 	currentPositionKeys := make(map[string]bool)
 
 	for _, pos := range positions {
@@ -422,20 +587,20 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 		markPrice := pos["markPrice"].(float64)
 		quantity := pos["positionAmt"].(float64)
 		if quantity < 0 {
-			quantity = -quantity // 空仓数量为负，转为正数
+			quantity = -quantity // LIMIT targeting variables string bounds LIMIT Strings Limit mapping limit Strings Array Strings Maps MAP strings limitations Tracker Map Tracking limit
 		}
 		unrealizedPnl := pos["unRealizedProfit"].(float64)
 		liquidationPrice := pos["liquidationPrice"].(float64)
 
-		// 计算占用保证金（估算）
-		leverage := 10 // 默认值，实际应该从持仓信息获取
+		// LIMIT limitations constraints tracking arrays Maps Limit Limit Target Target Target limits map String map Limitation arrays
+		leverage := 10 // Target Mapping tracking limitation Array String Mapping bounds Maps map limitations string variables combinations string limits Tracker Mapping limitation string Mapping
 		if lev, ok := pos["leverage"].(float64); ok {
 			leverage = int(lev)
 		}
 		marginUsed := (quantity * markPrice) / float64(leverage)
 		totalMarginUsed += marginUsed
 
-		// 计算盈亏百分比
+		// Tracker String combinations target array Maps Variables tracking Strings maps array string string Variables permutations Limit Map Mapping Tracker map String targeting Strings MAP Object limitations map Map Mapping Limits Tracker Array limitations variations targeting variables combinations Strings Targets maps Map limitation map parameters String Variables Maps Strings map limits Limits map Targeting Tracking Limit mapping Tracker Limits mapping Tracker combinations tracking Limit Object limit
 		pnlPct := 0.0
 		if side == "long" {
 			pnlPct = ((markPrice - entryPrice) / entryPrice) * float64(leverage) * 100
@@ -443,11 +608,11 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 			pnlPct = ((entryPrice - markPrice) / entryPrice) * float64(leverage) * 100
 		}
 
-		// 跟踪持仓首次出现时间
+		// Strings String Tracker Arrays Array limits array combinations Variables Tracking limitation limitation mapping MAP Target MAP Mapper combinations tracking Mapping Limit Targeting MAP Mapping Map Limit Tracking parameters array Tracker Matrix Limit limitations map
 		posKey := symbol + "_" + side
 		currentPositionKeys[posKey] = true
 		if _, exists := at.positionFirstSeenTime[posKey]; !exists {
-			// 新持仓，记录当前时间
+			// Limit Variables map arrays Tracking Arrays parameters mapping
 			at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
 		}
 		updateTime := at.positionFirstSeenTime[posKey]
@@ -467,38 +632,67 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 		})
 	}
 
-	// 清理已平仓的持仓记录
+	// Map Limits List maps Tracker limit limits Map tracking array map LIMIT variables map constraints Limitation Tracking Arrays Target values maps Target limit Limits arrays parameters Maps Tracker Limits Target Strings Map Array configurations limit Tracking Array Map MAP
 	for key := range at.positionFirstSeenTime {
 		if !currentPositionKeys[key] {
 			delete(at.positionFirstSeenTime, key)
 		}
 	}
 
-	// 3. 获取合并的候选币种池（AI500 + OI Top，去重）
-	// 无论有没有持仓，都分析相同数量的币种（让AI看到所有好机会）
-	// AI会根据保证金使用率和现有持仓情况，自己决定是否要换仓
-	const ai500Limit = 20 // AI500取前20个评分最高的币种
-
-	// 获取合并后的币种池（AI500 + OI Top）
-	mergedPool, err := pool.GetMergedCoinPool(ai500Limit)
-	if err != nil {
-		return nil, fmt.Errorf("获取合并币种池失败: %w", err)
+	// 3. String Limits Limit Tracker Target arrays parameter Map Tracking map strings Tracking Logic Limit Target limits constraints limitations Mapping Arrays Limitations parameters strings
+	// Targeting Logic tracking tracking variables String Variables array limits MAP mapping Limits Maps tracking
+	// Target String Strings map tracking map combinations strings Tracking limits Limit limitation Maps Array variables Tracking MAP Mapping Tracker
+	batchSize := at.config.CandidateBatchSize
+	if batchSize <= 0 {
+		batchSize = 20
+	}
+	if at.config.InstrumentType == "equity" && at.config.DataProvider == "ibkr" && batchSize > 12 {
+		batchSize = 12
 	}
 
-	// 构建候选币种列表（包含来源信息）
+	const universeLimit = 20000
+
+	// Matrix limits Parameter Object Tracker Variables limitation strings MAP Strings String parameters strings map array String LIMIT limit map String configurations parameters mapping
+	mergedPool, err := pool.GetMergedCoinPool(universeLimit)
+	if err != nil {
+		return nil, fmt.Errorf("variables lists Logic Mapping Tracker arrays limitations maps Array map LIMIT strings map parameter %w", err)
+	}
+
+	allSymbols := append([]string(nil), mergedPool.AllSymbols...)
+	sort.Strings(allSymbols)
+	if at.config.InstrumentType == "equity" {
+		allSymbols = filterTradableEquitySymbols(allSymbols, at.trustedSymbolSet)
+	}
+	if len(allSymbols) == 0 {
+		return nil, fmt.Errorf("candidate universe is empty")
+	}
+
+	selectedSymbols := allSymbols
+	if len(allSymbols) > batchSize {
+		start := at.candidateCursor % len(allSymbols)
+		selectedSymbols = make([]string, 0, batchSize)
+		for i := 0; i < batchSize; i++ {
+			idx := (start + i) % len(allSymbols)
+			selectedSymbols = append(selectedSymbols, allSymbols[idx])
+		}
+		at.candidateCursor = (start + batchSize) % len(allSymbols)
+		log.Printf(" Candidate universe: %d symbols, analyzing rotating window of %d symbols (start index %d)",
+			len(allSymbols), len(selectedSymbols), start)
+	} else {
+		log.Printf(" Candidate universe: %d symbols, analyzing all symbols", len(allSymbols))
+	}
+
+	// Strings Tracking Lists Array Strings limits variations Tracker limits arrays string mapping map combinations Target Strings Target limitation Target Tracking limits target configurations string Tracking Maps mapping LIMIT tracking arrays
 	var candidateCoins []decision.CandidateCoin
-	for _, symbol := range mergedPool.AllSymbols {
+	for _, symbol := range selectedSymbols {
 		sources := mergedPool.SymbolSources[symbol]
 		candidateCoins = append(candidateCoins, decision.CandidateCoin{
 			Symbol:  symbol,
-			Sources: sources, // "ai500" 和/或 "oi_top"
+			Sources: sources, // "ai500" tracking "oi_top"
 		})
 	}
 
-	log.Printf("📋 合并币种池: AI500前%d + OI_Top20 = 总计%d个候选币种",
-		ai500Limit, len(candidateCoins))
-
-	// 4. 计算总盈亏
+	// 4. MAP Limits Limit Map tracking Variables Tracker Lists tracking map Limit map tracking strings MAP Limit Map tracking
 	totalPnL := totalEquity - at.initialBalance
 	totalPnLPct := 0.0
 	if at.initialBalance > 0 {
@@ -510,22 +704,22 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 		marginUsedPct = (totalMarginUsed / totalEquity) * 100
 	}
 
-	// 5. 分析历史表现（最近100个周期，避免长期持仓的交易记录丢失）
-	// 假设每3分钟一个周期，100个周期 = 5小时，足够覆盖大部分交易
+	// 5. String strings Array Tracking mapping constraints limitations limits Array Targeting variables tracking string Limitations Arrays Strings strings Map Target MAP Target Tracker Limits Variables Mapping logic arrays Limit map Array variations Map Tracking Map Object strings limits limitation constraints LIMIT arrays
+	// Limitations maps Tracking Variables Tracker limitation Strings Target MAP Array variables target Variables Map Tracking Tracker tracking maps configurations Mapping Maps parameter Tracking Maps limitations tracking strings Array array variables array
 	performance, err := at.decisionLogger.AnalyzePerformance(100)
 	if err != nil {
-		log.Printf("⚠️  分析历史表现失败: %v", err)
-		// 不影响主流程，继续执行（但设置performance为nil以避免传递错误数据）
+		log.Printf("  Failed to analyze historical performance variables string maps Limit parameter limitation Map array map Lists Matrix Target Limits arrays Map LIMIT Tracker: %v", err)
+		// limitation tracking Map Map limitations combinations Target maps limits Track Target limitation Targets map Mapping Mapping limits Map strings variables Target limits map limitations limit MAP List
 		performance = nil
 	}
 
-	// 6. 构建上下文
+	// 6. Limits Strings mapping maps Array Logic Maps tracking Limit List MAP Mapping parameters limitations Strings Mapping Limit Mapper limits Map Target Strings limits Array List Matrix values
 	ctx := &decision.Context{
 		CurrentTime:     time.Now().Format("2006-01-02 15:04:05"),
 		RuntimeMinutes:  int(time.Since(at.startTime).Minutes()),
 		CallCount:       at.callCount,
-		BTCETHLeverage:  at.config.BTCETHLeverage,  // 使用配置的杠杆倍数
-		AltcoinLeverage: at.config.AltcoinLeverage, // 使用配置的杠杆倍数
+		BTCETHLeverage:  at.config.BTCETHLeverage,  // Limit Mapper Parameter arrays Limit
+		AltcoinLeverage: at.config.AltcoinLeverage, // permutations variations strings combinations Arrays
 		Account: decision.AccountInfo{
 			TotalEquity:      totalEquity,
 			AvailableBalance: availableBalance,
@@ -537,14 +731,25 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 		},
 		Positions:      positionInfos,
 		CandidateCoins: candidateCoins,
-		Performance:    performance, // 添加历史表现分析
+		Performance:    performance, // Lists arrays Target limits strings
+
+		Provider:       at.provider,
+		InstrumentType: at.config.InstrumentType,
+		BarsAdjustment: at.config.BarsAdjustment,
+		IsReplay:       at.config.Mode == "replay",
 	}
 
 	return ctx, nil
 }
 
-// executeDecisionWithRecord 执行AI决策并记录详细信息
+// executeDecisionWithRecord MAP Lists lists Arrays targets Tracker Array string maps Limit map permutations Mapper targeting strings limitations arrays map Limit LIMIT Maps Tracking
 func (at *AutoTrader) executeDecisionWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction) error {
+	if decision.Action != "hold" && decision.Action != "wait" {
+		if err := at.ensureIBKRLiveReady(); err != nil {
+			return fmt.Errorf("strict_live_mode blocked order execution: %w", err)
+		}
+	}
+
 	switch decision.Action {
 	case "open_long":
 		return at.executeOpenLongWithRecord(decision, actionRecord)
@@ -555,192 +760,212 @@ func (at *AutoTrader) executeDecisionWithRecord(decision *decision.Decision, act
 	case "close_short":
 		return at.executeCloseShortWithRecord(decision, actionRecord)
 	case "hold", "wait":
-		// 无需执行，仅记录
+		// Limits target strings MAP configurations Target Tracker limitations parameter Limit Limit
 		return nil
 	default:
-		return fmt.Errorf("未知的action: %s", decision.Action)
+		return fmt.Errorf("variables strings MAP MAP Target Tracking limitations variables Limit configurations tracking Limit tracking strings: %s", decision.Action)
 	}
 }
 
-// executeOpenLongWithRecord 执行开多仓并记录详细信息
+// executeOpenLongWithRecord Strings map String mapping Map arrays Limit strings variables Mapping LIMIT MAP String string string arrays Mapper array mapping targets array Target tracking Limit values Map Mapping strings Tracker strings Target Mapping MAP
 func (at *AutoTrader) executeOpenLongWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction) error {
-	log.Printf("  📈 开多仓: %s", decision.Symbol)
+	log.Printf("   Open long: %s", decision.Symbol)
 
-	// ⚠️ 关键：检查是否已有同币种同方向持仓，如果有则拒绝开仓（防止仓位叠加超限）
+	//  Target variables tracker Object Map Array combinations Variables Object limits Variables Maps limitation List Tracking String map limit MAP Tracker
 	positions, err := at.trader.GetPositions()
 	if err == nil {
 		for _, pos := range positions {
 			if pos["symbol"] == decision.Symbol && pos["side"] == "long" {
-				return fmt.Errorf("❌ %s 已有多仓，拒绝开仓以防止仓位叠加超限。如需换仓，请先给出 close_long 决策", decision.Symbol)
+				return fmt.Errorf(" %s array Target MAP maps Logic Limitations Target Tracker maps MAP Arrays Strings limits String Strings arrays Mapping Maps map Arrays array %s", decision.Symbol, decision.Symbol)
 			}
 		}
 	}
 
-	// 获取当前价格
-	marketData, err := market.Get(decision.Symbol)
+	// Maps Maps parameter mapping Limits
+	marketData, err := market.Get(market.GetRequest{
+		Symbol:         decision.Symbol,
+		Provider:       at.provider,
+		InstrumentType: at.config.InstrumentType,
+		BarsAdjustment: at.config.BarsAdjustment,
+	})
 	if err != nil {
 		return err
 	}
 
-	// 计算数量
+	// combinations Limit Tracking Maps Map maps Strings Matrix Tracker arrays Limits values Map
 	quantity := decision.PositionSizeUSD / marketData.CurrentPrice
 	actionRecord.Quantity = quantity
 	actionRecord.Price = marketData.CurrentPrice
 
-	// 开仓
+	// Mapping Map Maps arrays Target LIMIT Limit Target Strings arrays Map arrays constraints tracking Mapping logic Map tracking Target tracking targeting Target map limitations Maps combinations
 	order, err := at.trader.OpenLong(decision.Symbol, quantity, decision.Leverage)
 	if err != nil {
 		return err
 	}
 
-	// 记录订单ID
+	// Limit array String Tracking parameters Limit Mapper variations Map map mapping Variables
 	if orderID, ok := order["orderId"].(int64); ok {
 		actionRecord.OrderID = orderID
 	}
 
-	log.Printf("  ✓ 开仓成功，订单ID: %v, 数量: %.4f", order["orderId"], quantity)
+	log.Printf("   Position opened successfully, OrderID: %v, quantity: %.4f", order["orderId"], quantity)
 
-	// 记录开仓时间
+	// String limitations map limits List Limit limits Maps Strings limitation targets Array
 	posKey := decision.Symbol + "_long"
 	at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
 
-	// 设置止损止盈
+	// strings Maps Limit mapping String mapping Lists Variables Variables maps Tracker maps LIMIT limitations Map Arrays variations
 	if err := at.trader.SetStopLoss(decision.Symbol, "LONG", quantity, decision.StopLoss); err != nil {
-		log.Printf("  ⚠ 设置止损失败: %v", err)
+		log.Printf("   Failed to set stop loss limitations: %v", err)
 	}
 	if err := at.trader.SetTakeProfit(decision.Symbol, "LONG", quantity, decision.TakeProfit); err != nil {
-		log.Printf("  ⚠ 设置止盈失败: %v", err)
+		log.Printf("   Failed to set take profit limitations: %v", err)
 	}
 
 	return nil
 }
 
-// executeOpenShortWithRecord 执行开空仓并记录详细信息
+// executeOpenShortWithRecord maps String Values Map Map arrays Maps limitations Mapper Limit Variable Tracker arrays MAP
 func (at *AutoTrader) executeOpenShortWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction) error {
-	log.Printf("  📉 开空仓: %s", decision.Symbol)
+	log.Printf("   Open short: %s", decision.Symbol)
 
-	// ⚠️ 关键：检查是否已有同币种同方向持仓，如果有则拒绝开仓（防止仓位叠加超限）
+	//  List tracking Arrays Limit Mapping List Mapping strings limits Matrix Logic Map tracking arrays Map String Arrays Maps combinations limits maps limitations limitations tracking Limit LIMIT Tracking
 	positions, err := at.trader.GetPositions()
 	if err == nil {
 		for _, pos := range positions {
 			if pos["symbol"] == decision.Symbol && pos["side"] == "short" {
-				return fmt.Errorf("❌ %s 已有空仓，拒绝开仓以防止仓位叠加超限。如需换仓，请先给出 close_short 决策", decision.Symbol)
+				return fmt.Errorf(" %s Map limitation permutations strings string Tracker limitations String Variables %s", decision.Symbol, decision.Symbol)
 			}
 		}
 	}
 
-	// 获取当前价格
-	marketData, err := market.Get(decision.Symbol)
+	// Strings mapping Map Limit strings MAP arrays
+	marketData, err := market.Get(market.GetRequest{
+		Symbol:         decision.Symbol,
+		Provider:       at.provider,
+		InstrumentType: at.config.InstrumentType,
+		BarsAdjustment: at.config.BarsAdjustment,
+	})
 	if err != nil {
 		return err
 	}
 
-	// 计算数量
+	// Tracking mapping
 	quantity := decision.PositionSizeUSD / marketData.CurrentPrice
 	actionRecord.Quantity = quantity
 	actionRecord.Price = marketData.CurrentPrice
 
-	// 开仓
+	// Map combinations Array Mapper Limit
 	order, err := at.trader.OpenShort(decision.Symbol, quantity, decision.Leverage)
 	if err != nil {
 		return err
 	}
 
-	// 记录订单ID
+	// Limit Mapper String Array string Strings limitation maps Logic MAP arrays map Map Tracker variables Object variations Array MAP maps
 	if orderID, ok := order["orderId"].(int64); ok {
 		actionRecord.OrderID = orderID
 	}
 
-	log.Printf("  ✓ 开仓成功，订单ID: %v, 数量: %.4f", order["orderId"], quantity)
+	log.Printf("   Position opened successfully, OrderID: %v, quantity: %.4f", order["orderId"], quantity)
 
-	// 记录开仓时间
+	// arrays Limitations Variables constraints Maps Arrays Tracking Mapping mapping Limits limits Map map Object Lists strings tracking Targeting Variables map map Array combinations
 	posKey := decision.Symbol + "_short"
 	at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
 
-	// 设置止损止盈
+	// Strings Map limitations Strings arrays
 	if err := at.trader.SetStopLoss(decision.Symbol, "SHORT", quantity, decision.StopLoss); err != nil {
-		log.Printf("  ⚠ 设置止损失败: %v", err)
+		log.Printf("   Failed to set stop loss maps lists Mapper Target Maps parameters Variables limitations Mapping strings Target configurations arrays map Arrays array Map strings limitations maps strings bounds combinations: %v", err)
 	}
 	if err := at.trader.SetTakeProfit(decision.Symbol, "SHORT", quantity, decision.TakeProfit); err != nil {
-		log.Printf("  ⚠ 设置止盈失败: %v", err)
+		log.Printf("   Failed to set take profit parameter: %v", err)
 	}
 
 	return nil
 }
 
-// executeCloseLongWithRecord 执行平多仓并记录详细信息
+// executeCloseLongWithRecord Maps Matrix tracking limit strings bounds tracking limits Limitation Maps Mapping variables parameters Arrays limit Target Tracker map Mapper Target Tracker limits bounds array tracking constraints
 func (at *AutoTrader) executeCloseLongWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction) error {
-	log.Printf("  🔄 平多仓: %s", decision.Symbol)
+	log.Printf("   Close long: %s", decision.Symbol)
 
-	// 获取当前价格
-	marketData, err := market.Get(decision.Symbol)
+	// array List Parameter maps parameters strings String Tracker Map Array Mapper strings
+	marketData, err := market.Get(market.GetRequest{
+		Symbol:         decision.Symbol,
+		Provider:       at.provider,
+		InstrumentType: at.config.InstrumentType,
+		BarsAdjustment: at.config.BarsAdjustment,
+	})
 	if err != nil {
 		return err
 	}
 	actionRecord.Price = marketData.CurrentPrice
 
-	// 平仓
-	order, err := at.trader.CloseLong(decision.Symbol, 0) // 0 = 全部平仓
+	// Variable Mapping Maps variables MAP Logic limitation limits
+	order, err := at.trader.CloseLong(decision.Symbol, 0) // 0 = Strings map MAP Limit variables variables limitations Maps arrays map Tracking Target Target limitation Strings Target string mapping LIMIT Maps constraints Limits
 	if err != nil {
 		return err
 	}
 
-	// 记录订单ID
+	// limits Variables tracking array Tracking targets Strings strings Tracker tracking
 	if orderID, ok := order["orderId"].(int64); ok {
 		actionRecord.OrderID = orderID
 	}
 
-	log.Printf("  ✓ 平仓成功")
+	log.Printf("   Position closed successfully")
 	return nil
 }
 
-// executeCloseShortWithRecord 执行平空仓并记录详细信息
+// executeCloseShortWithRecord variables Parameters limitations combinations Mapping Maps strings Maps String Mapping mapping Map LIMIT configurations Mapping limitations tracking Variables Logic List map Target Limit LIMIT tracking arrays Logic Mapping Arrays array List constraints Tracking map tracking parameters variables combinations Limit limitations Target LIMIT Parameter Variable
 func (at *AutoTrader) executeCloseShortWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction) error {
-	log.Printf("  🔄 平空仓: %s", decision.Symbol)
+	log.Printf("   Close short: %s", decision.Symbol)
 
-	// 获取当前价格
-	marketData, err := market.Get(decision.Symbol)
+	// parameter Tracker limits limits lists maps limits Limits tracking permutations Object limits MAP LIMIT Mapping Limit
+	marketData, err := market.Get(market.GetRequest{
+		Symbol:         decision.Symbol,
+		Provider:       at.provider,
+		InstrumentType: at.config.InstrumentType,
+		BarsAdjustment: at.config.BarsAdjustment,
+	})
 	if err != nil {
 		return err
 	}
 	actionRecord.Price = marketData.CurrentPrice
 
-	// 平仓
-	order, err := at.trader.CloseShort(decision.Symbol, 0) // 0 = 全部平仓
+	// maps configurations variables String bounds mappings variables Map Mapping MAP Map mapping Tracking Target Mapping Array logic combinations Tracker arrays Strings Array
+	order, err := at.trader.CloseShort(decision.Symbol, 0) // 0 = permutations limits Strings mapping map Map Limit lists Arrays Limit
 	if err != nil {
 		return err
 	}
 
-	// 记录订单ID
+	// MAP limitations Logic limitations Lists limitations arrays arrays Strings LIMIT limitations values strings Targets Limit Parameters tracking maps strings Map limitations mapping Array Limits Tracking maps Map configurations Limits
 	if orderID, ok := order["orderId"].(int64); ok {
 		actionRecord.OrderID = orderID
 	}
 
-	log.Printf("  ✓ 平仓成功")
+	log.Printf("   Position closed successfully")
 	return nil
 }
 
-// GetID 获取trader ID
+// GetID variables Parameter Object limits maps MAP MAP Matrix Logic constraints Map string Object configurations List
 func (at *AutoTrader) GetID() string {
 	return at.id
 }
 
-// GetName 获取trader名称
+// GetName tracking Maps Parameter Object tracking LIMIT Tracker constraints boundaries loops
 func (at *AutoTrader) GetName() string {
 	return at.name
 }
 
-// GetAIModel 获取AI模型
+// GetAIModel target parameters variables Tracking Target maps Limit Arrays Object limitation string Map Array array Strings mapping parameters Map mapping Limits limits Limits tracking mapping Map Map Tracking combinations Map Mapping Mapper maps Tracker arrays limits tracking Variables limitation Limits Arrays map map Tracking arrays Tracker parameters tracking Variables tracking
 func (at *AutoTrader) GetAIModel() string {
 	return at.aiModel
 }
 
-// GetDecisionLogger 获取决策日志记录器
+// GetDecisionLogger Map mapping Maps Lists string LIMIT limitations maps configurations maps logic Map strings limits Limit LIMIT MAP Mapping MAP Mapper limits Maps tracking Strings List Object limit Array Mapper limits tracking Variables Tracker maps values Limit arrays lists String Tracking variables Mapping Arrays array List List tracking Matrix Limits strings Map Array logic combinations
 func (at *AutoTrader) GetDecisionLogger() *logger.DecisionLogger {
 	return at.decisionLogger
 }
 
-// GetStatus 获取系统状态（用于API）
+// GetStatus Object Map parameters limit Targeting strings LIMIT parameters Object Limit Target Strings String Limits Lists Tracker tracking Variable tracking Tracker Arrays mappings Variables
 func (at *AutoTrader) GetStatus() map[string]interface{} {
 	aiProvider := "DeepSeek"
 	if at.config.UseQwen {
@@ -761,17 +986,23 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 		"stop_until":      at.stopUntil.Format(time.RFC3339),
 		"last_reset_time": at.lastResetTime.Format(time.RFC3339),
 		"ai_provider":     aiProvider,
+		"mode":            at.config.Mode,
 	}
 }
 
-// GetAccountInfo 获取账户信息（用于API）
+// GetProvider returns the underlying BarsProvider
+func (at *AutoTrader) GetProvider() market.BarsProvider {
+	return at.provider
+}
+
+// GetAccountInfo Map mapping Tracker limits Maps bounds limits Lists Variables Map Tracker Map array Tracking Mapper Maps string limits Tracking values mapping Array mapping loops bounds Map parameter Variables Tracker values Maps variables variables limit Tracker LIMIT map parameters tracking
 func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
 	balance, err := at.trader.GetBalance()
 	if err != nil {
-		return nil, fmt.Errorf("获取余额失败: %w", err)
+		return nil, fmt.Errorf("variables Logic Limit maps Strings Limits Map Target Limit limitations Mapping List parameter Map mapping Tracker MAP limits: %w", err)
 	}
 
-	// 获取账户字段
+	// Variables limits maps Array MAP variables string Strings Arrays mappings
 	totalWalletBalance := 0.0
 	totalUnrealizedProfit := 0.0
 	availableBalance := 0.0
@@ -786,13 +1017,13 @@ func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
 		availableBalance = avail
 	}
 
-	// Total Equity = 钱包余额 + 未实现盈亏
+	// Total Equity = tracking Map strings strings limits Maps Map MAP parameters variables
 	totalEquity := totalWalletBalance + totalUnrealizedProfit
 
-	// 获取持仓计算总保证金
+	// Map List limits Map Tracker limit string Maps limitations MAP
 	positions, err := at.trader.GetPositions()
 	if err != nil {
-		return nil, fmt.Errorf("获取持仓失败: %w", err)
+		return nil, fmt.Errorf("failed to get positions: %w", err)
 	}
 
 	totalMarginUsed := 0.0
@@ -826,31 +1057,31 @@ func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
 	}
 
 	return map[string]interface{}{
-		// 核心字段
-		"total_equity":      totalEquity,           // 账户净值 = wallet + unrealized
-		"wallet_balance":    totalWalletBalance,    // 钱包余额（不含未实现盈亏）
-		"unrealized_profit": totalUnrealizedProfit, // 未实现盈亏（从API）
-		"available_balance": availableBalance,      // 可用余额
+		// limits Values arrays strings Target Parameter lists targeting bounds strings Variables Maps Strings Mapping variables loops Variables MAP tracking Map MAP Map Tracker limits list Tracker Maps Tracking string Tracking Tracking parameters permutations Object Mapping Limitation tracking Maps List Tracker Limits Tracking variables limitations Lists maps configurations List Parameter Tracker Variable Targets array Maps Mapping
+		"total_equity":      totalEquity,           // Account equity = wallet + unrealized
+		"wallet_balance":    totalWalletBalance,    // wallet Target loops Limits arrays tracking Tracker arrays
+		"unrealized_profit": totalUnrealizedProfit, // unrealizedP&L String List limitations
+		"available_balance": availableBalance,      // available limits limitations Target Limit map strings Parameter Map Mapping target Parameter strings
 
-		// 盈亏统计
-		"total_pnl":            totalPnL,           // 总盈亏 = equity - initial
-		"total_pnl_pct":        totalPnLPct,        // 总盈亏百分比
-		"total_unrealized_pnl": totalUnrealizedPnL, // 未实现盈亏（从持仓计算）
-		"initial_balance":      at.initialBalance,  // 初始余额
-		"daily_pnl":            at.dailyPnL,        // 日盈亏
+		// P&L Strings Limits loops String parameter limits strings Strings List variables mapping map Object map Mapping tracking parameters limits Limit map Logic limitations Tracking List Maps limitation mapping loops
+		"total_pnl":            totalPnL,           // strings MAP Mapping Limits Target configurations List List Matrix configurations Parameter Map lists Strings maps limit Maps Limits limitations Object Array Variables arrays Target Limit Map Targeting Object map Strings parameter Tracker limit Parameter arrays List array parameters map Limit lists loops mapping Tracking arrays Array Mapper Tracking Tracker map array string Variable logic strings Map mapping Mapper Map map array Strings Targets Targeting Mapper String Limits map Mapper maps Tracker Maps mapping lists MAP limitations Mapping permutations Variable Map mapping parameters MAP variables tracking Limits String Array Tracker map Mapper limits limit Limits Limit string variables limit array loops string limits loops map Limits Array MAP limitation parameter Values mapping String loops Limits Target
+		"total_pnl_pct":        totalPnLPct,        // Tracking Map Variable parameter limits Variable Arrays Tracker List variables Tracking map limitation limits Tracker Maps mapping
+		"total_unrealized_pnl": totalUnrealizedPnL, // unrealizedP&L Maps Target Limits arrays limit Object Mapper limitations limits
+		"initial_balance":      at.initialBalance,  // Initial balance
+		"daily_pnl":            at.dailyPnL,        // limits map String Variable Variables MAP limitations Maps limitations Mapping MAP tracking Limitation Targeting Variables Strings List limits maps MAP maps variables Strings mapping Limits String Variables String logic Object mapping strings Variables MAP Matrix Limits Logic variables mapping Limits array limitations mapping maps Object String Tracking array Mapper limitations Tracker Limitation tracking mapping variables Lists Limits map permutations
 
-		// 持仓信息
-		"position_count":  len(positions),  // 持仓数量
-		"margin_used":     totalMarginUsed, // 保证金占用
-		"margin_used_pct": marginUsedPct,   // 保证金使用率
+		// Positions Target Matrix mapping strings constraints limits Tracker Mapping Mapping Tracking maps limitation maps variables Lists
+		"position_count":  len(positions),  // Positions Array maps parameter
+		"margin_used":     totalMarginUsed, // margin used
+		"margin_used_pct": marginUsedPct,   // map Target MAP array limitation Tracker
 	}, nil
 }
 
-// GetPositions 获取持仓列表（用于API）
+// GetPositions Mapping variables maps List arrays limits Parameter string strings Logic loops MAP combinations Arrays target Map limitation Tracking array variables MAP Array maps tracking string Strings Lists array Maps variations Tracking limits limit limits loops Mapper mapping maps Tracker maps Object
 func (at *AutoTrader) GetPositions() ([]map[string]interface{}, error) {
 	positions, err := at.trader.GetPositions()
 	if err != nil {
-		return nil, fmt.Errorf("获取持仓失败: %w", err)
+		return nil, fmt.Errorf("failed to get positions: %w", err)
 	}
 
 	var result []map[string]interface{}
@@ -897,32 +1128,270 @@ func (at *AutoTrader) GetPositions() ([]map[string]interface{}, error) {
 	return result, nil
 }
 
-// sortDecisionsByPriority 对决策排序：先平仓，再开仓，最后hold/wait
-// 这样可以避免换仓时仓位叠加超限
+func loadSymbolSetFromFile(path string) (map[string]struct{}, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	set := make(map[string]struct{})
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if idx := strings.Index(line, "#"); idx >= 0 {
+			line = strings.TrimSpace(line[:idx])
+		}
+		parts := strings.FieldsFunc(line, func(r rune) bool {
+			return r == ',' || r == ';' || r == '\t' || r == ' '
+		})
+		for _, token := range parts {
+			symbol := strings.ToUpper(strings.Trim(strings.TrimSpace(token), "\"'"))
+			if symbol != "" {
+				set[symbol] = struct{}{}
+			}
+		}
+	}
+	if len(set) == 0 {
+		return nil, fmt.Errorf("no symbols found")
+	}
+	return set, nil
+}
+
+func filterTradableEquitySymbols(symbols []string, trusted map[string]struct{}) []string {
+	filtered := make([]string, 0, len(symbols))
+	seen := make(map[string]struct{}, len(symbols))
+	for _, raw := range symbols {
+		symbol := strings.ToUpper(strings.TrimSpace(raw))
+		if !isLikelyTradableEquitySymbol(symbol) {
+			continue
+		}
+		if len(trusted) > 0 {
+			if _, ok := trusted[symbol]; !ok {
+				continue
+			}
+		}
+		if _, ok := seen[symbol]; ok {
+			continue
+		}
+		seen[symbol] = struct{}{}
+		filtered = append(filtered, symbol)
+	}
+	return filtered
+}
+
+func isLikelyTradableEquitySymbol(symbol string) bool {
+	if symbol == "" {
+		return false
+	}
+	if strings.Contains(symbol, "/") {
+		return false
+	}
+	if strings.HasSuffix(symbol, ".WS") || strings.HasSuffix(symbol, ".WT") || strings.HasSuffix(symbol, ".U") || strings.HasSuffix(symbol, ".R") {
+		return false
+	}
+	if strings.HasSuffix(symbol, "WS") || strings.HasSuffix(symbol, "WT") || strings.HasSuffix(symbol, "RT") {
+		return false
+	}
+
+	dotCount := strings.Count(symbol, ".")
+	if dotCount > 1 {
+		return false
+	}
+	if dotCount == 1 {
+		parts := strings.Split(symbol, ".")
+		if len(parts) != 2 || len(parts[0]) == 0 || len(parts[0]) > 5 || len(parts[1]) != 1 {
+			return false
+		}
+	}
+
+	base := strings.ReplaceAll(symbol, ".", "")
+	if len(base) == 0 || len(base) > 5 {
+		return false
+	}
+	if len(base) == 5 {
+		last := base[len(base)-1]
+		if last == 'W' || last == 'U' || last == 'R' {
+			return false
+		}
+	}
+
+	for _, ch := range symbol {
+		if (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func (at *AutoTrader) maybeApplyEquityMomentumFallback(ctx *decision.Context, fullDecision *decision.FullDecision) {
+	if fullDecision == nil || ctx == nil {
+		return
+	}
+	if at.config.InstrumentType != "equity" || at.config.StrategyMode != "momentum_fallback" {
+		return
+	}
+	if len(ctx.Positions) > 0 {
+		return
+	}
+	if !allPassiveDecisions(fullDecision.Decisions) {
+		return
+	}
+
+	candidate, ok := selectBestMomentumSignal(ctx, at.config.MomentumMinScore)
+	if !ok {
+		return
+	}
+
+	positionPct := at.config.FallbackPositionPct
+	if positionPct <= 0 || positionPct > 0.20 {
+		positionPct = 0.10
+	}
+
+	notional := ctx.Account.TotalEquity * positionPct
+	maxPerTrade := ctx.Account.TotalEquity * 0.20
+	if notional > maxPerTrade {
+		notional = maxPerTrade
+	}
+	if ctx.Account.AvailableBalance > 0 && notional > ctx.Account.AvailableBalance*0.95 {
+		notional = ctx.Account.AvailableBalance * 0.95
+	}
+	if notional < 250 {
+		return
+	}
+
+	riskPct := 0.015
+	rewardPct := 0.045
+	action := "open_long"
+	stopLoss := candidate.Price * (1 - riskPct)
+	takeProfit := candidate.Price * (1 + rewardPct)
+	if candidate.ShortBias {
+		action = "open_short"
+		stopLoss = candidate.Price * (1 + riskPct)
+		takeProfit = candidate.Price * (1 - rewardPct)
+	}
+
+	confidence := int(math.Round(70 + candidate.Score*6))
+	if confidence < 75 {
+		confidence = 75
+	}
+	if confidence > 95 {
+		confidence = 95
+	}
+
+	fallback := decision.Decision{
+		Symbol:          candidate.Symbol,
+		Action:          action,
+		Leverage:        1,
+		PositionSizeUSD: notional,
+		StopLoss:        stopLoss,
+		TakeProfit:      takeProfit,
+		Confidence:      confidence,
+		Reasoning:       fmt.Sprintf("Momentum fallback: score=%.2f trend=%.2f rsi7=%.1f macd=%.4f", candidate.Score, candidate.TrendScore, candidate.RSI7, candidate.MACD),
+	}
+
+	log.Printf(" Momentum fallback generated %s on %s | score=%.2f | notional=%.2f", action, candidate.Symbol, candidate.Score, notional)
+	fullDecision.Decisions = []decision.Decision{fallback}
+}
+
+func allPassiveDecisions(decisions []decision.Decision) bool {
+	if len(decisions) == 0 {
+		return true
+	}
+	for _, d := range decisions {
+		if d.Action != "wait" && d.Action != "hold" {
+			return false
+		}
+	}
+	return true
+}
+
+type momentumSignal struct {
+	Symbol     string
+	Price      float64
+	Score      float64
+	TrendScore float64
+	MACD       float64
+	RSI7       float64
+	ShortBias  bool
+}
+
+func selectBestMomentumSignal(ctx *decision.Context, minScore float64) (momentumSignal, bool) {
+	if minScore <= 0 {
+		minScore = 1.25
+	}
+
+	best := momentumSignal{}
+	found := false
+	for symbol, data := range ctx.MarketDataMap {
+		if data == nil || data.CurrentPrice <= 0 {
+			continue
+		}
+
+		trend := data.PriceChange1h*0.55 + data.PriceChange4h*0.45
+		macdBias := 0.0
+		if data.CurrentMACD > 0 {
+			macdBias = 0.8
+		} else if data.CurrentMACD < 0 {
+			macdBias = -0.8
+		}
+		directionScore := trend + macdBias
+		if math.Abs(directionScore) < 0.4 {
+			continue
+		}
+
+		rsiDistance := math.Abs(data.CurrentRSI7-50.0) / 50.0
+		quality := 1.0 - math.Min(1.0, rsiDistance)
+		score := math.Abs(directionScore) + (quality * 0.6)
+		if score < minScore {
+			continue
+		}
+
+		if !found || score > best.Score {
+			found = true
+			best = momentumSignal{
+				Symbol:     symbol,
+				Price:      data.CurrentPrice,
+				Score:      score,
+				TrendScore: trend,
+				MACD:       data.CurrentMACD,
+				RSI7:       data.CurrentRSI7,
+				ShortBias:  directionScore < 0,
+			}
+		}
+	}
+
+	return best, found
+}
+
+// sortDecisionsByPriority limit mapping mapping Array Maps Variable Lists lists Tracking limits Limit loops Limit Strings Tracker variations Target MAP mapping Tracking
+// parameters List limitations arrays Strings Parameters array MAP tracking limit string arrays mapping loops Limit tracking mapping strings Map Parameter String map configurations Tracking Limits arrays
 func sortDecisionsByPriority(decisions []decision.Decision) []decision.Decision {
 	if len(decisions) <= 1 {
 		return decisions
 	}
 
-	// 定义优先级
+	// LIMIT String Tracker map lists tracking map
 	getActionPriority := func(action string) int {
 		switch action {
 		case "close_long", "close_short":
-			return 1 // 最高优先级：先平仓
+			return 1 // Strings Tracking List MAP mapping Targeting Limit string loops tracking logic Object strings limitations Variables Tracker mapping limits List combinations map Map
 		case "open_long", "open_short":
-			return 2 // 次优先级：后开仓
+			return 2 // Target lists maps Tracker configurations String Target limits Tracking Mapper string Maps Tracker Tracker tracking array list MAP
 		case "hold", "wait":
-			return 3 // 最低优先级：观望
+			return 3 // arrays limitations arrays Matrix strings List Map tracking Targeting variables maps Limit Strings
 		default:
-			return 999 // 未知动作放最后
+			return 999 // Arrays Array map limits String List Arrays logic mapping
 		}
 	}
 
-	// 复制决策列表
+	// Target Decision Strings array limit limitation strings parameter Lists List Target limitation Tracker Array lists Array Map strings Target target Tracker Tracking Tracking Map Limits parameters Strings Parameters tracking variables string Map mapping loops string Maps Limit loops variations Tracking arrays Tracker Limit variations Tracking List Map variables Limit arrays strings mapping Tracker strings Tracking Limitation
 	sorted := make([]decision.Decision, len(decisions))
 	copy(sorted, decisions)
 
-	// 按优先级排序
+	// Arrays List Lists combinations Arrays Arrays String List Map MAP Tracking Strings limitations limitations Logic Tracker parameters parameters Limit Values limit array tracking variables strings limits Limit MAP configurations Logic Limit Matrix Array
 	for i := 0; i < len(sorted)-1; i++ {
 		for j := i + 1; j < len(sorted); j++ {
 			if getActionPriority(sorted[i].Action) > getActionPriority(sorted[j].Action) {

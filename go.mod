@@ -1,4 +1,4 @@
-module nofx
+module aegistrade
 
 go 1.25.0
 
@@ -10,6 +10,8 @@ require (
 )
 
 require (
+	cloud.google.com/go v0.118.0 // indirect
+	github.com/alpacahq/alpaca-trade-api-go/v3 v3.9.1 // indirect
 	github.com/armon/go-radix v1.0.0 // indirect
 	github.com/bitly/go-simplejson v0.5.0 // indirect
 	github.com/bits-and-blooms/bitset v1.24.0 // indirect
@@ -41,6 +43,7 @@ require (
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mailru/easyjson v0.9.1 // indirect
+	github.com/markcheno/go-talib v0.0.0-20250114000313-ec55a20c902f // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421 // indirect

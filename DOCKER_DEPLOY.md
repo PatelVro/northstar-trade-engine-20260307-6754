@@ -1,67 +1,67 @@
-# 🐳 Docker 一键部署教程
+#  Docker 
 
-本教程将指导你使用 Docker 快速部署 NOFX AI 交易竞赛系统。
+ Docker  AegisTrade AI 
 
-## 📋 前置要求
+##  
 
-在开始之前，请确保你的系统已安装：
 
-- **Docker**: 版本 20.10 或更高
-- **Docker Compose**: 版本 2.0 或更高
 
-### 安装 Docker
+- **Docker**:  20.10 
+- **Docker Compose**:  2.0 
 
-> #### 提示：Docker Compose 版本说明
+###  Docker
+
+> #### Docker Compose 
 > 
-> **新用户建议**：
-> - **推荐使用 Docker Desktop**：自动包含最新 Docker Compose，无需单独安装
-> - 安装简单，一键搞定，提供图形界面管理
-> - 支持 macOS、Windows、部分 Linux 发行版
+> ****
+> - ** Docker Desktop** Docker Compose
+> - 
+> -  macOSWindows Linux 
 > 
-> **旧用户提醒**：
-> - **弃用独立 docker-compose**：不再推荐下载独立的 Docker Compose 二进制文件
-> - **使用内置版**：Docker 20.10+ 自带 `docker compose` 命令（注意是空格）
-> - 如果还在使用旧的 `docker-compose`，请升级到新语法
+> ****
+> - ** docker-compose** Docker Compose 
+> - ****Docker 20.10+  `docker compose` 
+> -  `docker-compose`
 
 #### macOS / Windows
-下载并安装 [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+ [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 
-**安装后验证：**
+****
 ```bash
 docker --version
-docker compose --version  # 注意：使用空格，不再是连字符
+docker compose --version  # 
 ```
 
 #### Linux (Ubuntu/Debian)
-**推荐方式：使用 Docker Desktop（如果可用）或 Docker CE**
+** Docker Desktop Docker CE**
 
 ```bash
-# 安装 Docker (自动包含 compose)
+#  Docker ( compose)
 curl -fsSL https://get.docker.com -o get-docker.sh
 sudo sh get-docker.sh
 
-# 将当前用户加入 docker 组
+#  docker 
 sudo usermod -aG docker $USER
 newgrp docker
 
-# 验证安装（新命令）
+# 
 docker --version
-docker compose --version  # Docker 24+ 自带，无需单独安装
+docker compose --version  # Docker 24+ 
 ```
 
-## 🚀 快速开始（3步完成部署）
+##  3
 
-### 第 1 步：准备配置文件
+###  1 
 
 ```bash
-# 复制配置文件模板
+# 
 cp config.json.example config.json
 
-# 编辑配置文件，填入你的 API 密钥
-nano config.json  # 或使用其他编辑器
+#  API 
+nano config.json  # 
 ```
 
-**必须配置的字段：**
+****
 ```json
 {
   "traders": [
@@ -69,9 +69,9 @@ nano config.json  # 或使用其他编辑器
       "id": "my_trader",
       "name": "My AI Trader",
       "ai_model": "deepseek",
-      "binance_api_key": "YOUR_BINANCE_API_KEY",       // ← 填入你的币安 API Key
-      "binance_secret_key": "YOUR_BINANCE_SECRET_KEY", // ← 填入你的币安 Secret Key
-      "deepseek_key": "YOUR_DEEPSEEK_API_KEY",         // ← 填入你的 DeepSeek API Key
+      "binance_api_key": "YOUR_BINANCE_API_KEY",       //   API Key
+      "binance_secret_key": "YOUR_BINANCE_SECRET_KEY", //   Secret Key
+      "deepseek_key": "YOUR_DEEPSEEK_API_KEY",         //   DeepSeek API Key
       "initial_balance": 1000.0,
       "scan_interval_minutes": 3
     }
@@ -81,106 +81,106 @@ nano config.json  # 或使用其他编辑器
 }
 ```
 
-### 第 2 步：一键启动
+###  2 
 
 ```bash
-# 构建并启动所有服务（首次运行）
+# 
 docker compose up -d --build
 
-# 后续启动（不重新构建）
+# 
 docker compose up -d
 ```
 
-**启动过程说明：**
-- `--build`: 构建 Docker 镜像（首次运行或代码更新后使用）
-- `-d`: 后台运行（detached mode）
+****
+- `--build`:  Docker 
+- `-d`: detached mode
 
-### 第 3 步：访问系统
+###  3 
 
-部署成功后，打开浏览器访问：
 
-- **Web 界面**: http://localhost:3000
-- **API 文档**: http://localhost:8080/health
 
-## 📊 服务管理
+- **Web **: http://localhost:3000
+- **API **: http://localhost:8080/health
 
-### 查看运行状态
+##  
+
+### 
 ```bash
-# 查看所有容器状态
+# 
 docker compose ps
 
-# 查看服务健康状态
+# 
 docker compose ps --format json | jq
 ```
 
-### 查看日志
+### 
 ```bash
-# 查看所有服务日志
+# 
 docker compose logs -f
 
-# 只查看后端日志
+# 
 docker compose logs -f backend
 
-# 只查看前端日志
+# 
 docker compose logs -f frontend
 
-# 查看最近 100 行日志
+#  100 
 docker compose logs --tail=100
 ```
 
-### 停止服务
+### 
 ```bash
-# 停止所有服务（保留数据）
+# 
 docker compose stop
 
-# 停止并删除容器（保留数据）
+# 
 docker compose down
 
-# 停止并删除容器和卷（清除所有数据）
+# 
 docker compose down -v
 ```
 
-### 重启服务
+### 
 ```bash
-# 重启所有服务
+# 
 docker compose restart
 
-# 只重启后端
+# 
 docker compose restart backend
 
-# 只重启前端
+# 
 docker compose restart frontend
 ```
 
-### 更新服务
+### 
 ```bash
-# 拉取最新代码
+# 
 git pull
 
-# 重新构建并重启
+# 
 docker compose up -d --build
 ```
 
-## 🔧 高级配置
+##  
 
-### 修改端口
+### 
 
-编辑 `docker-compose.yml`，修改端口映射：
+ `docker-compose.yml`
 
 ```yaml
 services:
   backend:
     ports:
-      - "8080:8080"  # 改为 "你的端口:8080"
+      - "8080:8080"  #  ":8080"
 
   frontend:
     ports:
-      - "3000:80"    # 改为 "你的端口:80"
+      - "3000:80"    #  ":80"
 ```
 
-### 资源限制
+### 
 
-在 `docker-compose.yml` 中添加资源限制：
+ `docker-compose.yml` 
 
 ```yaml
 services:
@@ -195,9 +195,9 @@ services:
           memory: 1G
 ```
 
-### 环境变量
+### 
 
-创建 `.env` 文件来管理环境变量：
+ `.env` 
 
 ```bash
 # .env
@@ -206,7 +206,7 @@ BACKEND_PORT=8080
 FRONTEND_PORT=3000
 ```
 
-然后在 `docker-compose.yml` 中使用：
+ `docker-compose.yml` 
 
 ```yaml
 services:
@@ -215,108 +215,108 @@ services:
       - "${BACKEND_PORT}:8080"
 ```
 
-## 📁 数据持久化
+##  
 
-系统会自动持久化以下数据到本地目录：
 
-- `./decision_logs/`: AI 决策日志
-- `./coin_pool_cache/`: 币种池缓存
-- `./config.json`: 配置文件（挂载）
 
-**数据位置：**
+- `./decision_logs/`: AI 
+- `./coin_pool_cache/`: 
+- `./config.json`: 
+
+****
 ```bash
-# 查看数据目录
+# 
 ls -la decision_logs/
 ls -la coin_pool_cache/
 
-# 备份数据
+# 
 tar -czf backup_$(date +%Y%m%d).tar.gz decision_logs/ coin_pool_cache/ config.json
 
-# 恢复数据
+# 
 tar -xzf backup_20241029.tar.gz
 ```
 
-## 🐛 故障排查
+##  
 
-### 容器无法启动
+### 
 
 ```bash
-# 查看详细错误信息
+# 
 docker compose logs backend
 docker compose logs frontend
 
-# 检查容器状态
+# 
 docker compose ps -a
 
-# 重新构建（清除缓存）
+# 
 docker compose build --no-cache
 ```
 
-### 端口被占用
+### 
 
 ```bash
-# 查找占用端口的进程
-lsof -i :8080  # 后端端口
-lsof -i :3000  # 前端端口
+# 
+lsof -i :8080  # 
+lsof -i :3000  # 
 
-# 杀死占用端口的进程
+# 
 kill -9 <PID>
 ```
 
-### 配置文件未找到
+### 
 
 ```bash
-# 确保 config.json 存在
+#  config.json 
 ls -la config.json
 
-# 如果不存在，复制模板
+# 
 cp config.json.example config.json
 ```
 
-### 健康检查失败
+### 
 
 ```bash
-# 检查健康状态
-docker inspect nofx-backend | jq '.[0].State.Health'
-docker inspect nofx-frontend | jq '.[0].State.Health'
+# 
+docker inspect AegisTrade-backend | jq '.[0].State.Health'
+docker inspect AegisTrade-frontend | jq '.[0].State.Health'
 
-# 手动测试健康端点
+# 
 curl http://localhost:8080/health
 curl http://localhost:3000/health
 ```
 
-### 前端无法连接后端
+### 
 
 ```bash
-# 检查网络连接
+# 
 docker compose exec frontend ping backend
 
-# 检查后端服务是否正常
+# 
 docker compose exec frontend wget -O- http://backend:8080/health
 ```
 
-### 清理 Docker 资源
+###  Docker 
 
 ```bash
-# 清理未使用的镜像
+# 
 docker image prune -a
 
-# 清理未使用的卷
+# 
 docker volume prune
 
-# 清理所有未使用的资源（慎用）
+# 
 docker system prune -a --volumes
 ```
 
-## 🔐 安全建议
+##  
 
-1. **不要将 config.json 提交到 Git**
+1. ** config.json  Git**
    ```bash
-   # 确保 config.json 在 .gitignore 中
+   #  config.json  .gitignore 
    echo "config.json" >> .gitignore
    ```
 
-2. **使用环境变量存储敏感信息**
+2. ****
    ```yaml
    # docker-compose.yml
    services:
@@ -326,27 +326,27 @@ docker system prune -a --volumes
          - BINANCE_SECRET_KEY=${BINANCE_SECRET_KEY}
    ```
 
-3. **限制 API 访问**
+3. ** API **
    ```yaml
-   # 只允许本地访问
+   # 
    services:
      backend:
        ports:
          - "127.0.0.1:8080:8080"
    ```
 
-4. **定期更新镜像**
+4. ****
    ```bash
    docker compose pull
    docker compose up -d
    ```
 
-## 🌐 生产环境部署
+##  
 
-### 使用 Nginx 反向代理
+###  Nginx 
 
 ```nginx
-# /etc/nginx/sites-available/nofx
+# /etc/nginx/sites-available/AegisTrade
 server {
     listen 80;
     server_name your-domain.com;
@@ -365,57 +365,57 @@ server {
 }
 ```
 
-### 配置 HTTPS (Let's Encrypt)
+###  HTTPS (Let's Encrypt)
 
 ```bash
-# 安装 Certbot
+#  Certbot
 sudo apt-get install certbot python3-certbot-nginx
 
-# 获取 SSL 证书
+#  SSL 
 sudo certbot --nginx -d your-domain.com
 
-# 自动续期
+# 
 sudo certbot renew --dry-run
 ```
 
-### 使用 Docker Swarm (集群部署)
+###  Docker Swarm ()
 
 ```bash
-# 初始化 Swarm
+#  Swarm
 docker swarm init
 
-# 部署堆栈
-docker stack deploy -c docker-compose.yml nofx
+# 
+docker stack deploy -c docker-compose.yml AegisTrade
 
-# 查看服务状态
-docker stack services nofx
+# 
+docker stack services AegisTrade
 
-# 扩展服务
-docker service scale nofx_backend=3
+# 
+docker service scale AegisTrade_backend=3
 ```
 
-## 📈 监控与日志
+##  
 
-### 日志管理
+### 
 
 ```bash
-# 配置日志轮转（已在 docker-compose.yml 中配置）
+#  docker-compose.yml 
 logging:
   driver: "json-file"
   options:
     max-size: "10m"
     max-file: "3"
 
-# 查看日志统计
+# 
 docker compose logs --timestamps | wc -l
 ```
 
-### 监控工具集成
+### 
 
-可以集成 Prometheus + Grafana 进行监控：
+ Prometheus + Grafana 
 
 ```yaml
-# docker-compose.yml (添加监控服务)
+# docker-compose.yml ()
 services:
   prometheus:
     image: prom/prometheus
@@ -430,43 +430,43 @@ services:
       - "3001:3000"
 ```
 
-## 🆘 获取帮助
+##  
 
-- **GitHub Issues**: [提交问题](https://github.com/yourusername/open-nofx/issues)
-- **文档**: 查看 [README.md](README.md)
-- **社区**: 加入我们的 Discord/Telegram 群组
+- **GitHub Issues**: [](https://github.com/yourusername/open-AegisTrade/issues)
+- ****:  [README.md](README.md)
+- ****:  Discord/Telegram 
 
-## 📝 常用命令速查表
+##  
 
 ```bash
-# 启动
-docker compose up -d --build       # 构建并启动
-docker compose up -d               # 启动（不重新构建）
+# 
+docker compose up -d --build       # 
+docker compose up -d               # 
 
-# 停止
-docker compose stop                # 停止服务
-docker compose down                # 停止并删除容器
-docker compose down -v             # 停止并删除容器和数据
+# 
+docker compose stop                # 
+docker compose down                # 
+docker compose down -v             # 
 
-# 查看
-docker compose ps                  # 查看状态
-docker compose logs -f             # 查看日志
-docker compose top                 # 查看进程
+# 
+docker compose ps                  # 
+docker compose logs -f             # 
+docker compose top                 # 
 
-# 重启
-docker compose restart             # 重启所有服务
-docker compose restart backend     # 重启后端
+# 
+docker compose restart             # 
+docker compose restart backend     # 
 
-# 更新
+# 
 git pull && docker compose up -d --build
 
-# 清理
-docker compose down -v             # 清除所有数据
-docker system prune -a             # 清理 Docker 资源
+# 
+docker compose down -v             # 
+docker system prune -a             #  Docker 
 ```
 
 ---
 
-🎉 恭喜！你已经成功部署了 NOFX AI 交易竞赛系统！
+  AegisTrade AI 
 
-如有问题，请查看[故障排查](#-故障排查)部分或提交 Issue。
+[](#-) Issue

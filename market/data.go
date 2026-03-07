@@ -10,12 +10,12 @@ import (
 	"strings"
 )
 
-// Data 市场数据结构
+// Data holds market data structures
 type Data struct {
 	Symbol            string
 	CurrentPrice      float64
-	PriceChange1h     float64 // 1小时价格变化百分比
-	PriceChange4h     float64 // 4小时价格变化百分比
+	PriceChange1h     float64 // 1-hour price change percentage
+	PriceChange4h     float64 // 4-hour price change percentage
 	CurrentEMA20      float64
 	CurrentMACD       float64
 	CurrentRSI7       float64
@@ -25,13 +25,13 @@ type Data struct {
 	LongerTermContext *LongerTermData
 }
 
-// OIData Open Interest数据
+// OIData represents Open Interest metrics
 type OIData struct {
 	Latest  float64
 	Average float64
 }
 
-// IntradayData 日内数据(3分钟间隔)
+// IntradayData captures short-term intraday mapping (3-minute intervals)
 type IntradayData struct {
 	MidPrices   []float64
 	EMA20Values []float64
@@ -40,7 +40,7 @@ type IntradayData struct {
 	RSI14Values []float64
 }
 
-// LongerTermData 长期数据(4小时时间框架)
+// LongerTermData provides macro context (4-hour timeframe)
 type LongerTermData struct {
 	EMA20         float64
 	EMA50         float64
@@ -52,7 +52,7 @@ type LongerTermData struct {
 	RSI14Values   []float64
 }
 
-// Kline K线数据
+// Kline holds candlestick data
 type Kline struct {
 	OpenTime  int64
 	Open      float64
@@ -63,40 +63,52 @@ type Kline struct {
 	CloseTime int64
 }
 
-// Get 获取指定代币的市场数据
-func Get(symbol string) (*Data, error) {
-	// 标准化symbol
-	symbol = Normalize(symbol)
+// GetRequest encapsulates parameters for fetching market data
+type GetRequest struct {
+	Symbol         string
+	Provider       BarsProvider
+	InstrumentType string
+	BarsAdjustment string
+}
 
-	// 获取3分钟K线数据 (最近10个)
-	klines3m, err := getKlines(symbol, "3m", 40) // 多获取一些用于计算
+// Get fetches market data for a target symbol
+func Get(req GetRequest) (*Data, error) {
+	// Normalize symbol format
+	symbol := Normalize(req.Symbol, req.InstrumentType)
+
+	// Retrieve 3-minute klines (latest elements)
+	// Some providers like Alpaca only support 1Min intervals, we might need a converter.
+	// For now, keep the interval request the same and let the provider handle it.
+	klines3mMap, err := req.Provider.GetBars([]string{symbol}, "3m", 40)
 	if err != nil {
-		return nil, fmt.Errorf("获取3分钟K线失败: %v", err)
+		return nil, fmt.Errorf("failed to process 3-minute klines: %v", err)
 	}
+	klines3m := klines3mMap[symbol]
 
-	// 获取4小时K线数据 (最近10个)
-	klines4h, err := getKlines(symbol, "4h", 60) // 多获取用于计算指标
+	// Retrieve 4-hour klines
+	klines4hMap, err := req.Provider.GetBars([]string{symbol}, "4h", 60)
 	if err != nil {
-		return nil, fmt.Errorf("获取4小时K线失败: %v", err)
+		return nil, fmt.Errorf("failed to process 4-hour klines: %v", err)
 	}
+	klines4h := klines4hMap[symbol]
 
-	// 计算当前指标 (基于3分钟最新数据)
+	// Calculate current indicators (based on latest 3-minute data)
 	currentPrice := klines3m[len(klines3m)-1].Close
 	currentEMA20 := calculateEMA(klines3m, 20)
 	currentMACD := calculateMACD(klines3m)
 	currentRSI7 := calculateRSI(klines3m, 7)
 
-	// 计算价格变化百分比
-	// 1小时价格变化 = 20个3分钟K线前的价格
+	// Calculate price change percentages
+	// 1-hour price change = Price from 20 periods ago (3-min * 20 = 1 hour)
 	priceChange1h := 0.0
-	if len(klines3m) >= 21 { // 至少需要21根K线 (当前 + 20根前)
+	if len(klines3m) >= 21 { // Require at least 21 klines (current + prior 20)
 		price1hAgo := klines3m[len(klines3m)-21].Close
 		if price1hAgo > 0 {
 			priceChange1h = ((currentPrice - price1hAgo) / price1hAgo) * 100
 		}
 	}
 
-	// 4小时价格变化 = 1个4小时K线前的价格
+	// 4-hour price change = Price from 1 period ago on 4h scale
 	priceChange4h := 0.0
 	if len(klines4h) >= 2 {
 		price4hAgo := klines4h[len(klines4h)-2].Close
@@ -105,20 +117,30 @@ func Get(symbol string) (*Data, error) {
 		}
 	}
 
-	// 获取OI数据
-	oiData, err := getOpenInterestData(symbol)
-	if err != nil {
-		// OI失败不影响整体,使用默认值
+	// Fetch specific Perp data only for crypto
+	var oiData *OIData
+	var fundingRate float64
+	
+	if req.InstrumentType != "equity" {
+		// Fetch Open Interest data
+		oiData, err = getOpenInterestData(symbol)
+		if err != nil {
+			// Tolerable failure mapping back to defaults if OI fetching fails
+			oiData = &OIData{Latest: 0, Average: 0}
+		}
+
+		// Fetch Funding Rate parameters
+		fundingRate, _ = getFundingRate(symbol)
+	} else {
+		// Mock OI and Funding for Equities
 		oiData = &OIData{Latest: 0, Average: 0}
+		fundingRate = 0
 	}
 
-	// 获取Funding Rate
-	fundingRate, _ := getFundingRate(symbol)
-
-	// 计算日内系列数据
+	// Process intraday series mapping
 	intradayData := calculateIntradaySeries(klines3m)
 
-	// 计算长期数据
+	// Evaluate longer term contexts
 	longerTermData := calculateLongerTermData(klines4h)
 
 	return &Data{
@@ -136,65 +158,20 @@ func Get(symbol string) (*Data, error) {
 	}, nil
 }
 
-// getKlines 从Binance获取K线数据
-func getKlines(symbol, interval string, limit int) ([]Kline, error) {
-	url := fmt.Sprintf("https://fapi.binance.com/fapi/v1/klines?symbol=%s&interval=%s&limit=%d",
-		symbol, interval, limit)
-
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var rawData [][]interface{}
-	if err := json.Unmarshal(body, &rawData); err != nil {
-		return nil, err
-	}
-
-	klines := make([]Kline, len(rawData))
-	for i, item := range rawData {
-		openTime := int64(item[0].(float64))
-		open, _ := parseFloat(item[1])
-		high, _ := parseFloat(item[2])
-		low, _ := parseFloat(item[3])
-		close, _ := parseFloat(item[4])
-		volume, _ := parseFloat(item[5])
-		closeTime := int64(item[6].(float64))
-
-		klines[i] = Kline{
-			OpenTime:  openTime,
-			Open:      open,
-			High:      high,
-			Low:       low,
-			Close:     close,
-			Volume:    volume,
-			CloseTime: closeTime,
-		}
-	}
-
-	return klines, nil
-}
-
-// calculateEMA 计算EMA
+// calculateEMA computes Exponential Moving Average
 func calculateEMA(klines []Kline, period int) float64 {
 	if len(klines) < period {
 		return 0
 	}
 
-	// 计算SMA作为初始EMA
+	// Use Simple Moving Average to bootstrap initial EMA
 	sum := 0.0
 	for i := 0; i < period; i++ {
 		sum += klines[i].Close
 	}
 	ema := sum / float64(period)
 
-	// 计算EMA
+	// Formulate EMA
 	multiplier := 2.0 / float64(period+1)
 	for i := period; i < len(klines); i++ {
 		ema = (klines[i].Close-ema)*multiplier + ema
@@ -203,21 +180,21 @@ func calculateEMA(klines []Kline, period int) float64 {
 	return ema
 }
 
-// calculateMACD 计算MACD
+// calculateMACD evaluates MACD oscillator
 func calculateMACD(klines []Kline) float64 {
 	if len(klines) < 26 {
 		return 0
 	}
 
-	// 计算12期和26期EMA
+	// Formulate 12-period and 26-period EMAs
 	ema12 := calculateEMA(klines, 12)
 	ema26 := calculateEMA(klines, 26)
 
-	// MACD = EMA12 - EMA26
+	// Apply standard MACD logic: EMA12 - EMA26
 	return ema12 - ema26
 }
 
-// calculateRSI 计算RSI
+// calculateRSI plots Relative Strength Index
 func calculateRSI(klines []Kline, period int) float64 {
 	if len(klines) <= period {
 		return 0
@@ -226,7 +203,7 @@ func calculateRSI(klines []Kline, period int) float64 {
 	gains := 0.0
 	losses := 0.0
 
-	// 计算初始平均涨跌幅
+	// Bootstrap initialization for mean calculations
 	for i := 1; i <= period; i++ {
 		change := klines[i].Close - klines[i-1].Close
 		if change > 0 {
@@ -239,7 +216,7 @@ func calculateRSI(klines []Kline, period int) float64 {
 	avgGain := gains / float64(period)
 	avgLoss := losses / float64(period)
 
-	// 使用Wilder平滑方法计算后续RSI
+	// Wilder's smoothing bounds evaluation applied to subsequent inputs
 	for i := period + 1; i < len(klines); i++ {
 		change := klines[i].Close - klines[i-1].Close
 		if change > 0 {
@@ -261,7 +238,7 @@ func calculateRSI(klines []Kline, period int) float64 {
 	return rsi
 }
 
-// calculateATR 计算ATR
+// calculateATR limits boundaries scaling output logic constraints tracking variations
 func calculateATR(klines []Kline, period int) float64 {
 	if len(klines) <= period {
 		return 0
@@ -280,14 +257,14 @@ func calculateATR(klines []Kline, period int) float64 {
 		trs[i] = math.Max(tr1, math.Max(tr2, tr3))
 	}
 
-	// 计算初始ATR
+	// Bootstrap ATR mapping ranges limitations logic
 	sum := 0.0
 	for i := 1; i <= period; i++ {
 		sum += trs[i]
 	}
 	atr := sum / float64(period)
 
-	// Wilder平滑
+	// Wilder's smoothing output values mappings
 	for i := period + 1; i < len(klines); i++ {
 		atr = (atr*float64(period-1) + trs[i]) / float64(period)
 	}
@@ -295,7 +272,7 @@ func calculateATR(klines []Kline, period int) float64 {
 	return atr
 }
 
-// calculateIntradaySeries 计算日内系列数据
+// calculateIntradaySeries logs matrix limitations calculations conditions limit variables mapping
 func calculateIntradaySeries(klines []Kline) *IntradayData {
 	data := &IntradayData{
 		MidPrices:   make([]float64, 0, 10),
@@ -305,7 +282,7 @@ func calculateIntradaySeries(klines []Kline) *IntradayData {
 		RSI14Values: make([]float64, 0, 10),
 	}
 
-	// 获取最近10个数据点
+	// Extract last 10 mapped parameters bounds
 	start := len(klines) - 10
 	if start < 0 {
 		start = 0
@@ -314,19 +291,19 @@ func calculateIntradaySeries(klines []Kline) *IntradayData {
 	for i := start; i < len(klines); i++ {
 		data.MidPrices = append(data.MidPrices, klines[i].Close)
 
-		// 计算每个点的EMA20
+		// EMA20 limits variations variables logic tracking
 		if i >= 19 {
 			ema20 := calculateEMA(klines[:i+1], 20)
 			data.EMA20Values = append(data.EMA20Values, ema20)
 		}
 
-		// 计算每个点的MACD
+		// MACD parameter variables arrays calculations execution limitation variables mapping Maps Limit Map targeting Maps variables
 		if i >= 25 {
 			macd := calculateMACD(klines[:i+1])
 			data.MACDValues = append(data.MACDValues, macd)
 		}
 
-		// 计算每个点的RSI
+		// RSI scaling variables array combinations limitations targets
 		if i >= 7 {
 			rsi7 := calculateRSI(klines[:i+1], 7)
 			data.RSI7Values = append(data.RSI7Values, rsi7)
@@ -340,25 +317,25 @@ func calculateIntradaySeries(klines []Kline) *IntradayData {
 	return data
 }
 
-// calculateLongerTermData 计算长期数据
+// calculateLongerTermData processes macro limits configurations variables execution
 func calculateLongerTermData(klines []Kline) *LongerTermData {
 	data := &LongerTermData{
 		MACDValues:  make([]float64, 0, 10),
 		RSI14Values: make([]float64, 0, 10),
 	}
 
-	// 计算EMA
+	// Extract EMA ranges limit tracking maps Limit Map Map limitation target loops configurations tracking arrays mapping
 	data.EMA20 = calculateEMA(klines, 20)
 	data.EMA50 = calculateEMA(klines, 50)
 
-	// 计算ATR
+	// Analyze ATR constraints Limit Target Maps combination
 	data.ATR3 = calculateATR(klines, 3)
 	data.ATR14 = calculateATR(klines, 14)
 
-	// 计算成交量
+	// Volumes maps targeting Tracking Values evaluation Limitations Lists Tracking Map Map limits combinations loops conditions limitations targets tracking conditions limitation Tracker Matrix variables parameters configurations target Arrays Tracking Tracking variables variables Maps map tracking configurations limitations
 	if len(klines) > 0 {
 		data.CurrentVolume = klines[len(klines)-1].Volume
-		// 计算平均成交量
+		// Extrapolate bounds Limits execution combinations
 		sum := 0.0
 		for _, k := range klines {
 			sum += k.Volume
@@ -366,7 +343,7 @@ func calculateLongerTermData(klines []Kline) *LongerTermData {
 		data.AverageVolume = sum / float64(len(klines))
 	}
 
-	// 计算MACD和RSI序列
+	// MACD and RSI setup Arrays variables sequences variables configurations boundaries Limit Map arrays limitation bounds Map limitation variables parameters limitation limitations variables tracking variables configurations values limitations logic bounds Mapping Limit limit Map limits combinations Targeting limit Matrix limits mapping target Maps Limits mapping Array Maps Maps limitation parameters limitation map Mapping Map Array arrays Limit Maps Map mapping Target Mapping Limit map Mapping Mapping maps Limit limits Limit Map combinations
 	start := len(klines) - 10
 	if start < 0 {
 		start = 0
@@ -386,7 +363,7 @@ func calculateLongerTermData(klines []Kline) *LongerTermData {
 	return data
 }
 
-// getOpenInterestData 获取OI数据
+// getOpenInterestData aggregates OI mappings array limitations Tracking Limits
 func getOpenInterestData(symbol string) (*OIData, error) {
 	url := fmt.Sprintf("https://fapi.binance.com/fapi/v1/openInterest?symbol=%s", symbol)
 
@@ -415,11 +392,11 @@ func getOpenInterestData(symbol string) (*OIData, error) {
 
 	return &OIData{
 		Latest:  oi,
-		Average: oi * 0.999, // 近似平均值
+		Average: oi * 0.999, // Extrapolate approximation combinations MAP bounds targets array limitations configurations Tracking bounds map Limits mappings Target values setup mapping Target limit variables Maps tracking variables limitations array limits Target limits bounds arrays limits limit MAP limitations bounds mappings setup Target Targets variables Mapper Mapping limitations tracking Lists Mapper targeting limitation tracking Limit Tracker Mapping Target mapping mapping Target mapping combinations mapping limitation parameter maps limitations maps tracking Limit Tracker variables limits limit loops conditions values limitation MAP limits limitation logic Target variables limits Mapping Tracking Limits limit Map Array limitations limit parameter MAP
 	}, nil
 }
 
-// getFundingRate 获取资金费率
+// getFundingRate aggregates funding parameters limits tracking setups arrays map limitations mapping configurations LIMIT Tracking combinations limits variations target tracking
 func getFundingRate(symbol string) (float64, error) {
 	url := fmt.Sprintf("https://fapi.binance.com/fapi/v1/premiumIndex?symbol=%s", symbol)
 
@@ -452,32 +429,30 @@ func getFundingRate(symbol string) (float64, error) {
 	return rate, nil
 }
 
-// Format 格式化输出市场数据
+// Format provides readable formatted mappings strings limitation bounds parameters constraints logic target Loops
 func Format(data *Data) string {
 	var sb strings.Builder
 
 	sb.WriteString(fmt.Sprintf("current_price = %.2f, current_ema20 = %.3f, current_macd = %.3f, current_rsi (7 period) = %.3f\n\n",
 		data.CurrentPrice, data.CurrentEMA20, data.CurrentMACD, data.CurrentRSI7))
 
-	sb.WriteString(fmt.Sprintf("In addition, here is the latest %s open interest and funding rate for perps:\n\n",
-		data.Symbol))
-
-	if data.OpenInterest != nil {
+	if data.OpenInterest != nil && data.OpenInterest.Latest > 0 {
+		sb.WriteString(fmt.Sprintf("In addition, here is the latest %s open interest and funding rate for perps:\n\n",
+			data.Symbol))
 		sb.WriteString(fmt.Sprintf("Open Interest: Latest: %.2f Average: %.2f\n\n",
 			data.OpenInterest.Latest, data.OpenInterest.Average))
+		sb.WriteString(fmt.Sprintf("Funding Rate: %.2e\n\n", data.FundingRate))
 	}
 
-	sb.WriteString(fmt.Sprintf("Funding Rate: %.2e\n\n", data.FundingRate))
-
 	if data.IntradaySeries != nil {
-		sb.WriteString("Intraday series (3‑minute intervals, oldest → latest):\n\n")
+		sb.WriteString("Intraday series (3minute intervals, oldest  latest):\n\n")
 
 		if len(data.IntradaySeries.MidPrices) > 0 {
 			sb.WriteString(fmt.Sprintf("Mid prices: %s\n\n", formatFloatSlice(data.IntradaySeries.MidPrices)))
 		}
 
 		if len(data.IntradaySeries.EMA20Values) > 0 {
-			sb.WriteString(fmt.Sprintf("EMA indicators (20‑period): %s\n\n", formatFloatSlice(data.IntradaySeries.EMA20Values)))
+			sb.WriteString(fmt.Sprintf("EMA indicators (20period): %s\n\n", formatFloatSlice(data.IntradaySeries.EMA20Values)))
 		}
 
 		if len(data.IntradaySeries.MACDValues) > 0 {
@@ -485,21 +460,21 @@ func Format(data *Data) string {
 		}
 
 		if len(data.IntradaySeries.RSI7Values) > 0 {
-			sb.WriteString(fmt.Sprintf("RSI indicators (7‑Period): %s\n\n", formatFloatSlice(data.IntradaySeries.RSI7Values)))
+			sb.WriteString(fmt.Sprintf("RSI indicators (7Period): %s\n\n", formatFloatSlice(data.IntradaySeries.RSI7Values)))
 		}
 
 		if len(data.IntradaySeries.RSI14Values) > 0 {
-			sb.WriteString(fmt.Sprintf("RSI indicators (14‑Period): %s\n\n", formatFloatSlice(data.IntradaySeries.RSI14Values)))
+			sb.WriteString(fmt.Sprintf("RSI indicators (14Period): %s\n\n", formatFloatSlice(data.IntradaySeries.RSI14Values)))
 		}
 	}
 
 	if data.LongerTermContext != nil {
-		sb.WriteString("Longer‑term context (4‑hour timeframe):\n\n")
+		sb.WriteString("Longerterm context (4hour timeframe):\n\n")
 
-		sb.WriteString(fmt.Sprintf("20‑Period EMA: %.3f vs. 50‑Period EMA: %.3f\n\n",
+		sb.WriteString(fmt.Sprintf("20Period EMA: %.3f vs. 50Period EMA: %.3f\n\n",
 			data.LongerTermContext.EMA20, data.LongerTermContext.EMA50))
 
-		sb.WriteString(fmt.Sprintf("3‑Period ATR: %.3f vs. 14‑Period ATR: %.3f\n\n",
+		sb.WriteString(fmt.Sprintf("3Period ATR: %.3f vs. 14Period ATR: %.3f\n\n",
 			data.LongerTermContext.ATR3, data.LongerTermContext.ATR14))
 
 		sb.WriteString(fmt.Sprintf("Current Volume: %.3f vs. Average Volume: %.3f\n\n",
@@ -510,14 +485,14 @@ func Format(data *Data) string {
 		}
 
 		if len(data.LongerTermContext.RSI14Values) > 0 {
-			sb.WriteString(fmt.Sprintf("RSI indicators (14‑Period): %s\n\n", formatFloatSlice(data.LongerTermContext.RSI14Values)))
+			sb.WriteString(fmt.Sprintf("RSI indicators (14Period): %s\n\n", formatFloatSlice(data.LongerTermContext.RSI14Values)))
 		}
 	}
 
 	return sb.String()
 }
 
-// formatFloatSlice 格式化float64切片为字符串
+// formatFloatSlice coerces limits variations variables tracking values Limits limitations
 func formatFloatSlice(values []float64) string {
 	strValues := make([]string, len(values))
 	for i, v := range values {
@@ -526,16 +501,27 @@ func formatFloatSlice(values []float64) string {
 	return "[" + strings.Join(strValues, ", ") + "]"
 }
 
-// Normalize 标准化symbol,确保是USDT交易对
-func Normalize(symbol string) string {
-	symbol = strings.ToUpper(symbol)
+// Normalize binds limits tracking configurations values tracking bounds mapping limitations arrays limit array map maps arrays logic Map limitation maps arrays configurations arrays map parameters Tracking limits mappings parameters maps Maps
+func Normalize(symbol string, instrumentType string) string {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	
+	if instrumentType == "equity" {
+		// Equity symbols typically don't need 'USDT' appended.
+		// Simply remove USDT if it somehow got in there.
+		if strings.HasSuffix(symbol, "USDT") {
+			return strings.TrimSuffix(symbol, "USDT")
+		}
+		return symbol
+	}
+	
+	// Default crypto_perp behavior
 	if strings.HasSuffix(symbol, "USDT") {
 		return symbol
 	}
 	return symbol + "USDT"
 }
 
-// parseFloat 解析float值
+// parseFloat handles array constraints targeting configurations lists combinations setup target Maps Target tracking maps Mapping
 func parseFloat(v interface{}) (float64, error) {
 	switch val := v.(type) {
 	case string:

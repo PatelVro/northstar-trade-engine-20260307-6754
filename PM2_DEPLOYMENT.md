@@ -1,93 +1,93 @@
-# NoFX Trading Bot - PM2 部署指南
+# AegisTrade Trading Bot - PM2 
 
-使用 PM2 进行本地开发和生产部署的完整指南。
+ PM2 
 
-## 🚀 快速开始
+##  
 
-### 1. 安装 PM2
+### 1.  PM2
 
 ```bash
 npm install -g pm2
 ```
 
-### 2. 一键启动
+### 2. 
 
 ```bash
 ./pm2.sh start
 ```
 
-就这么简单！前后端将自动启动。
+
 
 ---
 
-## 📋 所有命令
+##  
 
-### 服务管理
+### 
 
 ```bash
-# 启动服务
+# 
 ./pm2.sh start
 
-# 停止服务
+# 
 ./pm2.sh stop
 
-# 重启服务
+# 
 ./pm2.sh restart
 
-# 查看状态
+# 
 ./pm2.sh status
 
-# 删除服务
+# 
 ./pm2.sh delete
 ```
 
-### 日志查看
+### 
 
 ```bash
-# 查看所有日志（实时）
+# 
 ./pm2.sh logs
 
-# 只看后端日志
+# 
 ./pm2.sh logs backend
 
-# 只看前端日志
+# 
 ./pm2.sh logs frontend
 ```
 
-### 构建与编译
+### 
 
 ```bash
-# 编译后端
+# 
 ./pm2.sh build
 
-# 重新编译后端并重启
+# 
 ./pm2.sh rebuild
 ```
 
-### 监控
+### 
 
 ```bash
-# 打开 PM2 监控面板（实时CPU/内存）
+#  PM2 CPU/
 ./pm2.sh monitor
 ```
 
 ---
 
-## 📊 访问地址
+##  
 
-启动成功后：
 
-- **前端 Web 界面**: http://localhost:3000
-- **后端 API**: http://localhost:8080
-- **健康检查**: http://localhost:8080/health
+
+- ** Web **: http://localhost:3000
+- ** API**: http://localhost:8080
+- ****: http://localhost:8080/health
 
 ---
 
-## 🔧 配置文件
+##  
 
 ### pm2.config.js
 
-PM2 配置文件，定义了前后端的启动参数：
+PM2 
 
 ```javascript
 const path = require('path');
@@ -95,17 +95,17 @@ const path = require('path');
 module.exports = {
   apps: [
     {
-      name: 'nofx-backend',
-      script: './nofx',           // Go 二进制文件
-      cwd: __dirname,             // 动态获取当前目录
+      name: 'AegisTrade-backend',
+      script: './AegisTrade',           // Go 
+      cwd: __dirname,             // 
       autorestart: true,
       max_memory_restart: '500M'
     },
     {
-      name: 'nofx-frontend',
+      name: 'AegisTrade-frontend',
       script: 'npm',
-      args: 'run dev',            // Vite 开发服务器
-      cwd: path.join(__dirname, 'web'), // 动态拼接路径
+      args: 'run dev',            // Vite 
+      cwd: path.join(__dirname, 'web'), // 
       autorestart: true,
       max_memory_restart: '300M'
     }
@@ -113,72 +113,72 @@ module.exports = {
 };
 ```
 
-**修改配置后需要重启：**
+****
 ```bash
 ./pm2.sh restart
 ```
 
 ---
 
-## 📝 日志文件位置
+##  
 
-- **后端日志**: `./logs/backend-error.log` 和 `./logs/backend-out.log`
-- **前端日志**: `./web/logs/frontend-error.log` 和 `./web/logs/frontend-out.log`
+- ****: `./logs/backend-error.log`  `./logs/backend-out.log`
+- ****: `./web/logs/frontend-error.log`  `./web/logs/frontend-out.log`
 
 ---
 
-## 🔄 开机自启动
+##  
 
-设置 PM2 开机自启动：
+ PM2 
 
 ```bash
-# 1. 启动服务
+# 1. 
 ./pm2.sh start
 
-# 2. 保存当前进程列表
+# 2. 
 pm2 save
 
-# 3. 生成启动脚本
+# 3. 
 pm2 startup
 
-# 4. 按照提示执行命令（需要 sudo）
+# 4.  sudo
 ```
 
-**取消开机自启动：**
+****
 ```bash
 pm2 unstartup
 ```
 
 ---
 
-## 🛠️ 常见操作
+##  
 
-### 修改代码后重启
+### 
 
-**后端修改：**
+****
 ```bash
-./pm2.sh rebuild  # 自动编译并重启
+./pm2.sh rebuild  # 
 ```
 
-**前端修改：**
+****
 ```bash
-./pm2.sh restart  # Vite 会自动热重载，无需重启
+./pm2.sh restart  # Vite 
 ```
 
-### 查看实时资源占用
+### 
 
 ```bash
 ./pm2.sh monitor
 ```
 
-### 查看详细信息
+### 
 
 ```bash
-pm2 info nofx-backend   # 后端详情
-pm2 info nofx-frontend  # 前端详情
+pm2 info AegisTrade-backend   # 
+pm2 info AegisTrade-frontend  # 
 ```
 
-### 清空日志
+### 
 
 ```bash
 pm2 flush
@@ -186,77 +186,77 @@ pm2 flush
 
 ---
 
-## 🐛 故障排查
+##  
 
-### 服务启动失败
+### 
 
 ```bash
-# 1. 查看详细错误
+# 1. 
 ./pm2.sh logs
 
-# 2. 检查端口占用
-lsof -i :8080  # 后端端口
-lsof -i :3000  # 前端端口
+# 2. 
+lsof -i :8080  # 
+lsof -i :3000  # 
 
-# 3. 手动编译测试
-go build -o nofx
-./nofx
+# 3. 
+go build -o AegisTrade
+./AegisTrade
 ```
 
-### 后端无法启动
+### 
 
 ```bash
-# 检查 config.json 是否存在
+#  config.json 
 ls -l config.json
 
-# 检查权限
-chmod +x nofx
+# 
+chmod +x AegisTrade
 
-# 手动运行看报错
-./nofx
+# 
+./AegisTrade
 ```
 
-### 前端无法访问
+### 
 
 ```bash
-# 检查 node_modules
+#  node_modules
 cd web && npm install
 
-# 手动启动测试
+# 
 npm run dev
 ```
 
 ---
 
-## 🎯 生产环境建议
+##  
 
-### 1. 使用生产模式
+### 1. 
 
-修改 `pm2.config.js`：
+ `pm2.config.js`
 
 ```javascript
 {
-  name: 'nofx-frontend',
+  name: 'AegisTrade-frontend',
   script: 'npm',
-  args: 'run preview',  // 改为 preview（需先 npm run build）
+  args: 'run preview',  //  preview npm run build
   env: {
     NODE_ENV: 'production'
   }
 }
 ```
 
-### 2. 增加实例数（负载均衡）
+### 2. 
 
 ```javascript
 {
-  name: 'nofx-backend',
-  script: './nofx',
-  instances: 2,  // 启动 2 个实例
+  name: 'AegisTrade-backend',
+  script: './AegisTrade',
+  instances: 2,  //  2 
   exec_mode: 'cluster'
 }
 ```
 
-### 3. 自动重启策略
+### 3. 
 
 ```javascript
 {
@@ -269,32 +269,32 @@ npm run dev
 
 ---
 
-## 📦 与 Docker 部署的对比
+##   Docker 
 
-| 特性 | PM2 部署 | Docker 部署 |
+|  | PM2  | Docker  |
 |------|---------|------------|
-| 启动速度 | ⚡ 快 | 🐌 较慢 |
-| 资源占用 | 💚 低 | 🟡 中等 |
-| 隔离性 | 🟡 中等 | 💚 高 |
-| 适用场景 | 开发/单机 | 生产/集群 |
-| 配置复杂度 | 💚 简单 | 🟡 中等 |
+|  |   |   |
+|  |   |   |
+|  |   |   |
+|  | / | / |
+|  |   |   |
 
-**建议：**
-- **开发环境**: 使用 `./pm2.sh`
-- **生产环境**: 使用 `./start.sh` (Docker)
+****
+- ****:  `./pm2.sh`
+- ****:  `./start.sh` (Docker)
 
 ---
 
-## 🆘 获取帮助
+##  
 
 ```bash
 ./pm2.sh help
 ```
 
-或查看 PM2 官方文档：https://pm2.keymetrics.io/
+ PM2 https://pm2.keymetrics.io/
 
 ---
 
-## 📄 License
+##  License
 
 MIT

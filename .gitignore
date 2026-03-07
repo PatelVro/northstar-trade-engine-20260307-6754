@@ -1,36 +1,63 @@
-# IDE 配置文件
+# IDE files
 .idea/
 *.iml
 *.xml
 
-# 编译产物
-nofx-auto
+# Build artifacts
+aegistrade-auto
 *.exe
-nofx
-nofx_test
+aegistrade
+aegistrade_test
 
-# Go 相关
+# Go artifacts
 *.test
 *.out
 
-# 操作系统
+# OS files
 .DS_Store
 Thumbs.db
 
-# 临时文件
+# Temporary files
 *.log
 *.tmp
 *.bak
 *.backup
 
-# 环境变量
+# Environment/config
 .env
 config.json
+.env.ibkr
+config_*.json
+config-working.json
+cook*.txt
+cookies*.txt
 
-# 决策日志
+# Runtime data
 decision_logs/
 coin_pool_cache/
-nofx_test
+aegistrade_test
+runtime/
+output/
+ibeam_outputs/
+screenshots/
+run_paper_session.*
+build_err.txt
+curl_out*.txt
+getbars.txt
+out.txt
+test_jar_output.txt
+
+# Local certs
+nginx_certs/
+
+# Local executables
+nofx.exe
+nofx_bin.exe
+test_build.exe
+
+# External workspace/vendor copies
+walmart-dashboard/
+ibeam/
 
 # Node.js
 web/node_modules/

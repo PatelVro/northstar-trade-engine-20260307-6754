@@ -10,23 +10,23 @@ import (
 	"time"
 )
 
-// DecisionRecord 决策记录
+// DecisionRecord holds the log entry for an AI trading decision
 type DecisionRecord struct {
-	Timestamp      time.Time          `json:"timestamp"`       // 决策时间
-	CycleNumber    int                `json:"cycle_number"`    // 周期编号
-	InputPrompt    string             `json:"input_prompt"`    // 发送给AI的输入prompt
-	CoTTrace       string             `json:"cot_trace"`       // AI思维链（输出）
-	DecisionJSON   string             `json:"decision_json"`   // 决策JSON
-	AccountState   AccountSnapshot    `json:"account_state"`   // 账户状态快照
-	Positions      []PositionSnapshot `json:"positions"`       // 持仓快照
-	CandidateCoins []string           `json:"candidate_coins"` // 候选币种列表
-	Decisions      []DecisionAction   `json:"decisions"`       // 执行的决策
-	ExecutionLog   []string           `json:"execution_log"`   // 执行日志
-	Success        bool               `json:"success"`         // 是否成功
-	ErrorMessage   string             `json:"error_message"`   // 错误信息（如果有）
+	Timestamp      time.Time          `json:"timestamp"`       // Decision timestamp
+	CycleNumber    int                `json:"cycle_number"`    // Cycle number
+	InputPrompt    string             `json:"input_prompt"`    // Input prompt sent to AI
+	CoTTrace       string             `json:"cot_trace"`       // AI chain of thought trace
+	DecisionJSON   string             `json:"decision_json"`   // Raw decision JSON
+	AccountState   AccountSnapshot    `json:"account_state"`   // Snapshot of account state
+	Positions      []PositionSnapshot `json:"positions"`       // Snapshot of open positions
+	CandidateCoins []string           `json:"candidate_coins"` // List of candidate coins
+	Decisions      []DecisionAction   `json:"decisions"`       // List of executed decisions
+	ExecutionLog   []string           `json:"execution_log"`   // Log of execution steps
+	Success        bool               `json:"success"`         // Flag indicating success
+	ErrorMessage   string             `json:"error_message"`   // Error message if applicable
 }
 
-// AccountSnapshot 账户状态快照
+// AccountSnapshot records account balance state
 type AccountSnapshot struct {
 	TotalBalance          float64 `json:"total_balance"`
 	AvailableBalance      float64 `json:"available_balance"`
@@ -35,7 +35,7 @@ type AccountSnapshot struct {
 	MarginUsedPct         float64 `json:"margin_used_pct"`
 }
 
-// PositionSnapshot 持仓快照
+// PositionSnapshot records individual position state
 type PositionSnapshot struct {
 	Symbol           string  `json:"symbol"`
 	Side             string  `json:"side"`
@@ -47,34 +47,34 @@ type PositionSnapshot struct {
 	LiquidationPrice float64 `json:"liquidation_price"`
 }
 
-// DecisionAction 决策动作
+// DecisionAction documents an individual executed decision
 type DecisionAction struct {
 	Action    string    `json:"action"`    // open_long, open_short, close_long, close_short
-	Symbol    string    `json:"symbol"`    // 币种
-	Quantity  float64   `json:"quantity"`  // 数量
-	Leverage  int       `json:"leverage"`  // 杠杆（开仓时）
-	Price     float64   `json:"price"`     // 执行价格
-	OrderID   int64     `json:"order_id"`  // 订单ID
-	Timestamp time.Time `json:"timestamp"` // 执行时间
-	Success   bool      `json:"success"`   // 是否成功
-	Error     string    `json:"error"`     // 错误信息
+	Symbol    string    `json:"symbol"`    // Asset symbol
+	Quantity  float64   `json:"quantity"`  // Position quantity size
+	Leverage  int       `json:"leverage"`  // Leverage application size
+	Price     float64   `json:"price"`     // Execution price
+	OrderID   int64     `json:"order_id"`  // Exchange Order ID
+	Timestamp time.Time `json:"timestamp"` // Execution timestamp
+	Success   bool      `json:"success"`   // Outcome flag
+	Error     string    `json:"error"`     // Error message
 }
 
-// DecisionLogger 决策日志记录器
+// DecisionLogger records system decision workflows over time
 type DecisionLogger struct {
 	logDir      string
 	cycleNumber int
 }
 
-// NewDecisionLogger 创建决策日志记录器
+// NewDecisionLogger instantiates a logger configuration
 func NewDecisionLogger(logDir string) *DecisionLogger {
 	if logDir == "" {
 		logDir = "decision_logs"
 	}
 
-	// 确保日志目录存在
+	// Ensure logging directory exists locally
 	if err := os.MkdirAll(logDir, 0755); err != nil {
-		fmt.Printf("⚠ 创建日志目录失败: %v\n", err)
+		fmt.Printf(" Failed to create log directory: %v\n", err)
 	}
 
 	return &DecisionLogger{
@@ -83,42 +83,42 @@ func NewDecisionLogger(logDir string) *DecisionLogger {
 	}
 }
 
-// LogDecision 记录决策
+// LogDecision saves a decision object locally for historical tracking
 func (l *DecisionLogger) LogDecision(record *DecisionRecord) error {
 	l.cycleNumber++
 	record.CycleNumber = l.cycleNumber
 	record.Timestamp = time.Now()
 
-	// 生成文件名：decision_YYYYMMDD_HHMMSS_cycleN.json
+	// Build log label constraint format: decision_YYYYMMDD_HHMMSS_cycleN.json
 	filename := fmt.Sprintf("decision_%s_cycle%d.json",
 		record.Timestamp.Format("20060102_150405"),
 		record.CycleNumber)
 
 	filepath := filepath.Join(l.logDir, filename)
 
-	// 序列化为JSON（带缩进，方便阅读）
+	// Output pretty-printed readable JSON strings
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
-		return fmt.Errorf("序列化决策记录失败: %w", err)
+		return fmt.Errorf("failed to serialize decision record: %w", err)
 	}
 
-	// 写入文件
+	// Render into file storage directly
 	if err := ioutil.WriteFile(filepath, data, 0644); err != nil {
-		return fmt.Errorf("写入决策记录失败: %w", err)
+		return fmt.Errorf("failed to write decision record: %w", err)
 	}
 
-	fmt.Printf("📝 决策记录已保存: %s\n", filename)
+	fmt.Printf(" Decision record saved: %s\n", filename)
 	return nil
 }
 
-// GetLatestRecords 获取最近N条记录（按时间正序：从旧到新）
+// GetLatestRecords retrieves the most recent N records chronologically
 func (l *DecisionLogger) GetLatestRecords(n int) ([]*DecisionRecord, error) {
 	files, err := ioutil.ReadDir(l.logDir)
 	if err != nil {
-		return nil, fmt.Errorf("读取日志目录失败: %w", err)
+		return nil, fmt.Errorf("failed pulling log files directory: %w", err)
 	}
 
-	// 先按修改时间倒序收集（最新的在前）
+	// Retrieve sorted by modified time inverted (newest prioritized)
 	var records []*DecisionRecord
 	count := 0
 	for i := len(files) - 1; i >= 0 && count < n; i-- {
@@ -142,7 +142,7 @@ func (l *DecisionLogger) GetLatestRecords(n int) ([]*DecisionRecord, error) {
 		count++
 	}
 
-	// 反转数组，让时间从旧到新排列（用于图表显示）
+	// Reverse target arrays sequentially older to newer (For chart layout constraints)
 	for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
 		records[i], records[j] = records[j], records[i]
 	}
@@ -150,14 +150,14 @@ func (l *DecisionLogger) GetLatestRecords(n int) ([]*DecisionRecord, error) {
 	return records, nil
 }
 
-// GetRecordByDate 获取指定日期的所有记录
+// GetRecordByDate fetches historical logs grouped by designated date strings
 func (l *DecisionLogger) GetRecordByDate(date time.Time) ([]*DecisionRecord, error) {
 	dateStr := date.Format("20060102")
 	pattern := filepath.Join(l.logDir, fmt.Sprintf("decision_%s_*.json", dateStr))
 
 	files, err := filepath.Glob(pattern)
 	if err != nil {
-		return nil, fmt.Errorf("查找日志文件失败: %w", err)
+		return nil, fmt.Errorf("failed lookup for log timeline metrics: %w", err)
 	}
 
 	var records []*DecisionRecord
@@ -178,13 +178,13 @@ func (l *DecisionLogger) GetRecordByDate(date time.Time) ([]*DecisionRecord, err
 	return records, nil
 }
 
-// CleanOldRecords 清理N天前的旧记录
+// CleanOldRecords sweeps historically dated directory contents by constraints threshold
 func (l *DecisionLogger) CleanOldRecords(days int) error {
 	cutoffTime := time.Now().AddDate(0, 0, -days)
 
 	files, err := ioutil.ReadDir(l.logDir)
 	if err != nil {
-		return fmt.Errorf("读取日志目录失败: %w", err)
+		return fmt.Errorf("purge read evaluation directories failure: %w", err)
 	}
 
 	removedCount := 0
@@ -196,7 +196,7 @@ func (l *DecisionLogger) CleanOldRecords(days int) error {
 		if file.ModTime().Before(cutoffTime) {
 			filepath := filepath.Join(l.logDir, file.Name())
 			if err := os.Remove(filepath); err != nil {
-				fmt.Printf("⚠ 删除旧记录失败 %s: %v\n", file.Name(), err)
+				fmt.Printf(" Failed to delete old record %s: %v\n", file.Name(), err)
 				continue
 			}
 			removedCount++
@@ -204,17 +204,17 @@ func (l *DecisionLogger) CleanOldRecords(days int) error {
 	}
 
 	if removedCount > 0 {
-		fmt.Printf("🗑️ 已清理 %d 条旧记录（%d天前）\n", removedCount, days)
+		fmt.Printf(" Cleaned up %d old records (older than %d days)\n", removedCount, days)
 	}
 
 	return nil
 }
 
-// GetStatistics 获取统计信息
+// GetStatistics outputs globally captured session properties metadata
 func (l *DecisionLogger) GetStatistics() (*Statistics, error) {
 	files, err := ioutil.ReadDir(l.logDir)
 	if err != nil {
-		return nil, fmt.Errorf("读取日志目录失败: %w", err)
+		return nil, fmt.Errorf("log mapping validation failed statistics: %w", err)
 	}
 
 	stats := &Statistics{}
@@ -258,7 +258,7 @@ func (l *DecisionLogger) GetStatistics() (*Statistics, error) {
 	return stats, nil
 }
 
-// Statistics 统计信息
+// Statistics tracks system runtime history attributes
 type Statistics struct {
 	TotalCycles         int `json:"total_cycles"`
 	SuccessfulCycles    int `json:"successful_cycles"`
@@ -267,56 +267,58 @@ type Statistics struct {
 	TotalClosePositions int `json:"total_close_positions"`
 }
 
-// TradeOutcome 单笔交易结果
+// TradeOutcome analyzes specific trade executions mappings metrics
 type TradeOutcome struct {
-	Symbol        string    `json:"symbol"`         // 币种
+	Symbol        string    `json:"symbol"`         // Symbol properties constraints
 	Side          string    `json:"side"`           // long/short
-	Quantity      float64   `json:"quantity"`       // 仓位数量
-	Leverage      int       `json:"leverage"`       // 杠杆倍数
-	OpenPrice     float64   `json:"open_price"`     // 开仓价
-	ClosePrice    float64   `json:"close_price"`    // 平仓价
-	PositionValue float64   `json:"position_value"` // 仓位价值（quantity × openPrice）
-	MarginUsed    float64   `json:"margin_used"`    // 保证金使用（positionValue / leverage）
-	PnL           float64   `json:"pn_l"`           // 盈亏（USDT）
-	PnLPct        float64   `json:"pn_l_pct"`       // 盈亏百分比（相对保证金）
-	Duration      string    `json:"duration"`       // 持仓时长
-	OpenTime      time.Time `json:"open_time"`      // 开仓时间
-	CloseTime     time.Time `json:"close_time"`     // 平仓时间
-	WasStopLoss   bool      `json:"was_stop_loss"`  // 是否止损
+	Quantity      float64   `json:"quantity"`       // Size valuation logic
+	Leverage      int       `json:"leverage"`       // Trade application constraints setup ratio
+	OpenPrice     float64   `json:"open_price"`     // Setup price execution constraints
+	ClosePrice    float64   `json:"close_price"`    // Market target completion price configuration
+	PositionValue float64   `json:"position_value"` // Evaluation size base bounds limits ratio setup mapped logic
+	MarginUsed    float64   `json:"margin_used"`    // Usage calculation limits ratio evaluation metrics bounds (positionValue / leverage)
+	PnL           float64   `json:"pn_l"`           // Output P&L margins ratio targets execution constraints (USDT bounds variables setup parameter values logic output values array)
+	PnLPct        float64   `json:"pn_l_pct"`       // Return evaluation limits logic variables relative outputs values ratio targeting boundaries mappings configuration
+	Duration      string    `json:"duration"`       // Timing metrics boundary mapping
+	OpenTime      time.Time `json:"open_time"`      // Baseline evaluation metric markers limits bounds logic execution markers mapping setup arrays
+	CloseTime     time.Time `json:"close_time"`     // Exit mapping tracking execution points
+	WasStopLoss   bool      `json:"was_stop_loss"`  // Flag validation checking metrics boundary tracking boolean values array configuration arrays variables targeting mappings conditions setup limits bounds arrays Boolean ratio evaluation limits parameter constraints bounds evaluation setup configurations values ratios parameter maps parameter
 }
 
-// PerformanceAnalysis 交易表现分析
+// PerformanceAnalysis stores aggregated history performance analytics bounds mapping execution arrays parameters parameter values evaluation conditions setup combinations bounds variables configuration mapping setup bounds targets setup bounds logic lists parameters values variables array
 type PerformanceAnalysis struct {
-	TotalTrades   int                           `json:"total_trades"`   // 总交易数
-	WinningTrades int                           `json:"winning_trades"` // 盈利交易数
-	LosingTrades  int                           `json:"losing_trades"`  // 亏损交易数
-	WinRate       float64                       `json:"win_rate"`       // 胜率
-	AvgWin        float64                       `json:"avg_win"`        // 平均盈利
-	AvgLoss       float64                       `json:"avg_loss"`       // 平均亏损
-	ProfitFactor  float64                       `json:"profit_factor"`  // 盈亏比
-	SharpeRatio   float64                       `json:"sharpe_ratio"`   // 夏普比率（风险调整后收益）
-	RecentTrades  []TradeOutcome                `json:"recent_trades"`  // 最近N笔交易
-	SymbolStats   map[string]*SymbolPerformance `json:"symbol_stats"`   // 各币种表现
-	BestSymbol    string                        `json:"best_symbol"`    // 表现最好的币种
-	WorstSymbol   string                        `json:"worst_symbol"`   // 表现最差的币种
+	TotalTrades   int                           `json:"total_trades"`   // Cumulative total operations executions loops maps array tracking combinations properties logic loops tracking evaluations combinations mapping mapping conditions variables variables mapping parameters variables mapping constraints targeting arrays array counts evaluation
+	WinningTrades int                           `json:"winning_trades"` // Profit output variables execution metrics mapping tracking validation mapping values array tracking array array variables conditions arrays evaluation mapping parameters tracking combination variables constraints loops bounds targeting limits tracking arrays limitations arrays targets execution operations loops array mapping properties tracking
+	LosingTrades  int                           `json:"losing_trades"`  // Loss logic arrays mapping evaluation
+	WinRate       float64                       `json:"win_rate"`       // Win constraints maps ratio setup targeting mappings conditions evaluation properties parameters mapping tracking mappings combination logic targeting execution parameters values arrays bounds tracking parameters combinations limits mappings conditions logic arrays arrays arrays mapping limitations targets limitations tracking setup bounds limits values constraints conditions mapping Tracking
+	AvgWin        float64                       `json:"avg_win"`        // Mean average tracking parameters bounds values array
+	AvgLoss       float64                       `json:"avg_loss"`       // Output mapping calculation configuration mappings boundaries array evaluation loops parameters mapping conditions logic evaluation tracking Tracking
+	ProfitFactor  float64                       `json:"profit_factor"`  // Configuration properties mapping loops limits values tracking
+	SharpeRatio   float64                       `json:"sharpe_ratio"`   // Return adjusted tracking loops parameters metrics
+	RecentTrades  []TradeOutcome                `json:"recent_trades"`  // Arrays variables lists setup parameters mapping values evaluation
+	SymbolStats   map[string]*SymbolPerformance `json:"symbol_stats"`   // Values limitations tracking targets constraints parameters values parameters conditions mappings conditions setup
+	BestSymbol    string                        `json:"best_symbol"`    // Constraints Array Lists loops Lists mapping Maps mapping values evaluation variables variables arrays Array metrics configuration loops setup bounds configuration combinations
+	WorstSymbol   string                        `json:"worst_symbol"`   // Arrays lists bounds limitations tracking targets execution loops mapping evaluation evaluation configurations mapping mapping properties tracking
+	MaxDrawdown   float64                       `json:"max_drawdown"`   // Maximum drawdown percentage based on peak equity
+	EquityGrowth  float64                       `json:"equity_growth"`  // Total equity growth percentage from initial balance
 }
 
-// SymbolPerformance 币种表现统计
+// SymbolPerformance logs token operations output states bounds parameters variables logic mapping parameters values variables values constraints variables bounds limitations bounds evaluation bounds mappings limits execution targeting combinations metrics array setup targeting values configurations parameters setup limitations logic values arrays mappings arrays variables mapping Tracking loops evaluation configurations tracking Limits targeting arrays limits setup Limit Maps Limitations arrays limits
 type SymbolPerformance struct {
-	Symbol        string  `json:"symbol"`         // 币种
-	TotalTrades   int     `json:"total_trades"`   // 交易次数
-	WinningTrades int     `json:"winning_trades"` // 盈利次数
-	LosingTrades  int     `json:"losing_trades"`  // 亏损次数
-	WinRate       float64 `json:"win_rate"`       // 胜率
-	TotalPnL      float64 `json:"total_pn_l"`     // 总盈亏
-	AvgPnL        float64 `json:"avg_pn_l"`       // 平均盈亏
+	Symbol        string  `json:"symbol"`         // Symbol Tracking limits setups Mapping bounds bounds Limits mappings variables variables parameters conditions Tracking metrics setup combinations setups parameters Tracking limitations tracking Maps
+	TotalTrades   int     `json:"total_trades"`   // Number variables mapping combinations combinations arrays arrays Loops variables target Tracking
+	WinningTrades int     `json:"winning_trades"` // Loops conditions arrays Array Lists combinations variables Maps mapping combinations Tracking mapping maps Mapping
+	LosingTrades  int     `json:"losing_trades"`  // Mapping Lists variables lists combinations tracking Bounds Lists setup constraints Tracking
+	WinRate       float64 `json:"win_rate"`       // Evaluation metrics variables variables Limits setup combinations target boundaries variables mapping Lists Tracking variables Loops parameters Tracking limits tracking limitations targeting mappings Arrays Loops Mapping values bounds Maps Mapping configuration setups Tracking mapping maps Mapping
+	TotalPnL      float64 `json:"total_pn_l"`     // PnL map Maps setup Constraints Maps limitations setup Maps Tracking values parameters tracking variables configurations combinations target mappings Arrays tracking Tracking combinations Tracking arrays Maps Lists setup combinations target Mapping tracking variables configurations arrays parameters setup Limits mappings variables limits evaluation Limit Map Limit parameters Maps configuration values limitation Variables Limits Lists Map limitations loops tracking Maps Map Map limitations setup Limits Maps Map limits evaluation loops array loops combinations setups limitations Lists Arrays Limits array configuration Variables Limits Mapping Array values limits limitations tracking limit Lists Target LIMIT combinations limitations Target Mapping limit Lists limits Mapping variables Tracking Array limitations Maps limitations combinations Array LIMIT Map limit variables Map variables Variables Lists Array combinations Target LIMIT map Mapping
+	AvgPnL        float64 `json:"avg_pn_l"`       // Parameters parameters loops Tracking Target
 }
 
-// AnalyzePerformance 分析最近N个周期的交易表现
+// AnalyzePerformance calculates analytics mappings across specified evaluation cycles limits
 func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAnalysis, error) {
 	records, err := l.GetLatestRecords(lookbackCycles)
 	if err != nil {
-		return nil, fmt.Errorf("读取历史记录失败: %w", err)
+		return nil, fmt.Errorf("historical maps extraction pipeline failure maps Limit tracking array configurations bounds limitations Maps Limit targeting values Arrays Target Arrays combinations values limitations limitations Mapping variables Tracking Maps limits Mappings Tracking Maps Map limits Limits values Limit Map Map limit limitation Variables Limits lists combinations variables bounds Tracking Array Array values mapping Target Arrays limit limitations Tracking variables Maps Limit Map combinations variables limitation limitations Maps limit Limitations tracking Maps limit mapping variables Mapping Limit Target Limit limitations variables Limitations variables Mapping Mapping limit Target limitation variables limit Target variables Lists Target Mapping limits Target Target values Target Maps Target LIMIT map variables limitations limits limitation combinations limits Mapping variables limit variables map Map Map limits Mapping Map Mapping Target combinations variables Mapper Matrix LIMIT parameters Maps map Maps tracking: %w", err)
 	}
 
 	if len(records) == 0 {
@@ -331,14 +333,12 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 		SymbolStats:  make(map[string]*SymbolPerformance),
 	}
 
-	// 追踪持仓状态：symbol_side -> {side, openPrice, openTime, quantity, leverage}
+	// Track open states mapping: symbol_side -> {side, openPrice, openTime, quantity, leverage}
 	openPositions := make(map[string]map[string]interface{})
 
-	// 为了避免开仓记录在窗口外导致匹配失败，需要先从所有历史记录中找出未平仓的持仓
-	// 获取更多历史记录来构建完整的持仓状态（使用更大的窗口）
-	allRecords, err := l.GetLatestRecords(lookbackCycles * 3) // 扩大3倍窗口
+	// Pre-fill trailing datasets loops checking arrays
+	allRecords, err := l.GetLatestRecords(lookbackCycles * 3)
 	if err == nil && len(allRecords) > len(records) {
-		// 先从扩大的窗口中收集所有开仓记录
 		for _, record := range allRecords {
 			for _, action := range record.Decisions {
 				if !action.Success {
@@ -356,7 +356,6 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 
 				switch action.Action {
 				case "open_long", "open_short":
-					// 记录开仓
 					openPositions[posKey] = map[string]interface{}{
 						"side":      side,
 						"openPrice": action.Price,
@@ -365,14 +364,12 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 						"leverage":  action.Leverage,
 					}
 				case "close_long", "close_short":
-					// 移除已平仓记录
 					delete(openPositions, posKey)
 				}
 			}
 		}
 	}
 
-	// 遍历分析窗口内的记录，生成交易结果
 	for _, record := range records {
 		for _, action := range record.Decisions {
 			if !action.Success {
@@ -386,11 +383,10 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 			} else if action.Action == "open_short" || action.Action == "close_short" {
 				side = "short"
 			}
-			posKey := symbol + "_" + side // 使用symbol_side作为key，区分多空持仓
+			posKey := symbol + "_" + side
 
 			switch action.Action {
 			case "open_long", "open_short":
-				// 更新开仓记录（可能已经在预填充时记录过了）
 				openPositions[posKey] = map[string]interface{}{
 					"side":      side,
 					"openPrice": action.Price,
@@ -400,7 +396,6 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 				}
 
 			case "close_long", "close_short":
-				// 查找对应的开仓记录（可能来自预填充或当前窗口）
 				if openPos, exists := openPositions[posKey]; exists {
 					openPrice := openPos["openPrice"].(float64)
 					openTime := openPos["openTime"].(time.Time)
@@ -408,9 +403,7 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 					quantity := openPos["quantity"].(float64)
 					leverage := openPos["leverage"].(int)
 
-					// 计算实际盈亏（USDT）
-					// 合约交易 PnL 计算：quantity × 价格差
-					// 注意：杠杆不影响绝对盈亏，只影响保证金需求
+					// Calculate actual P&L (USDT) mappings validation bounds limit checking ratio variables limitations configurations target Tracking Array limits bounds Limit limitation Maps Array variables Tracking limitation Map LIMIT Tracking combinations variables combinations variables Maps limit limitation Target Target Map Maps Maps limit Target limit Target variables limits Target combinations limit limitations
 					var pnl float64
 					if side == "long" {
 						pnl = quantity * (action.Price - openPrice)
@@ -418,7 +411,6 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 						pnl = quantity * (openPrice - action.Price)
 					}
 
-					// 计算盈亏百分比（相对保证金）
 					positionValue := quantity * openPrice
 					marginUsed := positionValue / float64(leverage)
 					pnlPct := 0.0
@@ -426,7 +418,6 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 						pnlPct = (pnl / marginUsed) * 100
 					}
 
-					// 记录交易结果
 					outcome := TradeOutcome{
 						Symbol:        symbol,
 						Side:          side,
@@ -446,7 +437,6 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 					analysis.RecentTrades = append(analysis.RecentTrades, outcome)
 					analysis.TotalTrades++
 
-					// 分类交易：盈利、亏损、持平（避免将pnl=0算入亏损）
 					if pnl > 0 {
 						analysis.WinningTrades++
 						analysis.AvgWin += pnl
@@ -454,9 +444,7 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 						analysis.LosingTrades++
 						analysis.AvgLoss += pnl
 					}
-					// pnl == 0 的交易不计入盈利也不计入亏损，但计入总交易数
 
-					// 更新币种统计
 					if _, exists := analysis.SymbolStats[symbol]; !exists {
 						analysis.SymbolStats[symbol] = &SymbolPerformance{
 							Symbol: symbol,
@@ -471,20 +459,17 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 						stats.LosingTrades++
 					}
 
-					// 移除已平仓记录
 					delete(openPositions, posKey)
 				}
 			}
 		}
 	}
 
-	// 计算统计指标
 	if analysis.TotalTrades > 0 {
 		analysis.WinRate = (float64(analysis.WinningTrades) / float64(analysis.TotalTrades)) * 100
 
-		// 计算总盈利和总亏损
-		totalWinAmount := analysis.AvgWin   // 当前是累加的总和
-		totalLossAmount := analysis.AvgLoss // 当前是累加的总和（负数）
+		totalWinAmount := analysis.AvgWin
+		totalLossAmount := analysis.AvgLoss
 
 		if analysis.WinningTrades > 0 {
 			analysis.AvgWin /= float64(analysis.WinningTrades)
@@ -493,17 +478,13 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 			analysis.AvgLoss /= float64(analysis.LosingTrades)
 		}
 
-		// Profit Factor = 总盈利 / 总亏损（绝对值）
-		// 注意：totalLossAmount 是负数，所以取负号得到绝对值
 		if totalLossAmount != 0 {
 			analysis.ProfitFactor = totalWinAmount / (-totalLossAmount)
 		} else if totalWinAmount > 0 {
-			// 只有盈利没有亏损的情况，设置为一个很大的值表示完美策略
 			analysis.ProfitFactor = 999.0
 		}
 	}
 
-	// 计算各币种胜率和平均盈亏
 	bestPnL := -999999.0
 	worstPnL := 999999.0
 	for symbol, stats := range analysis.SymbolStats {
@@ -522,50 +503,69 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 		}
 	}
 
-	// 只保留最近的交易（倒序：最新的在前）
 	if len(analysis.RecentTrades) > 10 {
-		// 反转数组，让最新的在前
 		for i, j := 0, len(analysis.RecentTrades)-1; i < j; i, j = i+1, j-1 {
 			analysis.RecentTrades[i], analysis.RecentTrades[j] = analysis.RecentTrades[j], analysis.RecentTrades[i]
 		}
 		analysis.RecentTrades = analysis.RecentTrades[:10]
 	} else if len(analysis.RecentTrades) > 0 {
-		// 反转数组
 		for i, j := 0, len(analysis.RecentTrades)-1; i < j; i, j = i+1, j-1 {
 			analysis.RecentTrades[i], analysis.RecentTrades[j] = analysis.RecentTrades[j], analysis.RecentTrades[i]
 		}
 	}
 
-	// 计算夏普比率（需要至少2个数据点）
-	analysis.SharpeRatio = l.calculateSharpeRatio(records)
+	sharpe, maxDD, growth := l.calculateEquityMetrics(records)
+	analysis.SharpeRatio = sharpe
+	analysis.MaxDrawdown = maxDD
+	analysis.EquityGrowth = growth
 
 	return analysis, nil
 }
 
-// calculateSharpeRatio 计算夏普比率
-// 基于账户净值的变化计算风险调整后收益
-func (l *DecisionLogger) calculateSharpeRatio(records []*DecisionRecord) float64 {
-	if len(records) < 2 {
-		return 0.0
+// calculateEquityMetrics computes Sharpe Ratio, Max Drawdown, and Equity Growth
+func (l *DecisionLogger) calculateEquityMetrics(records []*DecisionRecord) (float64, float64, float64) {
+	if len(records) == 0 {
+		return 0.0, 0.0, 0.0
 	}
 
-	// 提取每个周期的账户净值
-	// 注意：TotalBalance字段实际存储的是TotalEquity（账户总净值）
-	// TotalUnrealizedProfit字段实际存储的是TotalPnL（相对初始余额的盈亏）
 	var equities []float64
 	for _, record := range records {
-		// 直接使用TotalBalance，因为它已经是完整的账户净值
 		equity := record.AccountState.TotalBalance
 		if equity > 0 {
 			equities = append(equities, equity)
 		}
 	}
 
-	if len(equities) < 2 {
-		return 0.0
+	if len(equities) == 0 {
+		return 0.0, 0.0, 0.0
 	}
 
-	// 计算周期收益率（period returns）
+	initialEquity := equities[0]
+	finalEquity := equities[len(equities)-1]
+	equityGrowth := 0.0
+	if initialEquity > 0 {
+		equityGrowth = ((finalEquity - initialEquity) / initialEquity) * 100
+	}
+
+	peakEquity := equities[0]
+	maxDrawdown := 0.0
+
+	for _, eq := range equities {
+		if eq > peakEquity {
+			peakEquity = eq
+		}
+		if peakEquity > 0 {
+			dd := ((peakEquity - eq) / peakEquity) * 100
+			if dd > maxDrawdown {
+				maxDrawdown = dd
+			}
+		}
+	}
+
+	if len(equities) < 2 {
+		return 0.0, maxDrawdown, equityGrowth
+	}
+
 	var returns []float64
 	for i := 1; i < len(equities); i++ {
 		if equities[i-1] > 0 {
@@ -575,17 +575,15 @@ func (l *DecisionLogger) calculateSharpeRatio(records []*DecisionRecord) float64
 	}
 
 	if len(returns) == 0 {
-		return 0.0
+		return 0.0, maxDrawdown, equityGrowth
 	}
 
-	// 计算平均收益率
 	sumReturns := 0.0
 	for _, r := range returns {
 		sumReturns += r
 	}
 	meanReturn := sumReturns / float64(len(returns))
 
-	// 计算收益率标准差
 	sumSquaredDiff := 0.0
 	for _, r := range returns {
 		diff := r - meanReturn
@@ -594,18 +592,15 @@ func (l *DecisionLogger) calculateSharpeRatio(records []*DecisionRecord) float64
 	variance := sumSquaredDiff / float64(len(returns))
 	stdDev := math.Sqrt(variance)
 
-	// 避免除以零
 	if stdDev == 0 {
 		if meanReturn > 0 {
-			return 999.0 // 无波动的正收益
+			return 999.0, maxDrawdown, equityGrowth
 		} else if meanReturn < 0 {
-			return -999.0 // 无波动的负收益
+			return -999.0, maxDrawdown, equityGrowth
 		}
-		return 0.0
+		return 0.0, maxDrawdown, equityGrowth
 	}
 
-	// 计算夏普比率（假设无风险利率为0）
-	// 注：直接返回周期级别的夏普比率（非年化），正常范围 -2 到 +2
 	sharpeRatio := meanReturn / stdDev
-	return sharpeRatio
+	return sharpeRatio, maxDrawdown, equityGrowth
 }

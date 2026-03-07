@@ -11,6 +11,7 @@ export interface SystemStatus {
   stop_until: string;
   last_reset_time: string;
   ai_provider: string;
+  mode: string;
 }
 
 export interface AccountInfo {
@@ -84,7 +85,7 @@ export interface Statistics {
   total_close_positions: number;
 }
 
-// 新增：竞赛相关类型
+// 
 export interface TraderInfo {
   trader_id: string;
   trader_name: string;

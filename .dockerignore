@@ -16,8 +16,8 @@ docker-compose.yml
 *~
 
 # Build artifacts
-nofx
-nofx_test
+aegistrade
+aegistrade_test
 *.exe
 *.dll
 *.so
@@ -40,7 +40,7 @@ coin_pool_cache/
 # Config files (should be mounted)
 config.json
 
-# Web build artifacts (but include source for multi-stage build)
+# Web build artifacts (keep source for multi-stage build)
 web/node_modules/
 web/dist/
 

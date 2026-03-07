@@ -1,27 +1,27 @@
 ---
 name: Feature Request
-about: Suggest a new feature for NOFX
+about: Suggest a new feature for AegisTrade
 title: '[FEATURE] '
 labels: enhancement
 assignees: ''
 ---
 
-## 📋 Feature Description
+##  Feature Description
 <!-- A clear and concise description of what you want to happen -->
 
-## 🎯 Problem to Solve
+##  Problem to Solve
 <!-- What problem does this feature solve? -->
 
-## 💡 Proposed Solution
+##  Proposed Solution
 <!-- How should this feature work? -->
 
-## 🔧 Technical Details
+##  Technical Details
 <!-- Any technical considerations or implementation ideas -->
 
-## ✅ Acceptance Criteria
+##  Acceptance Criteria
 <!-- What needs to be done for this feature to be considered complete? -->
 - [ ] Item 1
 - [ ] Item 2
 
-## 📚 Additional Context
+##  Additional Context
 <!-- Add any other context, screenshots, or references about the feature request here -->

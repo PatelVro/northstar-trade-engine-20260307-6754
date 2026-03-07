@@ -3,10 +3,10 @@ const path = require('path');
 module.exports = {
   apps: [
     {
-      name: 'nofx-backend',
-      script: './nofx',
-      cwd: __dirname, // 使用当前目录（配置文件所在目录）
-      interpreter: 'none', // 不使用解释器，直接执行二进制文件
+      name: 'AegisTrade-backend',
+      script: './AegisTrade',
+      cwd: __dirname, // 
+      interpreter: 'none', // 
       instances: 1,
       autorestart: true,
       watch: false,
@@ -20,10 +20,10 @@ module.exports = {
       merge_logs: true
     },
     {
-      name: 'nofx-frontend',
+      name: 'AegisTrade-frontend',
       script: 'npm',
       args: 'run dev',
-      cwd: path.join(__dirname, 'web'), // 动态拼接 web 目录
+      cwd: path.join(__dirname, 'web'), //  web 
       instances: 1,
       autorestart: true,
       watch: false,

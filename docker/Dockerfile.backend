@@ -1,18 +1,18 @@
 # docker/backend/Dockerfile
 
-# ═══════════════════════════════════════════════════════════════
-# NOFX Backend Dockerfile (Go + TA-Lib)
+# 
+# AegisTrade Backend Dockerfile (Go + TA-Lib)
 # Multi-stage build with shared TA-Lib compilation stage
 # Versions extracted as ARGs for maintainability
-# ═══════════════════════════════════════════════════════════════
+# 
 
 ARG GO_VERSION=1.25-alpine
 ARG ALPINE_VERSION=latest
 ARG TA_LIB_VERSION=0.4.0
 
-# ──────────────────────────────────────────────────────────────
+# 
 # TA-Lib Build Stage (shared across builds)
-# ──────────────────────────────────────────────────────────────
+# 
 FROM alpine:${ALPINE_VERSION} AS ta-lib-builder
 ARG TA_LIB_VERSION
 
@@ -33,9 +33,9 @@ RUN wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-${TA_LIB_VERSION}-src.
     make && make install && \
     cd .. && rm -rf ta-lib ta-lib-${TA_LIB_VERSION}-src.tar.gz
 
-# ──────────────────────────────────────────────────────────────
+# 
 # Backend Build Stage (Go Application)
-# ──────────────────────────────────────────────────────────────
+# 
 FROM golang:${GO_VERSION} AS backend-builder
 
 RUN apk update && apk add --no-cache git make gcc g++ musl-dev
@@ -47,22 +47,22 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -o nofx .
+RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -o AegisTrade .
 
-# ──────────────────────────────────────────────────────────────
+# 
 # Runtime Stage (Minimal Executable Environment)
-# ──────────────────────────────────────────────────────────────
+# 
 FROM alpine:${ALPINE_VERSION}
 
 RUN apk update && apk add --no-cache ca-certificates tzdata
 
 COPY --from=ta-lib-builder /usr/local /usr/local
 WORKDIR /app
-COPY --from=backend-builder /app/nofx .
+COPY --from=backend-builder /app/AegisTrade .
 
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
 
-CMD ["./nofx"]
+CMD ["./AegisTrade"]
