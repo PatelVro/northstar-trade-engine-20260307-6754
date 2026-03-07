@@ -28,6 +28,7 @@ Thumbs.db
 config.json
 .env.ibkr
 config_*.json
+config.demo.json
 config-working.json
 cook*.txt
 cookies*.txt

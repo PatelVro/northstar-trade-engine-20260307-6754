@@ -191,7 +191,7 @@ function App() {
             <div className="flex items-center gap-2 flex-wrap md:flex-nowrap">
               {/* GitHub Link - Hidden on mobile, icon only on tablet */}
               <a
-                href="https://github.com/hillpatel/aegistrade"
+                href="https://github.com/PatelVro/northstar-trade-engine-20260307-6754"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="hidden sm:flex items-center gap-2 px-2 md:px-3 py-1.5 md:py-2 rounded text-sm font-semibold transition-all hover:scale-105"
@@ -258,15 +258,51 @@ function App() {
                 <div
                   className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 rounded font-bold text-xs"
                   style={{
-                    background: status.mode === 'live' ? 'rgba(246, 70, 93, 0.15)' : status.mode === 'paper' ? 'rgba(96, 165, 250, 0.15)' : 'rgba(240, 185, 11, 0.15)',
-                    color: status.mode === 'live' ? '#F6465D' : status.mode === 'paper' ? '#60a5fa' : '#F0B90B',
-                    border: `1px solid ${status.mode === 'live' ? 'rgba(246, 70, 93, 0.3)' : status.mode === 'paper' ? 'rgba(96, 165, 250, 0.3)' : 'rgba(240, 185, 11, 0.3)'}`
+                    background: status.is_demo_mode
+                      ? 'rgba(45, 212, 191, 0.15)'
+                      : status.mode === 'live'
+                        ? 'rgba(246, 70, 93, 0.15)'
+                        : status.mode === 'paper'
+                          ? 'rgba(96, 165, 250, 0.15)'
+                          : 'rgba(240, 185, 11, 0.15)',
+                    color: status.is_demo_mode
+                      ? '#2dd4bf'
+                      : status.mode === 'live'
+                        ? '#F6465D'
+                        : status.mode === 'paper'
+                          ? '#60a5fa'
+                          : '#F0B90B',
+                    border: `1px solid ${
+                      status.is_demo_mode
+                        ? 'rgba(45, 212, 191, 0.35)'
+                        : status.mode === 'live'
+                          ? 'rgba(246, 70, 93, 0.3)'
+                          : status.mode === 'paper'
+                            ? 'rgba(96, 165, 250, 0.3)'
+                            : 'rgba(240, 185, 11, 0.3)'
+                    }`
                   }}
                 >
-                  <div className={`w-2 h-2 rounded-full ${status.mode === 'live' ? 'pulse-glow' : ''}`}
-                    style={{ background: status.mode === 'live' ? '#F6465D' : status.mode === 'paper' ? '#60a5fa' : '#F0B90B' }}
+                  <div className={`w-2 h-2 rounded-full ${status.mode === 'live' && !status.is_demo_mode ? 'pulse-glow' : ''}`}
+                    style={{
+                      background: status.is_demo_mode
+                        ? '#2dd4bf'
+                        : status.mode === 'live'
+                          ? '#F6465D'
+                          : status.mode === 'paper'
+                            ? '#60a5fa'
+                            : '#F0B90B'
+                    }}
                   />
-                  <span className="uppercase tracking-wider">{status.mode === 'live' ? 'LIVE TRADING' : status.mode === 'paper' ? 'PAPER TRADING' : 'REPLAY'}</span>
+                  <span className="uppercase tracking-wider">
+                    {status.is_demo_mode
+                      ? 'LIVE DEMO (PAPER)'
+                      : status.mode === 'live'
+                        ? 'LIVE TRADING'
+                        : status.mode === 'paper'
+                          ? 'PAPER TRADING'
+                          : 'REPLAY'}
+                  </span>
                 </div>
               )}
 
@@ -318,7 +354,7 @@ function App() {
           <p className="mt-1">{t('footerWarning', language)}</p>
           <div className="mt-4 flex items-center justify-center gap-2">
             <a
-              href="https://github.com/hillpatel/aegistrade"
+              href="https://github.com/PatelVro/northstar-trade-engine-20260307-6754"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold transition-all hover:scale-105"

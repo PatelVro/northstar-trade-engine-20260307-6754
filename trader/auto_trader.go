@@ -1,15 +1,16 @@
 package trader
 
 import (
-	"encoding/json"
-	"fmt"
-	"log"
-	"math"
 	"aegistrade/decision"
 	"aegistrade/logger"
 	"aegistrade/market"
 	"aegistrade/mcp"
 	"aegistrade/pool"
+	"encoding/json"
+	"fmt"
+	"log"
+	"math"
+	"math/rand"
 	"os"
 	"sort"
 	"strings"
@@ -24,7 +25,7 @@ type AutoTraderConfig struct {
 	AIModel string // AI model: "qwen" or "deepseek"
 
 	// Exchange selection
-	Exchange string // "binance", "hyperliquid" or "aster"
+	Exchange string // "binance", "hyperliquid", "aster", "alpaca", "ibkr", or "demo"
 
 	// Binance API Config
 	BinanceAPIKey    string
@@ -62,6 +63,7 @@ type AutoTraderConfig struct {
 	CustomAPIURL    string
 	CustomAPIKey    string
 	CustomModelName string
+	DemoMode        bool
 
 	// Scanning configuration
 	ScanInterval time.Duration // Scan interval (recommended 3 minutes)
@@ -113,6 +115,13 @@ type AutoTrader struct {
 	provider              market.BarsProvider // Injected data provider
 	candidateCursor       int
 	trustedSymbolSet      map[string]struct{}
+	demoMode              bool
+	demoRand              *rand.Rand
+	demoEquity            float64
+	demoAvailableBalance  float64
+	demoPositionCount     int
+	demoMarginUsedPct     float64
+	demoSnapshotSeed      int64
 }
 
 // NewAutoTrader Creates a new automatic trader
@@ -152,11 +161,21 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 			config.FallbackPositionPct = 0.10
 		}
 	}
+	if config.DemoMode {
+		if config.Mode == "" {
+			config.Mode = "paper"
+		}
+		if config.Exchange == "" {
+			config.Exchange = "demo"
+		}
+	}
 
 	mcpClient := mcp.New()
 
 	// Initialize AI
-	if config.AIModel == "custom" {
+	if config.DemoMode {
+		log.Printf(" [%s] Demo mode enabled (synthetic paper feed, no AI/broker calls)", config.Name)
+	} else if config.AIModel == "custom" {
 		// Custom API
 		mcpClient.SetCustomAPI(config.CustomAPIURL, config.CustomAPIKey, config.CustomModelName)
 		log.Printf(" [%s] Using custom AI API: %s (model: %s)", config.Name, config.CustomAPIURL, config.CustomModelName)
@@ -183,31 +202,46 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 	// Build the appropriate trader instance
 	var trader Trader
 	var err error
+	var provider market.BarsProvider
 
-	switch config.Exchange {
-	case "binance":
-		log.Printf(" [%s] Using Binance Futures", config.Name)
-		trader = NewFuturesTrader(config.BinanceAPIKey, config.BinanceSecretKey)
-	case "hyperliquid":
-		log.Printf(" [%s] Using Hyperliquid", config.Name)
-		trader, err = NewHyperliquidTrader(config.HyperliquidPrivateKey, config.HyperliquidWalletAddr, config.HyperliquidTestnet)
-		if err != nil {
-			return nil, fmt.Errorf("failed to initialize Hyperliquid trader: %w", err)
+	if config.DemoMode {
+		if config.Mode == "" {
+			config.Mode = "paper"
 		}
-	case "aster":
-		log.Printf(" [%s] Using Aster", config.Name)
-		trader, err = NewAsterTrader(config.AsterUser, config.AsterSigner, config.AsterPrivateKey)
-		if err != nil {
-			return nil, fmt.Errorf("failed to initialize Aster trader: %w", err)
+		if config.Exchange == "" {
+			config.Exchange = "demo"
 		}
-	case "ibkr":
-		log.Printf(" [%s] Using Interactive Brokers", config.Name)
-		// IBKR trader instantiated explicitly after provider setup below
-	case "alpaca":
-		log.Printf(" [%s] Using Alpaca", config.Name)
-		// Alpaca trader will be instantiated after checking modes
-	default:
-		return nil, fmt.Errorf("unsupported exchange platform: %s", config.Exchange)
+		trader = NewSimTrader(config.InitialBalance, nil)
+		log.Printf(" [%s] Using built-in demo paper simulator", config.Name)
+	} else {
+		switch config.Exchange {
+		case "binance":
+			log.Printf(" [%s] Using Binance Futures", config.Name)
+			trader = NewFuturesTrader(config.BinanceAPIKey, config.BinanceSecretKey)
+		case "hyperliquid":
+			log.Printf(" [%s] Using Hyperliquid", config.Name)
+			trader, err = NewHyperliquidTrader(config.HyperliquidPrivateKey, config.HyperliquidWalletAddr, config.HyperliquidTestnet)
+			if err != nil {
+				return nil, fmt.Errorf("failed to initialize Hyperliquid trader: %w", err)
+			}
+		case "aster":
+			log.Printf(" [%s] Using Aster", config.Name)
+			trader, err = NewAsterTrader(config.AsterUser, config.AsterSigner, config.AsterPrivateKey)
+			if err != nil {
+				return nil, fmt.Errorf("failed to initialize Aster trader: %w", err)
+			}
+		case "ibkr":
+			log.Printf(" [%s] Using Interactive Brokers", config.Name)
+			// IBKR trader instantiated explicitly after provider setup below
+		case "alpaca":
+			log.Printf(" [%s] Using Alpaca", config.Name)
+			// Alpaca trader will be instantiated after checking modes
+		case "demo":
+			trader = NewSimTrader(config.InitialBalance, nil)
+			log.Printf(" [%s] Using built-in demo paper simulator", config.Name)
+		default:
+			return nil, fmt.Errorf("unsupported exchange platform: %s", config.Exchange)
+		}
 	}
 
 	// Validate initial balance
@@ -220,50 +254,51 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 	decisionLogger := logger.NewDecisionLogger(logDir)
 
 	// Determine data provider based on config
-	var provider market.BarsProvider
-	if config.InstrumentType == "equity" {
-		if config.DataProvider == "csv" {
-			provider = market.NewCSVProvider(config.CSVDataDir)
-			log.Printf(" [%s] Using CSV Data Provider from %s", config.Name, config.CSVDataDir)
-		} else if config.DataProvider == "ibkr" {
-			ibkrProvider := market.NewIBKRProvider(config.IBKRGatewayURL, config.IBKRAccountID, config.IBKRSessionCookie)
-			provider = ibkrProvider
-			log.Printf(" [%s] Using IBKR Data Provider", config.Name)
-		} else {
-			provider = market.NewAlpacaProvider(config.AlpacaAPIKey, config.AlpacaSecretKey)
-			log.Printf(" [%s] Using Alpaca Data Provider", config.Name)
-		}
-
-		// Initialize trader based on exchange
-		if config.Exchange == "ibkr" {
-			if config.Broker == "sim" {
-				trader = NewSimTrader(config.InitialBalance, provider)
-				log.Printf(" [%s] Using Simulated Broker against IBKR Data", config.Name)
+	if !config.DemoMode && config.Exchange != "demo" {
+		if config.InstrumentType == "equity" {
+			if config.DataProvider == "csv" {
+				provider = market.NewCSVProvider(config.CSVDataDir)
+				log.Printf(" [%s] Using CSV Data Provider from %s", config.Name, config.CSVDataDir)
+			} else if config.DataProvider == "ibkr" {
+				ibkrProvider := market.NewIBKRProvider(config.IBKRGatewayURL, config.IBKRAccountID, config.IBKRSessionCookie)
+				provider = ibkrProvider
+				log.Printf(" [%s] Using IBKR Data Provider", config.Name)
 			} else {
-				trader = NewIBKRTrader(config.IBKRGatewayURL, config.IBKRAccountID, config.IBKRSessionCookie, provider.(*market.IBKRProvider), config.InitialBalance)
-				log.Printf(" [%s] Using Interactive Brokers Live Execution Engine", config.Name)
+				provider = market.NewAlpacaProvider(config.AlpacaAPIKey, config.AlpacaSecretKey)
+				log.Printf(" [%s] Using Alpaca Data Provider", config.Name)
 			}
-		} else if config.Exchange == "alpaca" {
-			log.Printf("DEBUG: AlpacaPaperTrading flag is: %v", config.AlpacaPaperTrading)
-			if config.Broker == "sim" {
-				trader = NewSimTrader(config.InitialBalance, provider)
-				log.Printf(" [%s] Using Simulated Broker (Replay/Mock Mode)", config.Name)
-			} else {
-				trader = NewAlpacaTrader(config.AlpacaAPIKey, config.AlpacaSecretKey, config.AlpacaPaperTrading, config.InstrumentType)
-				if config.AlpacaPaperTrading {
-					log.Printf(" [%s] Using Alpaca Paper Broker", config.Name)
+
+			// Initialize trader based on exchange
+			if config.Exchange == "ibkr" {
+				if config.Broker == "sim" {
+					trader = NewSimTrader(config.InitialBalance, provider)
+					log.Printf(" [%s] Using Simulated Broker against IBKR Data", config.Name)
 				} else {
-					log.Printf(" [%s] Using Alpaca LIVE Broker", config.Name)
+					trader = NewIBKRTrader(config.IBKRGatewayURL, config.IBKRAccountID, config.IBKRSessionCookie, provider.(*market.IBKRProvider), config.InitialBalance)
+					log.Printf(" [%s] Using Interactive Brokers Live Execution Engine", config.Name)
+				}
+			} else if config.Exchange == "alpaca" {
+				log.Printf("DEBUG: AlpacaPaperTrading flag is: %v", config.AlpacaPaperTrading)
+				if config.Broker == "sim" {
+					trader = NewSimTrader(config.InitialBalance, provider)
+					log.Printf(" [%s] Using Simulated Broker (Replay/Mock Mode)", config.Name)
+				} else {
+					trader = NewAlpacaTrader(config.AlpacaAPIKey, config.AlpacaSecretKey, config.AlpacaPaperTrading, config.InstrumentType)
+					if config.AlpacaPaperTrading {
+						log.Printf(" [%s] Using Alpaca Paper Broker", config.Name)
+					} else {
+						log.Printf(" [%s] Using Alpaca LIVE Broker", config.Name)
+					}
 				}
 			}
+		} else {
+			provider = market.NewBinanceProvider()
+			log.Printf(" [%s] Using Binance Data Provider", config.Name)
 		}
-	} else {
-		provider = market.NewBinanceProvider()
-		log.Printf(" [%s] Using Binance Data Provider", config.Name)
 	}
 
 	trustedSymbols := map[string]struct{}{}
-	if config.InstrumentType == "equity" && strings.TrimSpace(config.TrustedSymbolsFile) != "" {
+	if !config.DemoMode && config.InstrumentType == "equity" && strings.TrimSpace(config.TrustedSymbolsFile) != "" {
 		set, err := loadSymbolSetFromFile(config.TrustedSymbolsFile)
 		if err != nil {
 			log.Printf(" [%s] Failed to load trusted_symbols_file '%s': %v", config.Name, config.TrustedSymbolsFile, err)
@@ -290,6 +325,12 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 		positionFirstSeenTime: make(map[string]int64),
 		provider:              provider,
 		trustedSymbolSet:      trustedSymbols,
+		demoMode:              config.DemoMode || config.Exchange == "demo",
+		demoRand:              rand.New(rand.NewSource(time.Now().UnixNano())),
+		demoEquity:            config.InitialBalance,
+		demoAvailableBalance:  config.InitialBalance,
+		demoPositionCount:     0,
+		demoMarginUsedPct:     0,
 	}, nil
 }
 
@@ -353,6 +394,67 @@ func (at *AutoTrader) ensureIBKRLiveReady() error {
 	return ibkrProv.Client.CheckLiveReadiness(at.config.IBKRAccountID)
 }
 
+func (at *AutoTrader) runDemoCycle() error {
+	if at.demoRand == nil {
+		at.demoRand = rand.New(rand.NewSource(time.Now().UnixNano()))
+	}
+
+	phase := float64(at.callCount%96) / 96.0 * 2.0 * math.Pi
+	wavePct := 0.04*math.Sin(phase) + 0.02*math.Cos(phase*0.5)
+	noisePct := (at.demoRand.Float64() - 0.5) * 0.06
+	changePct := wavePct + noisePct
+
+	nextEquity := at.demoEquity * (1.0 + (changePct / 100.0))
+	floor := at.initialBalance * 0.82
+	ceiling := at.initialBalance * 1.40
+	if nextEquity < floor {
+		nextEquity = floor + at.initialBalance*0.01*at.demoRand.Float64()
+	}
+	if nextEquity > ceiling {
+		nextEquity = ceiling - at.initialBalance*0.01*at.demoRand.Float64()
+	}
+
+	at.demoEquity = nextEquity
+	at.demoPositionCount = at.demoRand.Intn(4)
+	at.demoMarginUsedPct = 8.0 + at.demoRand.Float64()*28.0
+	if at.demoPositionCount == 0 {
+		at.demoMarginUsedPct = 0
+	}
+	at.demoSnapshotSeed = time.Now().UnixNano()
+	at.demoAvailableBalance = at.demoEquity * (1.0 - at.demoMarginUsedPct/100.0)
+	if at.demoAvailableBalance < 0 {
+		at.demoAvailableBalance = 0
+	}
+
+	totalPnL := at.demoEquity - at.initialBalance
+	at.dailyPnL = totalPnL
+
+	record := &logger.DecisionRecord{
+		InputPrompt:  "Demo mode cycle: synthetic paper update",
+		CoTTrace:     "Demo mode is enabled. No live broker, market data, or AI API call was used in this cycle.",
+		DecisionJSON: "[]",
+		AccountState: logger.AccountSnapshot{
+			TotalBalance:          at.demoEquity,
+			AvailableBalance:      at.demoAvailableBalance,
+			TotalUnrealizedProfit: totalPnL,
+			PositionCount:         at.demoPositionCount,
+			MarginUsedPct:         at.demoMarginUsedPct,
+		},
+		Decisions:    []logger.DecisionAction{},
+		ExecutionLog: []string{fmt.Sprintf("demo cycle update: equity=%.2f pnl=%.2f delta=%.4f%%", at.demoEquity, totalPnL, changePct)},
+		Success:      true,
+	}
+
+	if err := at.decisionLogger.LogDecision(record); err != nil {
+		return fmt.Errorf("failed to write demo decision record: %w", err)
+	}
+
+	log.Printf(" Demo cycle #%d | equity=%.2f | pnl=%.2f (%.2f%%)",
+		at.callCount, at.demoEquity, totalPnL, (totalPnL/at.initialBalance)*100.0)
+
+	return nil
+}
+
 func (at *AutoTrader) runCycle() error {
 	at.callCount++
 
@@ -393,6 +495,10 @@ func (at *AutoTrader) runCycle() error {
 		at.dailyPnL = 0
 		at.lastResetTime = time.Now()
 		log.Println(" Daily P&L constraints reset")
+	}
+
+	if at.demoMode {
+		return at.runDemoCycle()
 	}
 
 	// 3. Collect context mappings
@@ -968,7 +1074,9 @@ func (at *AutoTrader) GetDecisionLogger() *logger.DecisionLogger {
 // GetStatus Object Map parameters limit Targeting strings LIMIT parameters Object Limit Target Strings String Limits Lists Tracker tracking Variable tracking Tracker Arrays mappings Variables
 func (at *AutoTrader) GetStatus() map[string]interface{} {
 	aiProvider := "DeepSeek"
-	if at.config.UseQwen {
+	if at.demoMode {
+		aiProvider = "Demo"
+	} else if at.config.UseQwen {
 		aiProvider = "Qwen"
 	}
 
@@ -987,6 +1095,7 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 		"last_reset_time": at.lastResetTime.Format(time.RFC3339),
 		"ai_provider":     aiProvider,
 		"mode":            at.config.Mode,
+		"is_demo_mode":    at.demoMode,
 	}
 }
 
@@ -997,6 +1106,49 @@ func (at *AutoTrader) GetProvider() market.BarsProvider {
 
 // GetAccountInfo Map mapping Tracker limits Maps bounds limits Lists Variables Map Tracker Map array Tracking Mapper Maps string limits Tracking values mapping Array mapping loops bounds Map parameter Variables Tracker values Maps variables variables limit Tracker LIMIT map parameters tracking
 func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
+	if at.demoMode {
+		positions := at.buildDemoPositions()
+		totalUnrealized := 0.0
+		totalMarginUsed := 0.0
+		for _, pos := range positions {
+			if v, ok := pos["unrealized_pnl"].(float64); ok {
+				totalUnrealized += v
+			}
+			if v, ok := pos["margin_used"].(float64); ok {
+				totalMarginUsed += v
+			}
+		}
+
+		totalPnL := at.demoEquity - at.initialBalance
+		totalPnLPct := 0.0
+		if at.initialBalance > 0 {
+			totalPnLPct = (totalPnL / at.initialBalance) * 100
+		}
+		marginUsedPct := 0.0
+		if at.demoEquity > 0 {
+			marginUsedPct = (totalMarginUsed / at.demoEquity) * 100.0
+		}
+		availableBalance := at.demoEquity - totalMarginUsed
+		if availableBalance < 0 {
+			availableBalance = 0
+		}
+
+		return map[string]interface{}{
+			"total_equity":         at.demoEquity,
+			"wallet_balance":       at.demoEquity,
+			"unrealized_profit":    totalUnrealized,
+			"available_balance":    availableBalance,
+			"total_pnl":            totalPnL,
+			"total_pnl_pct":        totalPnLPct,
+			"total_unrealized_pnl": totalUnrealized,
+			"initial_balance":      at.initialBalance,
+			"daily_pnl":            at.dailyPnL,
+			"position_count":       len(positions),
+			"margin_used":          totalMarginUsed,
+			"margin_used_pct":      marginUsedPct,
+		}, nil
+	}
+
 	balance, err := at.trader.GetBalance()
 	if err != nil {
 		return nil, fmt.Errorf("variables Logic Limit maps Strings Limits Map Target Limit limitations Mapping List parameter Map mapping Tracker MAP limits: %w", err)
@@ -1079,6 +1231,10 @@ func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
 
 // GetPositions Mapping variables maps List arrays limits Parameter string strings Logic loops MAP combinations Arrays target Map limitation Tracking array variables MAP Array maps tracking string Strings Lists array Maps variations Tracking limits limit limits loops Mapper mapping maps Tracker maps Object
 func (at *AutoTrader) GetPositions() ([]map[string]interface{}, error) {
+	if at.demoMode {
+		return at.buildDemoPositions(), nil
+	}
+
 	positions, err := at.trader.GetPositions()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get positions: %w", err)
@@ -1126,6 +1282,102 @@ func (at *AutoTrader) GetPositions() ([]map[string]interface{}, error) {
 	}
 
 	return result, nil
+}
+
+func (at *AutoTrader) buildDemoPositions() []map[string]interface{} {
+	if at.demoPositionCount <= 0 {
+		return []map[string]interface{}{}
+	}
+
+	seed := at.demoSnapshotSeed
+	if seed == 0 {
+		seed = int64(at.callCount + 1)
+	}
+	r := rand.New(rand.NewSource(seed))
+
+	symbols := []string{"AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "SHOP", "RY", "TD", "BNS", "ENB"}
+	positions := make([]map[string]interface{}, 0, at.demoPositionCount)
+	totalNotional := at.demoEquity * (at.demoMarginUsedPct / 100.0)
+	if totalNotional < 0 {
+		totalNotional = 0
+	}
+
+	for i := 0; i < at.demoPositionCount; i++ {
+		symbol := symbols[(at.callCount+i)%len(symbols)]
+		base := demoSymbolBasePrice(symbol)
+		leverage := 2 + r.Intn(4) // 2x..5x
+		side := "long"
+		if r.Float64() > 0.6 {
+			side = "short"
+		}
+
+		entryPrice := base * (0.97 + r.Float64()*0.06)
+		drift := (r.Float64() - 0.5) * 0.04 // +/-2%
+		markPrice := entryPrice * (1.0 + drift)
+		allocatedNotional := totalNotional / float64(at.demoPositionCount)
+		if allocatedNotional <= 0 {
+			allocatedNotional = at.demoEquity * 0.02
+		}
+
+		quantity := allocatedNotional / entryPrice
+		unrealized := (markPrice - entryPrice) * quantity
+		if side == "short" {
+			unrealized = -unrealized
+		}
+
+		liqPrice := entryPrice * (1.0 - 0.20/float64(leverage))
+		if side == "short" {
+			liqPrice = entryPrice * (1.0 + 0.20/float64(leverage))
+		}
+
+		marginUsed := (quantity * markPrice) / float64(leverage)
+
+		positions = append(positions, map[string]interface{}{
+			"symbol":             symbol,
+			"side":               side,
+			"entry_price":        entryPrice,
+			"mark_price":         markPrice,
+			"quantity":           quantity,
+			"leverage":           leverage,
+			"unrealized_pnl":     unrealized,
+			"unrealized_pnl_pct": (unrealized / (quantity * entryPrice / float64(leverage))) * 100.0,
+			"liquidation_price":  liqPrice,
+			"margin_used":        marginUsed,
+		})
+	}
+
+	return positions
+}
+
+func demoSymbolBasePrice(symbol string) float64 {
+	switch symbol {
+	case "AAPL":
+		return 195
+	case "MSFT":
+		return 420
+	case "NVDA":
+		return 880
+	case "AMZN":
+		return 185
+	case "GOOGL":
+		return 165
+	case "META":
+		return 505
+	case "TSLA":
+		return 220
+	case "SHOP":
+		return 95
+	case "RY":
+		return 128
+	case "TD":
+		return 83
+	case "BNS":
+		return 70
+	case "ENB":
+		return 51
+	default:
+		return 100
+	}
 }
 
 func loadSymbolSetFromFile(path string) (map[string]struct{}, error) {

@@ -12,6 +12,7 @@ export interface SystemStatus {
   last_reset_time: string;
   ai_provider: string;
   mode: string;
+  is_demo_mode?: boolean;
 }
 
 export interface AccountInfo {

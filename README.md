@@ -74,6 +74,22 @@ Frontend default dev port: `3000`
 - Replay demo (synthetic local data): `run_replay.cmd`
 - IBKR paper: `run_ibkr_paper.cmd`
 - IBKR live: `run_ibkr_live.cmd`
+- Live dashboard demo (paper synthetic feed): `run_dashboard_demo.cmd`
+
+## Live dashboard demo mode
+
+If you want a graph that updates all day without broker credentials or AI token usage, use demo mode.
+
+- Template config: `config.demo.example.json`
+- Local runtime config (auto-created): `config.demo.json`
+- Status badge in UI: `LIVE DEMO (PAPER)`
+
+Demo mode behavior:
+
+- no live broker API calls
+- no AI model API calls
+- synthetic paper equity updates every cycle
+- decision log and equity history continue to build for charts
 
 ## Build and test
 

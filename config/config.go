@@ -11,10 +11,11 @@ import (
 
 // TraderConfig  Configuration for a single trader
 type TraderConfig struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Enabled bool   `json:"enabled"`  // Whether this trader is enabled
-	AIModel string `json:"ai_model"` // "qwen" or "deepseek"
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Enabled  bool   `json:"enabled"`             // Whether this trader is enabled
+	AIModel  string `json:"ai_model"`            // "qwen" or "deepseek"
+	DemoMode bool   `json:"demo_mode,omitempty"` // Synthetic paper demo mode (no broker/API calls)
 
 	// Execution modes
 	Mode         string `json:"mode,omitempty"`          // "replay", "paper", "live" (default: "live" if not set and using binance, "paper" if alpaca_paper_trading is true)
@@ -260,12 +261,32 @@ func (c *Config) Validate() error {
 		if trader.Exchange == "" {
 			trader.Exchange = "binance" // Default: Binance
 		}
-		if trader.Exchange != "binance" && trader.Exchange != "hyperliquid" && trader.Exchange != "aster" && trader.Exchange != "alpaca" && trader.Exchange != "ibkr" {
-			return fmt.Errorf("trader[%d]: exchange must be 'binance', 'hyperliquid', 'aster', 'alpaca', or 'ibkr'", i)
+		if trader.Exchange != "binance" && trader.Exchange != "hyperliquid" && trader.Exchange != "aster" && trader.Exchange != "alpaca" && trader.Exchange != "ibkr" && trader.Exchange != "demo" {
+			return fmt.Errorf("trader[%d]: exchange must be 'binance', 'hyperliquid', 'aster', 'alpaca', 'ibkr', or 'demo'", i)
 		}
 
 		// Validate platform-specific keys
-		if trader.Exchange == "binance" {
+		if trader.DemoMode || trader.Exchange == "demo" {
+			trader.DemoMode = true
+			if trader.Exchange == "" {
+				trader.Exchange = "demo"
+			}
+			if trader.Mode == "" {
+				trader.Mode = "paper"
+			}
+			if trader.DataProvider == "" {
+				trader.DataProvider = "demo"
+			}
+			if trader.Broker == "" {
+				trader.Broker = "sim"
+			}
+			if trader.InstrumentType == "" {
+				trader.InstrumentType = "equity"
+			}
+			if trader.StrategyMode == "" {
+				trader.StrategyMode = "ai_only"
+			}
+		} else if trader.Exchange == "binance" {
 			if trader.BinanceAPIKey == "" || trader.BinanceSecretKey == "" {
 				return fmt.Errorf("trader[%d]: Binance requires both binance_api_key and binance_secret_key", i)
 			}
@@ -405,21 +426,23 @@ func (c *Config) Validate() error {
 			}
 		}
 
-		if trader.AIModel == "qwen" && trader.QwenKey == "" {
-			return fmt.Errorf("trader[%d]: Qwen model requires qwen_key", i)
-		}
-		if trader.AIModel == "deepseek" && trader.DeepSeekKey == "" {
-			return fmt.Errorf("trader[%d]: DeepSeek model requires deepseek_key", i)
-		}
-		if trader.AIModel == "custom" {
-			if trader.CustomAPIURL == "" {
-				return fmt.Errorf("trader[%d]: Custom model requires custom_api_url", i)
+		if !trader.DemoMode {
+			if trader.AIModel == "qwen" && trader.QwenKey == "" {
+				return fmt.Errorf("trader[%d]: Qwen model requires qwen_key", i)
 			}
-			if trader.CustomAPIKey == "" {
-				return fmt.Errorf("trader[%d]: Custom model requires custom_api_key", i)
+			if trader.AIModel == "deepseek" && trader.DeepSeekKey == "" {
+				return fmt.Errorf("trader[%d]: DeepSeek model requires deepseek_key", i)
 			}
-			if trader.CustomModelName == "" {
-				return fmt.Errorf("trader[%d]: Custom model requires custom_model_name", i)
+			if trader.AIModel == "custom" {
+				if trader.CustomAPIURL == "" {
+					return fmt.Errorf("trader[%d]: Custom model requires custom_api_url", i)
+				}
+				if trader.CustomAPIKey == "" {
+					return fmt.Errorf("trader[%d]: Custom model requires custom_api_key", i)
+				}
+				if trader.CustomModelName == "" {
+					return fmt.Errorf("trader[%d]: Custom model requires custom_model_name", i)
+				}
 			}
 		}
 		if trader.InitialBalance <= 0 {

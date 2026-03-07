@@ -1,10 +1,10 @@
 package manager
 
 import (
-	"fmt"
-	"log"
 	"aegistrade/config"
 	"aegistrade/trader"
+	"fmt"
+	"log"
 	"sync"
 	"time"
 )
@@ -59,6 +59,7 @@ func (tm *TraderManager) AddTrader(cfg config.TraderConfig, coinPoolURL string, 
 		CustomAPIURL:          cfg.CustomAPIURL,
 		CustomAPIKey:          cfg.CustomAPIKey,
 		CustomModelName:       cfg.CustomModelName,
+		DemoMode:              cfg.DemoMode,
 		ScanInterval:          cfg.GetScanInterval(),
 		InitialBalance:        cfg.InitialBalance,
 		BTCETHLeverage:        leverage.BTCETHLeverage,  // Bind configured leverage sizing
