@@ -74,6 +74,7 @@ Frontend default dev port: `3000`
 - Replay demo (synthetic local data): `run_replay.cmd`
 - IBKR paper: `run_ibkr_paper.cmd`
 - IBKR live: `run_ibkr_live.cmd`
+- IBKR automated backtest matrix: `run_ibkr_backtest.cmd`
 - Live dashboard demo (paper synthetic feed): `run_dashboard_demo.cmd`
 - Live dashboard demo full startup (backend + frontend): `run_dashboard_demo_full.cmd`
 
@@ -96,6 +97,32 @@ Quick launch options:
 
 - Backend only: `run_dashboard_demo.cmd`
 - Backend + frontend windows + auto-open browser: `run_dashboard_demo_full.cmd`
+
+## Automated IBKR backtesting
+
+Use the built-in backtest command to:
+
+- download historical bars from IBKR
+- run multiple strategy profiles automatically
+- generate ranked results (`leaderboard.json` and `leaderboard.csv`)
+
+Quick run (Windows):
+
+```bash
+run_ibkr_backtest.cmd
+```
+
+Direct command:
+
+```bash
+go run ./cmd/ibkr-backtest -account-id DUP200062
+```
+
+Artifacts are written under:
+
+- `output/ibkr_backtests/run_YYYYMMDD_HHMMSS/leaderboard.json`
+- `output/ibkr_backtests/run_YYYYMMDD_HHMMSS/leaderboard.csv`
+- `output/ibkr_backtests/run_YYYYMMDD_HHMMSS/profiles/<profile>/...`
 
 ## Build and test
 

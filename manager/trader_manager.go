@@ -80,6 +80,8 @@ func (tm *TraderManager) AddTrader(cfg config.TraderConfig, coinPoolURL string, 
 		StrategyMode:        cfg.StrategyMode,
 		MomentumMinScore:    cfg.MomentumMinScore,
 		FallbackPositionPct: cfg.FallbackPositionPct,
+		MaxCycles:           cfg.MaxCycles,
+		ReplayWarmupBars:    cfg.ReplayWarmupBars,
 	}
 
 	// Create new AutoTrader execution wrapper

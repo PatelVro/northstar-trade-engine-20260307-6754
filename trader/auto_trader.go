@@ -92,6 +92,8 @@ type AutoTraderConfig struct {
 	StrategyMode        string
 	MomentumMinScore    float64
 	FallbackPositionPct float64
+	MaxCycles           int
+	ReplayWarmupBars    int
 }
 
 // AutoTrader The automatic trader engine
@@ -123,6 +125,8 @@ type AutoTrader struct {
 	demoMarginUsedPct     float64
 	demoSnapshotSeed      int64
 	demoLastCycleTime     time.Time
+	replayInitialized     bool
+	backtestMode          bool
 }
 
 // NewAutoTrader Creates a new automatic trader
@@ -161,6 +165,9 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 		if config.FallbackPositionPct <= 0 || config.FallbackPositionPct > 0.20 {
 			config.FallbackPositionPct = 0.10
 		}
+	}
+	if config.Mode == "replay" && config.ReplayWarmupBars <= 0 {
+		config.ReplayWarmupBars = 120
 	}
 	if config.DemoMode {
 		if config.Mode == "" {
@@ -337,6 +344,10 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 
 // Run the automated trading loop
 func (at *AutoTrader) Run() error {
+	if at.config.MaxCycles > 0 {
+		return at.RunBacktest(at.config.MaxCycles)
+	}
+
 	at.isRunning = true
 	log.Println(" AI-driven auto trading system started")
 	currency := "USDT"
@@ -348,23 +359,38 @@ func (at *AutoTrader) Run() error {
 	log.Printf("  Scan interval: %v", at.config.ScanInterval)
 	log.Println(" AI will have full control over leverage, position size, and stop/take profit parameters")
 
-	ticker := time.NewTicker(at.config.ScanInterval)
-	defer ticker.Stop()
-
-	// Initial execution
-	if err := at.runCycle(); err != nil {
-		log.Printf(" Execution failed: %v", err)
+	for at.isRunning {
+		if err := at.runCycle(); err != nil {
+			log.Printf(" Execution failed: %v", err)
+		}
+		if !at.isRunning {
+			break
+		}
+		time.Sleep(at.config.ScanInterval)
 	}
 
-	for at.isRunning {
-		select {
-		case <-ticker.C:
-			if err := at.runCycle(); err != nil {
-				log.Printf(" Execution failed: %v", err)
-			}
+	return nil
+}
+
+// RunBacktest executes a finite number of replay/backtest cycles without scan interval waits.
+func (at *AutoTrader) RunBacktest(maxCycles int) error {
+	if maxCycles <= 0 {
+		return fmt.Errorf("max backtest cycles must be greater than 0")
+	}
+
+	at.isRunning = true
+	at.backtestMode = true
+	defer func() { at.backtestMode = false }()
+	log.Printf(" Backtest mode started (%d cycles)", maxCycles)
+
+	for at.isRunning && at.callCount < maxCycles {
+		if err := at.runCycle(); err != nil {
+			log.Printf(" Backtest cycle error: %v", err)
 		}
 	}
 
+	at.closeAllOpenPositions()
+	at.Stop()
 	return nil
 }
 
@@ -382,6 +408,33 @@ func (at *AutoTrader) Stop() {
 	log.Println(" Auto trading system stopped")
 }
 
+func (at *AutoTrader) closeAllOpenPositions() {
+	positions, err := at.trader.GetPositions()
+	if err != nil {
+		log.Printf(" Failed to fetch positions for forced backtest close: %v", err)
+		return
+	}
+
+	for _, pos := range positions {
+		symbol, _ := pos["symbol"].(string)
+		side, _ := pos["side"].(string)
+		if symbol == "" || side == "" {
+			continue
+		}
+
+		var closeErr error
+		switch side {
+		case "long":
+			_, closeErr = at.trader.CloseLong(symbol, 0)
+		case "short":
+			_, closeErr = at.trader.CloseShort(symbol, 0)
+		}
+		if closeErr != nil {
+			log.Printf(" Failed to force-close %s %s at backtest end: %v", symbol, side, closeErr)
+		}
+	}
+}
+
 func (at *AutoTrader) ensureIBKRLiveReady() error {
 	if at.exchange != "ibkr" || !at.config.StrictLiveMode || !strings.EqualFold(at.config.Mode, "live") {
 		return nil
@@ -393,6 +446,42 @@ func (at *AutoTrader) ensureIBKRLiveReady() error {
 	}
 
 	return ibkrProv.Client.CheckLiveReadiness(at.config.IBKRAccountID)
+}
+
+func (at *AutoTrader) prepareReplayStep() bool {
+	if !strings.EqualFold(at.config.Mode, "replay") || at.provider == nil {
+		return false
+	}
+
+	controller, ok := at.provider.(market.ReplayController)
+	if !ok {
+		return false
+	}
+
+	if !at.replayInitialized {
+		warmup := at.config.ReplayWarmupBars
+		if warmup < 80 {
+			warmup = 80
+		}
+		controller.EnableReplay(warmup)
+		at.replayInitialized = true
+		cursor, maxCursor := controller.ReplayProgress()
+		log.Printf(" Replay cursor initialized at %d/%d bars", cursor, maxCursor)
+		return false
+	}
+
+	if controller.AdvanceReplay(1) {
+		return false
+	}
+
+	cursor, maxCursor := controller.ReplayProgress()
+	log.Printf(" Replay dataset exhausted at %d/%d bars, stopping backtest", cursor, maxCursor)
+	if at.backtestMode {
+		at.isRunning = false
+	} else {
+		at.Stop()
+	}
+	return true
 }
 
 func (at *AutoTrader) runDemoCycle() error {
@@ -481,6 +570,9 @@ func (at *AutoTrader) runDemoCycle() error {
 }
 
 func (at *AutoTrader) runCycle() error {
+	if at.prepareReplayStep() {
+		return nil
+	}
 	at.callCount++
 
 	log.Println("\n" + strings.Repeat("=", 70))
@@ -571,9 +663,9 @@ func (at *AutoTrader) runCycle() error {
 	log.Printf(" Account equity: %.2f %s | available: %.2f %s | Positions: %d",
 		ctx.Account.TotalEquity, currency, ctx.Account.AvailableBalance, currency, ctx.Account.PositionCount)
 
-	// 4. Request mapping map array array Tracker Tracking Tracking strings Array Mapping loops tracking limits variables map tracking variations String maps
-	log.Println(" Requesting AI analysis and decision sequences mapping parameters Variables constraints strings limitations Array Variables Tracking...")
-	fullDecision, err := decision.GetFullDecision(ctx, at.mcpClient)
+	// 4. Request decision logic
+	log.Println(" Requesting decision analysis...")
+	fullDecision, err := at.getDecision(ctx)
 
 	// Log configurations maps strings map Array limits Strings
 	if fullDecision != nil {
@@ -659,7 +751,9 @@ func (at *AutoTrader) runCycle() error {
 			actionRecord.Success = true
 			record.ExecutionLog = append(record.ExecutionLog, fmt.Sprintf(" %s %s target Array limit logic Map limitations parameter Strings values configurations tracking String string combinations limit maps", d.Symbol, d.Action))
 			// Strings Strings limitations Target limit limitations parameters
-			time.Sleep(1 * time.Second)
+			if !strings.EqualFold(at.config.Mode, "replay") {
+				time.Sleep(1 * time.Second)
+			}
 		}
 
 		record.Decisions = append(record.Decisions, actionRecord)
@@ -671,6 +765,118 @@ func (at *AutoTrader) runCycle() error {
 	}
 
 	return nil
+}
+
+func (at *AutoTrader) getDecision(ctx *decision.Context) (*decision.FullDecision, error) {
+	if at.config.InstrumentType == "equity" && at.config.StrategyMode == "momentum_only" {
+		if err := at.loadMomentumMarketData(ctx); err != nil {
+			return nil, err
+		}
+		return at.buildMomentumOnlyDecision(ctx), nil
+	}
+	return decision.GetFullDecision(ctx, at.mcpClient)
+}
+
+func (at *AutoTrader) loadMomentumMarketData(ctx *decision.Context) error {
+	if ctx == nil {
+		return fmt.Errorf("missing context")
+	}
+
+	ctx.MarketDataMap = make(map[string]*market.Data)
+
+	symbolSet := make(map[string]struct{})
+	for _, pos := range ctx.Positions {
+		symbolSet[pos.Symbol] = struct{}{}
+	}
+	for _, coin := range ctx.CandidateCoins {
+		symbolSet[coin.Symbol] = struct{}{}
+	}
+
+	const maxSymbols = 24
+	loaded := 0
+	for symbol := range symbolSet {
+		if loaded >= maxSymbols {
+			break
+		}
+		data, err := market.Get(market.GetRequest{
+			Symbol:         symbol,
+			Provider:       at.provider,
+			InstrumentType: at.config.InstrumentType,
+			BarsAdjustment: at.config.BarsAdjustment,
+		})
+		if err != nil {
+			continue
+		}
+		ctx.MarketDataMap[symbol] = data
+		loaded++
+	}
+
+	if len(ctx.MarketDataMap) == 0 {
+		return fmt.Errorf("failed to load market data for momentum strategy")
+	}
+	return nil
+}
+
+func (at *AutoTrader) buildMomentumOnlyDecision(ctx *decision.Context) *decision.FullDecision {
+	decisions := make([]decision.Decision, 0, 4)
+	for _, pos := range ctx.Positions {
+		closeAction := ""
+		reason := ""
+
+		if pos.UnrealizedPnLPct >= 4.5 {
+			if pos.Side == "long" {
+				closeAction = "close_long"
+			} else {
+				closeAction = "close_short"
+			}
+			reason = "Momentum-only exit: take-profit threshold reached"
+		} else if pos.UnrealizedPnLPct <= -1.5 {
+			if pos.Side == "long" {
+				closeAction = "close_long"
+			} else {
+				closeAction = "close_short"
+			}
+			reason = "Momentum-only exit: stop-loss threshold reached"
+		} else if data, ok := ctx.MarketDataMap[pos.Symbol]; ok {
+			if pos.Side == "long" && data.CurrentMACD < 0 && data.PriceChange1h < 0 {
+				closeAction = "close_long"
+				reason = "Momentum-only exit: trend reversal against long"
+			}
+			if pos.Side == "short" && data.CurrentMACD > 0 && data.PriceChange1h > 0 {
+				closeAction = "close_short"
+				reason = "Momentum-only exit: trend reversal against short"
+			}
+		}
+
+		if closeAction != "" {
+			decisions = append(decisions, decision.Decision{
+				Symbol:    pos.Symbol,
+				Action:    closeAction,
+				Reasoning: reason,
+			})
+		}
+	}
+
+	if len(decisions) == 0 && len(ctx.Positions) == 0 {
+		fallback, ok := buildMomentumFallbackDecision(ctx, at.config.MomentumMinScore, at.config.FallbackPositionPct)
+		if ok {
+			decisions = append(decisions, fallback)
+		}
+	}
+
+	if len(decisions) == 0 {
+		decisions = append(decisions, decision.Decision{
+			Action:    "wait",
+			Reasoning: "Momentum-only strategy: no qualified setup in this cycle",
+		})
+	}
+
+	return &decision.FullDecision{
+		UserPrompt: "Momentum-only local strategy decision (no external AI call)",
+		CoTTrace:   "Using local momentum signals and fixed risk constraints to manage entries and exits.",
+		Decisions:  decisions,
+		Timestamp:  time.Now(),
+	}
 }
 
 // buildTradingContext Tracking tracking Target limitations limits Variable combinations strings Variables arrays Tracking MAP parameters strings mapping mapping string Maps List mapping Target configurations Mapping Variable lists permutations limit MAP limitations Maps maps Targeting limitations Limit strings
@@ -1122,6 +1328,8 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 		"call_count":           at.callCount,
 		"initial_balance":      at.initialBalance,
 		"scan_interval":        at.config.ScanInterval.String(),
+		"max_cycles":           at.config.MaxCycles,
+		"replay_warmup_bars":   at.config.ReplayWarmupBars,
 		"stop_until":           at.stopUntil.Format(time.RFC3339),
 		"last_reset_time":      at.lastResetTime.Format(time.RFC3339),
 		"ai_provider":          aiProvider,
@@ -1533,59 +1741,12 @@ func (at *AutoTrader) maybeApplyEquityMomentumFallback(ctx *decision.Context, fu
 		return
 	}
 
-	candidate, ok := selectBestMomentumSignal(ctx, at.config.MomentumMinScore)
+	fallback, ok := buildMomentumFallbackDecision(ctx, at.config.MomentumMinScore, at.config.FallbackPositionPct)
 	if !ok {
 		return
 	}
 
-	positionPct := at.config.FallbackPositionPct
-	if positionPct <= 0 || positionPct > 0.20 {
-		positionPct = 0.10
-	}
-
-	notional := ctx.Account.TotalEquity * positionPct
-	maxPerTrade := ctx.Account.TotalEquity * 0.20
-	if notional > maxPerTrade {
-		notional = maxPerTrade
-	}
-	if ctx.Account.AvailableBalance > 0 && notional > ctx.Account.AvailableBalance*0.95 {
-		notional = ctx.Account.AvailableBalance * 0.95
-	}
-	if notional < 250 {
-		return
-	}
-
-	riskPct := 0.015
-	rewardPct := 0.045
-	action := "open_long"
-	stopLoss := candidate.Price * (1 - riskPct)
-	takeProfit := candidate.Price * (1 + rewardPct)
-	if candidate.ShortBias {
-		action = "open_short"
-		stopLoss = candidate.Price * (1 + riskPct)
-		takeProfit = candidate.Price * (1 - rewardPct)
-	}
-
-	confidence := int(math.Round(70 + candidate.Score*6))
-	if confidence < 75 {
-		confidence = 75
-	}
-	if confidence > 95 {
-		confidence = 95
-	}
-
-	fallback := decision.Decision{
-		Symbol:          candidate.Symbol,
-		Action:          action,
-		Leverage:        1,
-		PositionSizeUSD: notional,
-		StopLoss:        stopLoss,
-		TakeProfit:      takeProfit,
-		Confidence:      confidence,
-		Reasoning:       fmt.Sprintf("Momentum fallback: score=%.2f trend=%.2f rsi7=%.1f macd=%.4f", candidate.Score, candidate.TrendScore, candidate.RSI7, candidate.MACD),
-	}
-
-	log.Printf(" Momentum fallback generated %s on %s | score=%.2f | notional=%.2f", action, candidate.Symbol, candidate.Score, notional)
+	log.Printf(" Momentum fallback generated %s on %s | notional=%.2f", fallback.Action, fallback.Symbol, fallback.PositionSizeUSD)
 	fullDecision.Decisions = []decision.Decision{fallback}
 }
 
@@ -1657,6 +1818,59 @@ func selectBestMomentumSignal(ctx *decision.Context, minScore float64) (momentum
 	}
 
 	return best, found
+}
+
+func buildMomentumFallbackDecision(ctx *decision.Context, minScore, positionPct float64) (decision.Decision, bool) {
+	candidate, ok := selectBestMomentumSignal(ctx, minScore)
+	if !ok {
+		return decision.Decision{}, false
+	}
+
+	if positionPct <= 0 || positionPct > 0.20 {
+		positionPct = 0.10
+	}
+
+	notional := ctx.Account.TotalEquity * positionPct
+	maxPerTrade := ctx.Account.TotalEquity * 0.20
+	if notional > maxPerTrade {
+		notional = maxPerTrade
+	}
+	if ctx.Account.AvailableBalance > 0 && notional > ctx.Account.AvailableBalance*0.95 {
+		notional = ctx.Account.AvailableBalance * 0.95
+	}
+	if notional < 250 {
+		return decision.Decision{}, false
+	}
+
+	riskPct := 0.015
+	rewardPct := 0.045
+	action := "open_long"
+	stopLoss := candidate.Price * (1 - riskPct)
+	takeProfit := candidate.Price * (1 + rewardPct)
+	if candidate.ShortBias {
+		action = "open_short"
+		stopLoss = candidate.Price * (1 + riskPct)
+		takeProfit = candidate.Price * (1 - rewardPct)
+	}
+
+	confidence := int(math.Round(70 + candidate.Score*6))
+	if confidence < 75 {
+		confidence = 75
+	}
+	if confidence > 95 {
+		confidence = 95
+	}
+
+	return decision.Decision{
+		Symbol:          candidate.Symbol,
+		Action:          action,
+		Leverage:        1,
+		PositionSizeUSD: notional,
+		StopLoss:        stopLoss,
+		TakeProfit:      takeProfit,
+		Confidence:      confidence,
+		Reasoning:       fmt.Sprintf("Momentum fallback: score=%.2f trend=%.2f rsi7=%.1f macd=%.4f", candidate.Score, candidate.TrendScore, candidate.RSI7, candidate.MACD),
+	}, true
 }
 
 // sortDecisionsByPriority limit mapping mapping Array Maps Variable Lists lists Tracking limits Limit loops Limit Strings Tracker variations Target MAP mapping Tracking

@@ -5,6 +5,14 @@ type BarsProvider interface {
 	GetBars(symbols []string, interval string, limit int) (map[string][]Kline, error)
 }
 
+// ReplayController is an optional interface for providers that support
+// deterministic walk-forward replay/backtest stepping.
+type ReplayController interface {
+	EnableReplay(startCursor int)
+	AdvanceReplay(step int) bool
+	ReplayProgress() (cursor int, maxCursor int)
+}
+
 // Quote represents the latest bid and ask prices.
 type Quote struct {
 	BidPrice float64

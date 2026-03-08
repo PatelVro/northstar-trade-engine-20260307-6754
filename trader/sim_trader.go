@@ -1,11 +1,11 @@
 package trader
 
 import (
+	"aegistrade/market"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"log"
-	"aegistrade/market"
 	"os"
 	"path/filepath"
 	"time"
@@ -13,24 +13,24 @@ import (
 
 // SimPosition represents a simulated position
 type SimPosition struct {
-	Symbol       string
-	Quantity     float64
-	EntryPrice   float64
-	Side         string // "long" or "short"
+	Symbol     string
+	Quantity   float64
+	EntryPrice float64
+	Side       string // "long" or "short"
 }
 
 // SimTrader implements Trader interface but executes "paper fills" against the local provider.
 type SimTrader struct {
-	balance      float64
-	initialBal   float64
-	provider     market.BarsProvider
-	positions    map[string]*SimPosition
-	realizedPnL  float64
-	tradeCount   int
-	winCount     int
-	lossCount    int
-	maxDrawdown  float64
-	peakEquity   float64
+	balance     float64
+	initialBal  float64
+	provider    market.BarsProvider
+	positions   map[string]*SimPosition
+	realizedPnL float64
+	tradeCount  int
+	winCount    int
+	lossCount   int
+	maxDrawdown float64
+	peakEquity  float64
 }
 
 // NewSimTrader creates a new simulated broker for testing
@@ -103,7 +103,7 @@ func (s *SimTrader) GetBalance() (map[string]interface{}, error) {
 	return map[string]interface{}{
 		"totalWalletBalance":    s.balance,
 		"totalUnrealizedProfit": unrealizedPnL,
-		"availableBalance":      s.balance, 
+		"availableBalance":      s.balance,
 		"totalEquity":           totalEquity,
 	}, nil
 }
@@ -112,7 +112,7 @@ func (s *SimTrader) GetBalance() (map[string]interface{}, error) {
 func (s *SimTrader) GetPositions() ([]map[string]interface{}, error) {
 	var result []map[string]interface{}
 
-	for symbol, pos := range s.positions {
+	for _, pos := range s.positions {
 		if pos.Quantity == 0 {
 			continue
 		}
@@ -131,7 +131,7 @@ func (s *SimTrader) GetPositions() ([]map[string]interface{}, error) {
 		}
 
 		result = append(result, map[string]interface{}{
-			"symbol":           symbol,
+			"symbol":           pos.Symbol,
 			"side":             pos.Side,
 			"positionAmt":      pos.Quantity,
 			"entryPrice":       pos.EntryPrice,
@@ -152,7 +152,7 @@ func (s *SimTrader) openPosition(symbol string, quantity float64, side string) (
 	}
 
 	key := symbol + "_" + side
-	
+
 	if existing, exists := s.positions[key]; exists {
 		// Average down/up
 		totalValue := (existing.Quantity * existing.EntryPrice) + (quantity * price)
@@ -171,7 +171,7 @@ func (s *SimTrader) openPosition(symbol string, quantity float64, side string) (
 
 	// Cost deduction
 	cost := quantity * price
-	s.balance -= cost 
+	s.balance -= cost
 
 	// Write trade log
 	f, err := os.OpenFile(filepath.Join("output", "trades.csv"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -204,7 +204,7 @@ func (s *SimTrader) openPosition(symbol string, quantity float64, side string) (
 
 func (s *SimTrader) closePosition(symbol string, quantity float64, side string) (map[string]interface{}, error) {
 	key := symbol + "_" + side
-	
+
 	pos, exists := s.positions[key]
 	if !exists || pos.Quantity == 0 {
 		return nil, fmt.Errorf("no open %s position for %s", side, symbol)
@@ -231,7 +231,7 @@ func (s *SimTrader) closePosition(symbol string, quantity float64, side string) 
 	s.balance += (pos.EntryPrice * qtyToClose) + realizedPnL // Return principal + PnL
 	s.realizedPnL += realizedPnL
 	pos.Quantity -= qtyToClose
-	
+
 	s.tradeCount++
 	if realizedPnL > 0 {
 		s.winCount++

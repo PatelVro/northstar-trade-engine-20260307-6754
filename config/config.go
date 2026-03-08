@@ -58,7 +58,7 @@ type TraderConfig struct {
 	OrderSizingMode     string  `json:"order_sizing_mode,omitempty"`     // "qty" or "notional"
 	BarsAdjustment      string  `json:"bars_adjustment,omitempty"`       // "raw", "split", "dividend", "all"
 	TrustedSymbolsFile  string  `json:"trusted_symbols_file,omitempty"`  // Optional allowlist file for tradable equity symbols
-	StrategyMode        string  `json:"strategy_mode,omitempty"`         // "ai_only" or "momentum_fallback"
+	StrategyMode        string  `json:"strategy_mode,omitempty"`         // "ai_only", "momentum_fallback", or "momentum_only"
 	MomentumMinScore    float64 `json:"momentum_min_score,omitempty"`    // Minimum score to trigger fallback momentum entries
 	FallbackPositionPct float64 `json:"fallback_position_pct,omitempty"` // Fallback entry sizing as pct of equity (max 0.20)
 
@@ -80,6 +80,8 @@ type TraderConfig struct {
 	ScanIntervalMinutes int     `json:"scan_interval_minutes"`
 	ScanIntervalSeconds int     `json:"scan_interval_seconds,omitempty"`
 	CandidateBatchSize  int     `json:"candidate_batch_size,omitempty"` // Number of symbols analyzed per cycle
+	MaxCycles           int     `json:"max_cycles,omitempty"`           // Optional finite cycle count (useful for automated backtests)
+	ReplayWarmupBars    int     `json:"replay_warmup_bars,omitempty"`   // Replay warmup depth before first cycle
 }
 
 // LeverageConfig  Leverage settings
@@ -430,7 +432,8 @@ func (c *Config) Validate() error {
 			}
 		}
 
-		if !trader.DemoMode {
+		requiresAIKeys := !trader.DemoMode && !(trader.InstrumentType == "equity" && trader.StrategyMode == "momentum_only")
+		if requiresAIKeys {
 			if trader.AIModel == "qwen" && trader.QwenKey == "" {
 				return fmt.Errorf("trader[%d]: Qwen model requires qwen_key", i)
 			}
@@ -476,10 +479,13 @@ func (c *Config) Validate() error {
 			trader.CandidateBatchSize = 12
 		}
 		if trader.InstrumentType == "equity" {
-			validStrategy := trader.StrategyMode == "ai_only" || trader.StrategyMode == "momentum_fallback"
+			validStrategy := trader.StrategyMode == "ai_only" || trader.StrategyMode == "momentum_fallback" || trader.StrategyMode == "momentum_only"
 			if !validStrategy {
-				return fmt.Errorf("trader[%d]: strategy_mode must be 'ai_only' or 'momentum_fallback'", i)
+				return fmt.Errorf("trader[%d]: strategy_mode must be 'ai_only', 'momentum_fallback', or 'momentum_only'", i)
 			}
+		}
+		if trader.Mode == "replay" && trader.ReplayWarmupBars <= 0 {
+			trader.ReplayWarmupBars = 120
 		}
 
 		// Update trader in list with defaults
