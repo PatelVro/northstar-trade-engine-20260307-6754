@@ -1,13 +1,13 @@
 export type Language = 'en';
 
 const translations = {
-  appTitle: 'AegisTrade Dashboard',
+  appTitle: 'Northstar Trade Dashboard',
   subtitle: 'AI Trading Operations',
   competition: 'Competition',
   details: 'Details',
   running: 'RUNNING',
   stopped: 'STOPPED',
-  footerTitle: 'AegisTrade - AI Trading System',
+  footerTitle: 'Northstar Trade Engine',
   footerWarning: 'Trading involves risk. Use at your own discretion.',
   totalEquity: 'Total Equity',
   availableBalance: 'Available Balance',

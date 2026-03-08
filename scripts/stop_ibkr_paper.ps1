@@ -24,7 +24,7 @@ if (Test-Path $pidFile) {
 $candidates = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
     Where-Object {
         ($_.Name -in @("go.exe", "main.exe") -and $_.CommandLine -match "config_ibkr\.json") -or
-        ($_.Name -eq "AegisTrade_ibkr_paper.exe")
+        ($_.Name -eq "northstar_ibkr_paper.exe")
     }
 
 foreach ($p in $candidates) {

@@ -2,7 +2,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$exePath = Join-Path $repoRoot "runtime\AegisTrade_ibkr_paper.exe"
+$exePath = Join-Path $repoRoot "runtime\northstar_ibkr_paper.exe"
 
 if (-not (Test-Path $exePath)) {
     Write-Error "Runner binary not found at $exePath"
@@ -11,7 +11,7 @@ if (-not (Test-Path $exePath)) {
 
 $rules = @(
     @{
-        Name = "AegisTrade_IBKR_PAPER_EXE_TCP_IN_ANY"
+        Name = "Northstar_IBKR_PAPER_EXE_TCP_IN_ANY"
         Args = @(
             "dir=in",
             "action=allow",
@@ -23,7 +23,7 @@ $rules = @(
         )
     },
     @{
-        Name = "AegisTrade_IBKR_PAPER_EXE_UDP_IN_ANY"
+        Name = "Northstar_IBKR_PAPER_EXE_UDP_IN_ANY"
         Args = @(
             "dir=in",
             "action=allow",
@@ -34,7 +34,7 @@ $rules = @(
         )
     },
     @{
-        Name = "AegisTrade_IBKR_PORT_8080_TCP_IN_ANY"
+        Name = "Northstar_IBKR_PORT_8080_TCP_IN_ANY"
         Args = @(
             "dir=in",
             "action=allow",

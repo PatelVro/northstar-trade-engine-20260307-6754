@@ -16,7 +16,7 @@ if (-not (Test-Path $runtimeDir)) {
 $pidFile = Join-Path $runtimeDir "ibkr_paper.pid"
 $outLog = Join-Path $runtimeDir "ibkr_paper.out.log"
 $errLog = Join-Path $runtimeDir "ibkr_paper.err.log"
-$binaryPath = Join-Path $runtimeDir "AegisTrade_ibkr_paper.exe"
+$binaryPath = Join-Path $runtimeDir "northstar_ibkr_paper.exe"
 
 if (Test-Path $pidFile) {
     $pidText = (Get-Content -Path $pidFile -ErrorAction SilentlyContinue | Select-Object -First 1)

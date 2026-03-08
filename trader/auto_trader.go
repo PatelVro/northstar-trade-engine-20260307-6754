@@ -122,6 +122,7 @@ type AutoTrader struct {
 	demoPositionCount     int
 	demoMarginUsedPct     float64
 	demoSnapshotSeed      int64
+	demoLastCycleTime     time.Time
 }
 
 // NewAutoTrader Creates a new automatic trader
@@ -420,13 +421,18 @@ func (at *AutoTrader) runDemoCycle() error {
 	if at.demoPositionCount == 0 {
 		at.demoMarginUsedPct = 0
 	}
-	at.demoSnapshotSeed = time.Now().UnixNano()
+	now := time.Now()
+	at.demoSnapshotSeed = now.UnixNano()
 
 	positions := at.buildDemoPositions()
 	totalMarginUsed := 0.0
+	totalUnrealized := 0.0
 	for _, pos := range positions {
 		if v, ok := pos["margin_used"].(float64); ok {
 			totalMarginUsed += v
+		}
+		if v, ok := pos["unrealized_pnl"].(float64); ok {
+			totalUnrealized += v
 		}
 	}
 	if at.demoEquity > 0 {
@@ -435,10 +441,15 @@ func (at *AutoTrader) runDemoCycle() error {
 		at.demoMarginUsedPct = 0
 	}
 	at.demoPositionCount = len(positions)
-	at.demoAvailableBalance = at.demoEquity - totalMarginUsed
+	walletBalance := at.demoEquity - totalUnrealized
+	if walletBalance < 0 {
+		walletBalance = 0
+	}
+	at.demoAvailableBalance = walletBalance - totalMarginUsed
 	if at.demoAvailableBalance < 0 {
 		at.demoAvailableBalance = 0
 	}
+	at.demoLastCycleTime = now
 
 	totalPnL := at.demoEquity - at.initialBalance
 	at.dailyPnL = totalPnL
@@ -450,7 +461,7 @@ func (at *AutoTrader) runDemoCycle() error {
 		AccountState: logger.AccountSnapshot{
 			TotalBalance:          at.demoEquity,
 			AvailableBalance:      at.demoAvailableBalance,
-			TotalUnrealizedProfit: totalPnL,
+			TotalUnrealizedProfit: totalUnrealized,
 			PositionCount:         len(positions),
 			MarginUsedPct:         at.demoMarginUsedPct,
 		},
@@ -474,7 +485,7 @@ func (at *AutoTrader) runCycle() error {
 
 	log.Println("\n" + strings.Repeat("=", 70))
 	log.Printf(" %s - AI Decision cycle #%d", time.Now().Format("2006-01-02 15:04:05"), at.callCount)
-	log.Printf("=")
+	log.Println(strings.Repeat("=", 70))
 
 	// 0. IBeam Authentication Circuit Breaker
 	if ibkrProv, ok := at.provider.(*market.IBKRProvider); ok {
@@ -1090,26 +1101,33 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 	aiProvider := "DeepSeek"
 	if at.demoMode {
 		aiProvider = "Demo"
-	} else if at.config.UseQwen {
+	} else if at.aiModel == "custom" {
+		aiProvider = "Custom"
+	} else if at.config.UseQwen || at.aiModel == "qwen" {
 		aiProvider = "Qwen"
+	}
+	demoLastCycleTime := ""
+	if !at.demoLastCycleTime.IsZero() {
+		demoLastCycleTime = at.demoLastCycleTime.Format(time.RFC3339)
 	}
 
 	return map[string]interface{}{
-		"trader_id":       at.id,
-		"trader_name":     at.name,
-		"ai_model":        at.aiModel,
-		"exchange":        at.exchange,
-		"is_running":      at.isRunning,
-		"start_time":      at.startTime.Format(time.RFC3339),
-		"runtime_minutes": int(time.Since(at.startTime).Minutes()),
-		"call_count":      at.callCount,
-		"initial_balance": at.initialBalance,
-		"scan_interval":   at.config.ScanInterval.String(),
-		"stop_until":      at.stopUntil.Format(time.RFC3339),
-		"last_reset_time": at.lastResetTime.Format(time.RFC3339),
-		"ai_provider":     aiProvider,
-		"mode":            at.config.Mode,
-		"is_demo_mode":    at.demoMode,
+		"trader_id":            at.id,
+		"trader_name":          at.name,
+		"ai_model":             at.aiModel,
+		"exchange":             at.exchange,
+		"is_running":           at.isRunning,
+		"start_time":           at.startTime.Format(time.RFC3339),
+		"runtime_minutes":      int(time.Since(at.startTime).Minutes()),
+		"call_count":           at.callCount,
+		"initial_balance":      at.initialBalance,
+		"scan_interval":        at.config.ScanInterval.String(),
+		"stop_until":           at.stopUntil.Format(time.RFC3339),
+		"last_reset_time":      at.lastResetTime.Format(time.RFC3339),
+		"ai_provider":          aiProvider,
+		"mode":                 at.config.Mode,
+		"is_demo_mode":         at.demoMode,
+		"demo_last_cycle_time": demoLastCycleTime,
 	}
 }
 
@@ -1142,14 +1160,18 @@ func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
 		if at.demoEquity > 0 {
 			marginUsedPct = (totalMarginUsed / at.demoEquity) * 100.0
 		}
-		availableBalance := at.demoEquity - totalMarginUsed
+		walletBalance := at.demoEquity - totalUnrealized
+		if walletBalance < 0 {
+			walletBalance = 0
+		}
+		availableBalance := walletBalance - totalMarginUsed
 		if availableBalance < 0 {
 			availableBalance = 0
 		}
 
 		return map[string]interface{}{
 			"total_equity":         at.demoEquity,
-			"wallet_balance":       at.demoEquity,
+			"wallet_balance":       walletBalance,
 			"unrealized_profit":    totalUnrealized,
 			"available_balance":    availableBalance,
 			"total_pnl":            totalPnL,

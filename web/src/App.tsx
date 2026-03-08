@@ -402,6 +402,10 @@ function TraderDetailsPage({
   language: Language;
 }) {
   const [selectedChartSymbol, setSelectedChartSymbol] = useState<string | null>(null);
+  const accountCurrency =
+    status?.exchange === 'binance' || status?.exchange === 'hyperliquid' || status?.exchange === 'aster'
+      ? 'USDT'
+      : 'USD';
 
   if (!selectedTrader) {
     return (
@@ -469,18 +473,18 @@ function TraderDetailsPage({
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
         <StatCard
           title={t('totalEquity', language)}
-          value={`${account?.total_equity?.toFixed(2) || '0.00'} USDT`}
+          value={`${account?.total_equity?.toFixed(2) || '0.00'} ${accountCurrency}`}
           change={account?.total_pnl_pct || 0}
           positive={(account?.total_pnl ?? 0) > 0}
         />
         <StatCard
           title={t('availableBalance', language)}
-          value={`${account?.available_balance?.toFixed(2) || '0.00'} USDT`}
+          value={`${account?.available_balance?.toFixed(2) || '0.00'} ${accountCurrency}`}
           subtitle={`${(account?.available_balance && account?.total_equity ? ((account.available_balance / account.total_equity) * 100).toFixed(1) : '0.0')}% ${t('free', language)}`}
         />
         <StatCard
           title={t('totalPnL', language)}
-          value={`${account?.total_pnl !== undefined && account.total_pnl >= 0 ? '+' : ''}${account?.total_pnl?.toFixed(2) || '0.00'} USDT`}
+          value={`${account?.total_pnl !== undefined && account.total_pnl >= 0 ? '+' : ''}${account?.total_pnl?.toFixed(2) || '0.00'} ${accountCurrency}`}
           change={account?.total_pnl_pct || 0}
           positive={(account?.total_pnl ?? 0) >= 0}
         />
@@ -555,7 +559,7 @@ function TraderDetailsPage({
                         <td className="py-3 font-mono" style={{ color: '#EAECEF' }}>{pos.mark_price.toFixed(4)}</td>
                         <td className="py-3 font-mono" style={{ color: '#EAECEF' }}>{pos.quantity.toFixed(4)}</td>
                         <td className="py-3 font-mono font-bold" style={{ color: '#EAECEF' }}>
-                          {(pos.quantity * pos.mark_price).toFixed(2)} USDT
+                          {(pos.quantity * pos.mark_price).toFixed(2)} {accountCurrency}
                         </td>
                         <td className="py-3 font-mono" style={{ color: '#F0B90B' }}>{pos.leverage}x</td>
                         <td className="py-3 font-mono">
@@ -609,7 +613,7 @@ function TraderDetailsPage({
           <div className="space-y-4 overflow-y-auto pr-2" style={{ maxHeight: 'calc(100vh - 280px)' }}>
             {decisions && decisions.length > 0 ? (
               decisions.map((decision, i) => (
-                <DecisionCard key={i} decision={decision} language={language} />
+                <DecisionCard key={i} decision={decision} language={language} currency={accountCurrency} />
               ))
             ) : (
               <div className="py-16 text-center">
@@ -683,7 +687,15 @@ function StatCard({
 }
 
 // Decision Card Component with CoT Trace - Binance Style
-function DecisionCard({ decision, language }: { decision: DecisionRecord; language: Language }) {
+function DecisionCard({
+  decision,
+  language,
+  currency,
+}: {
+  decision: DecisionRecord;
+  language: Language;
+  currency: string;
+}) {
   const [showInputPrompt, setShowInputPrompt] = useState(false);
   const [showCoT, setShowCoT] = useState(false);
 
@@ -777,8 +789,8 @@ function DecisionCard({ decision, language }: { decision: DecisionRecord; langua
       {/* Account State Summary */}
       {decision.account_state && (
         <div className="flex gap-4 text-xs mb-3 rounded px-3 py-2" style={{ background: '#0B0E11', color: '#848E9C' }}>
-          <span>Equity: {decision.account_state.total_balance.toFixed(2)} USDT</span>
-          <span>Available: {decision.account_state.available_balance.toFixed(2)} USDT</span>
+          <span>Equity: {decision.account_state.total_balance.toFixed(2)} {currency}</span>
+          <span>Available: {decision.account_state.available_balance.toFixed(2)} {currency}</span>
           <span>Margin Used: {decision.account_state.margin_used_pct.toFixed(1)}%</span>
           <span>Positions: {decision.account_state.position_count}</span>
         </div>

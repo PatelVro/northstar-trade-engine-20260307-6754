@@ -1,10 +1,10 @@
 package api
 
 import (
+	"aegistrade/manager"
 	"fmt"
 	"log"
 	"net/http"
-	"aegistrade/manager"
 	"sync"
 	"time"
 
@@ -73,7 +73,7 @@ func (s *Server) runWSHub() {
 	}
 }
 
-// startTelemetry automatically polls the AegisTrade state engine and pipes to WS
+// startTelemetry automatically polls the trading engine and streams updates via WS
 func (s *Server) startTelemetry() {
 	ticker := time.NewTicker(2 * time.Second)
 	for range ticker.C {

@@ -2,7 +2,7 @@
 setlocal
 
 echo =========================================================
-echo   AegisTrade Canadian Equities (Interactive Brokers Paper)
+echo   Northstar Canadian Equities (Interactive Brokers Paper)
 echo =========================================================
 echo.
 echo Make sure you have the IBKR Client Portal API Gateway running 
@@ -15,7 +15,7 @@ if not exist data\universe\us_companies.txt (
   echo.
 )
 
-echo [2/2] Starting AegisTrade in Paper Logging mode...
+echo [2/2] Starting Northstar in Paper Trading mode...
 echo.
 
 go run main.go config_ibkr.json

@@ -2,7 +2,7 @@
 setlocal
 
 echo =========================================================
-echo   AegisTrade Canadian Equities (Interactive Brokers LIVE)
+echo   Northstar Canadian Equities (Interactive Brokers LIVE)
 echo =========================================================
 echo.
 echo WARNING: THIS WILL EXECUTE REAL TRADES ON INTERACTIVE BROKERS
@@ -28,5 +28,5 @@ echo.
 set CONFIRM_LIVE_TRADING=true
 echo Enforcing CONFIRM_LIVE_TRADING lock...
 
-echo [3/3] Starting AegisTrade with config_ibkr_live.json...
+echo [3/3] Starting Northstar with config_ibkr_live.json...
 go run main.go config_ibkr_live.json

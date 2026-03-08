@@ -2,7 +2,7 @@
 setlocal
 
 echo =========================================================
-echo   AegisTrade LIVE Trading Mode (Alpaca) 
+echo   Northstar LIVE Trading Mode (Alpaca) 
 echo =========================================================
 echo.
 
@@ -11,7 +11,7 @@ echo Setting safety override: CONFIRM_LIVE_TRADING=true
 set CONFIRM_LIVE_TRADING=true
 echo.
 
-echo Running AegisTrade with config_live.json...
+echo Running Northstar with config_live.json...
 echo.
 
 go run main.go config_live.json

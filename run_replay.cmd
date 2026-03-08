@@ -2,7 +2,7 @@
 setlocal
 
 echo =========================================================
-echo   AegisTrade Synthetic Replay Demo (Zero API Cost)
+echo   Northstar Synthetic Replay Demo (Zero API Cost)
 echo =========================================================
 echo.
 
@@ -19,7 +19,7 @@ if not exist data\csv\AAPL.csv (
 )
 
 echo.
-echo [3/3] Running AegisTrade in Replay Mode...
+echo [3/3] Running Northstar in Replay Mode...
 echo (The system will run a simulated trading loop using the local CSV data)
 echo (Press Ctrl+C to stop the demo after a few cycles)
 echo.
