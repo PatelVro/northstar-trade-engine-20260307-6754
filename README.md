@@ -119,6 +119,15 @@ Key automation/risk fields:
 - `kelly_min_trades`
 - `market_stress_entry_block`
 - `market_stress_risk_min_scale`
+- `use_news_risk`
+- `enable_news_in_replay`
+- `news_provider`
+- `news_lookback_minutes`
+- `news_refresh_seconds`
+- `news_market_impact_thresh`
+- `news_symbol_impact_thresh`
+- `news_hard_block_thresh`
+- `news_max_risk_reduction`
 - adaptive symbol edge memory (learns from realized closes)
 - `risk_per_trade_pct`
 - `min_factor_score`

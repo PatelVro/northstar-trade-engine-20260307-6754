@@ -100,6 +100,15 @@ type TraderConfig struct {
 	KellyMinTrades           int     `json:"kelly_min_trades,omitempty"`             // Minimum closed trades before Kelly scaling activates
 	MarketStressEntryBlock   float64 `json:"market_stress_entry_block,omitempty"`    // Block new entries above this stress score
 	MarketStressRiskMinScale float64 `json:"market_stress_risk_min_scale,omitempty"` // Minimum risk scale under stress
+	UseNewsRisk              *bool   `json:"use_news_risk,omitempty"`                // Enable headline-driven risk filter
+	EnableNewsInReplay       *bool   `json:"enable_news_in_replay,omitempty"`        // Allow news risk in replay mode (off by default)
+	NewsProvider             string  `json:"news_provider,omitempty"`                // News provider identifier (default: rss)
+	NewsLookbackMinutes      int     `json:"news_lookback_minutes,omitempty"`        // Lookback window for headline aggregation
+	NewsRefreshSeconds       int     `json:"news_refresh_seconds,omitempty"`         // Refresh interval for news fetch/cache
+	NewsMarketImpactThresh   float64 `json:"news_market_impact_thresh,omitempty"`    // Market-wide news threshold for stricter filtering
+	NewsSymbolImpactThresh   float64 `json:"news_symbol_impact_thresh,omitempty"`    // Symbol-level news threshold for blocking entries
+	NewsHardBlockThresh      float64 `json:"news_hard_block_thresh,omitempty"`       // Hard block threshold for adverse directional news
+	NewsMaxRiskReduction     float64 `json:"news_max_risk_reduction,omitempty"`      // Max multiplicative risk reduction from news
 
 	// AI keys
 	QwenKey     string `json:"qwen_key,omitempty"`
@@ -418,6 +427,39 @@ func (c *Config) Validate() error {
 					v := true
 					trader.RegimeRiskScaling = &v
 				}
+				if trader.UseNewsRisk == nil {
+					v := trader.Mode != "replay"
+					trader.UseNewsRisk = &v
+				}
+				if trader.EnableNewsInReplay == nil {
+					v := false
+					trader.EnableNewsInReplay = &v
+				}
+				if trader.Mode == "replay" && !*trader.EnableNewsInReplay {
+					v := false
+					trader.UseNewsRisk = &v
+				}
+				if trader.NewsProvider == "" {
+					trader.NewsProvider = "rss"
+				}
+				if trader.NewsLookbackMinutes <= 0 {
+					trader.NewsLookbackMinutes = 240
+				}
+				if trader.NewsRefreshSeconds <= 0 {
+					trader.NewsRefreshSeconds = 120
+				}
+				if trader.NewsMarketImpactThresh <= 0 || trader.NewsMarketImpactThresh > 1 {
+					trader.NewsMarketImpactThresh = 0.65
+				}
+				if trader.NewsSymbolImpactThresh <= 0 || trader.NewsSymbolImpactThresh > 1 {
+					trader.NewsSymbolImpactThresh = 0.70
+				}
+				if trader.NewsHardBlockThresh <= 0 || trader.NewsHardBlockThresh > 1 {
+					trader.NewsHardBlockThresh = 0.85
+				}
+				if trader.NewsMaxRiskReduction <= 0 || trader.NewsMaxRiskReduction > 0.95 {
+					trader.NewsMaxRiskReduction = 0.55
+				}
 			}
 		} else if trader.Exchange == "binance" {
 			if trader.BinanceAPIKey == "" || trader.BinanceSecretKey == "" {
@@ -603,6 +645,39 @@ func (c *Config) Validate() error {
 				v := true
 				trader.RegimeRiskScaling = &v
 			}
+			if trader.UseNewsRisk == nil {
+				v := trader.Mode != "replay"
+				trader.UseNewsRisk = &v
+			}
+			if trader.EnableNewsInReplay == nil {
+				v := false
+				trader.EnableNewsInReplay = &v
+			}
+			if trader.Mode == "replay" && !*trader.EnableNewsInReplay {
+				v := false
+				trader.UseNewsRisk = &v
+			}
+			if trader.NewsProvider == "" {
+				trader.NewsProvider = "rss"
+			}
+			if trader.NewsLookbackMinutes <= 0 {
+				trader.NewsLookbackMinutes = 240
+			}
+			if trader.NewsRefreshSeconds <= 0 {
+				trader.NewsRefreshSeconds = 120
+			}
+			if trader.NewsMarketImpactThresh <= 0 || trader.NewsMarketImpactThresh > 1 {
+				trader.NewsMarketImpactThresh = 0.65
+			}
+			if trader.NewsSymbolImpactThresh <= 0 || trader.NewsSymbolImpactThresh > 1 {
+				trader.NewsSymbolImpactThresh = 0.70
+			}
+			if trader.NewsHardBlockThresh <= 0 || trader.NewsHardBlockThresh > 1 {
+				trader.NewsHardBlockThresh = 0.85
+			}
+			if trader.NewsMaxRiskReduction <= 0 || trader.NewsMaxRiskReduction > 0.95 {
+				trader.NewsMaxRiskReduction = 0.55
+			}
 
 		} else if trader.Exchange == "ibkr" {
 			if trader.IBKRGatewayURL == "" {
@@ -755,6 +830,39 @@ func (c *Config) Validate() error {
 				v := true
 				trader.RegimeRiskScaling = &v
 			}
+			if trader.UseNewsRisk == nil {
+				v := trader.Mode != "replay"
+				trader.UseNewsRisk = &v
+			}
+			if trader.EnableNewsInReplay == nil {
+				v := false
+				trader.EnableNewsInReplay = &v
+			}
+			if trader.Mode == "replay" && !*trader.EnableNewsInReplay {
+				v := false
+				trader.UseNewsRisk = &v
+			}
+			if trader.NewsProvider == "" {
+				trader.NewsProvider = "rss"
+			}
+			if trader.NewsLookbackMinutes <= 0 {
+				trader.NewsLookbackMinutes = 240
+			}
+			if trader.NewsRefreshSeconds <= 0 {
+				trader.NewsRefreshSeconds = 120
+			}
+			if trader.NewsMarketImpactThresh <= 0 || trader.NewsMarketImpactThresh > 1 {
+				trader.NewsMarketImpactThresh = 0.65
+			}
+			if trader.NewsSymbolImpactThresh <= 0 || trader.NewsSymbolImpactThresh > 1 {
+				trader.NewsSymbolImpactThresh = 0.70
+			}
+			if trader.NewsHardBlockThresh <= 0 || trader.NewsHardBlockThresh > 1 {
+				trader.NewsHardBlockThresh = 0.85
+			}
+			if trader.NewsMaxRiskReduction <= 0 || trader.NewsMaxRiskReduction > 0.95 {
+				trader.NewsMaxRiskReduction = 0.55
+			}
 			if trader.Mode == "live" && !trader.StrictLiveMode {
 				fmt.Printf("  [Trader %s] strict_live_mode is disabled for LIVE mode. This is unsafe.\n", trader.Name)
 			}
@@ -884,6 +992,33 @@ func (c *Config) Validate() error {
 			}
 			if trader.MarketStressRiskMinScale <= 0 || trader.MarketStressRiskMinScale > 1 {
 				return fmt.Errorf("trader[%d]: market_stress_risk_min_scale must be between 0 and 1", i)
+			}
+			if trader.UseNewsRisk == nil {
+				return fmt.Errorf("trader[%d]: use_news_risk must be configured", i)
+			}
+			if trader.EnableNewsInReplay == nil {
+				return fmt.Errorf("trader[%d]: enable_news_in_replay must be configured", i)
+			}
+			if trader.NewsProvider == "" {
+				return fmt.Errorf("trader[%d]: news_provider cannot be empty", i)
+			}
+			if trader.NewsLookbackMinutes <= 0 {
+				return fmt.Errorf("trader[%d]: news_lookback_minutes must be > 0", i)
+			}
+			if trader.NewsRefreshSeconds <= 0 {
+				return fmt.Errorf("trader[%d]: news_refresh_seconds must be > 0", i)
+			}
+			if trader.NewsMarketImpactThresh <= 0 || trader.NewsMarketImpactThresh > 1 {
+				return fmt.Errorf("trader[%d]: news_market_impact_thresh must be between 0 and 1", i)
+			}
+			if trader.NewsSymbolImpactThresh <= 0 || trader.NewsSymbolImpactThresh > 1 {
+				return fmt.Errorf("trader[%d]: news_symbol_impact_thresh must be between 0 and 1", i)
+			}
+			if trader.NewsHardBlockThresh <= 0 || trader.NewsHardBlockThresh > 1 {
+				return fmt.Errorf("trader[%d]: news_hard_block_thresh must be between 0 and 1", i)
+			}
+			if trader.NewsMaxRiskReduction <= 0 || trader.NewsMaxRiskReduction > 0.95 {
+				return fmt.Errorf("trader[%d]: news_max_risk_reduction must be between 0 and 0.95", i)
 			}
 		}
 		if trader.Mode == "replay" && trader.ReplayWarmupBars <= 0 {

@@ -5,6 +5,7 @@ import (
 	"aegistrade/logger"
 	"aegistrade/market"
 	"aegistrade/mcp"
+	"aegistrade/news"
 	"aegistrade/pool"
 	"encoding/json"
 	"fmt"
@@ -124,6 +125,15 @@ type AutoTraderConfig struct {
 	KellyMinTrades           int
 	MarketStressEntryBlock   float64
 	MarketStressRiskMinScale float64
+	UseNewsRisk              bool
+	EnableNewsInReplay       bool
+	NewsProvider             string
+	NewsLookbackMinutes      int
+	NewsRefreshSeconds       int
+	NewsMarketImpactThresh   float64
+	NewsSymbolImpactThresh   float64
+	NewsHardBlockThresh      float64
+	NewsMaxRiskReduction     float64
 	AllowShort               bool
 	UseMacroFilters          bool
 	DynamicPositionSizing    bool
@@ -167,6 +177,13 @@ type AutoTrader struct {
 	latestStressDispersion  float64
 	latestStressCorrelation float64
 	latestKellyScale        float64
+	latestNewsSentiment     float64
+	latestNewsImpact        float64
+	latestNewsScale         float64
+	lastNewsRefresh         time.Time
+	newsLastError           string
+	cachedNews              *news.Snapshot
+	newsProvider            news.Provider
 	provider                market.BarsProvider // Injected data provider
 	candidateCursor         int
 	trustedSymbolSet        map[string]struct{}
@@ -313,6 +330,30 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 		}
 		if config.MarketStressRiskMinScale <= 0 || config.MarketStressRiskMinScale > 1.0 {
 			config.MarketStressRiskMinScale = 0.35
+		}
+		if config.NewsProvider == "" {
+			config.NewsProvider = "rss"
+		}
+		if config.NewsLookbackMinutes <= 0 {
+			config.NewsLookbackMinutes = 240
+		}
+		if config.NewsRefreshSeconds <= 0 {
+			config.NewsRefreshSeconds = 120
+		}
+		if config.NewsMarketImpactThresh <= 0 || config.NewsMarketImpactThresh > 1.0 {
+			config.NewsMarketImpactThresh = 0.65
+		}
+		if config.NewsSymbolImpactThresh <= 0 || config.NewsSymbolImpactThresh > 1.0 {
+			config.NewsSymbolImpactThresh = 0.70
+		}
+		if config.NewsHardBlockThresh <= 0 || config.NewsHardBlockThresh > 1.0 {
+			config.NewsHardBlockThresh = 0.85
+		}
+		if config.NewsMaxRiskReduction <= 0 || config.NewsMaxRiskReduction > 0.95 {
+			config.NewsMaxRiskReduction = 0.55
+		}
+		if config.Mode == "replay" && !config.EnableNewsInReplay {
+			config.UseNewsRisk = false
 		}
 		if len(config.BenchmarkSymbols) == 0 {
 			config.BenchmarkSymbols = []string{"SPY", "QQQ", "IWM", "DIA"}
@@ -492,6 +533,16 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 		sim.SetExecutionImpactModel(config.ExecutionImpactBps, config.MaxParticipationRate)
 	}
 
+	var newsProvider news.Provider
+	if config.InstrumentType == "equity" && config.UseNewsRisk {
+		if np, err := news.NewProvider(config.NewsProvider); err != nil {
+			log.Printf(" [%s] News provider disabled: %v", config.Name, err)
+		} else {
+			newsProvider = np
+			log.Printf(" [%s] News risk provider active: %s", config.Name, np.Name())
+		}
+	}
+
 	return &AutoTrader{
 		id:                    config.ID,
 		name:                  config.Name,
@@ -517,6 +568,8 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 		recentClosePnLPct:     make([]float64, 0, 32),
 		recentEquity:          []float64{config.InitialBalance},
 		latestKellyScale:      1.0,
+		latestNewsScale:       1.0,
+		newsProvider:          newsProvider,
 		provider:              provider,
 		trustedSymbolSet:      trustedSymbols,
 		demoMode:              config.DemoMode || config.Exchange == "demo",
@@ -1608,6 +1661,10 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 	if !at.demoLastCycleTime.IsZero() {
 		demoLastCycleTime = at.demoLastCycleTime.Format(time.RFC3339)
 	}
+	lastNewsRefresh := ""
+	if !at.lastNewsRefresh.IsZero() {
+		lastNewsRefresh = at.lastNewsRefresh.Format(time.RFC3339)
+	}
 
 	return map[string]interface{}{
 		"trader_id":                    at.id,
@@ -1655,11 +1712,25 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 		"kelly_min_trades":             at.config.KellyMinTrades,
 		"market_stress_entry_block":    at.config.MarketStressEntryBlock,
 		"market_stress_risk_min_scale": at.config.MarketStressRiskMinScale,
+		"use_news_risk":                at.config.UseNewsRisk,
+		"enable_news_in_replay":        at.config.EnableNewsInReplay,
+		"news_provider":                at.config.NewsProvider,
+		"news_lookback_minutes":        at.config.NewsLookbackMinutes,
+		"news_refresh_seconds":         at.config.NewsRefreshSeconds,
+		"news_market_impact_thresh":    at.config.NewsMarketImpactThresh,
+		"news_symbol_impact_thresh":    at.config.NewsSymbolImpactThresh,
+		"news_hard_block_thresh":       at.config.NewsHardBlockThresh,
+		"news_max_risk_reduction":      at.config.NewsMaxRiskReduction,
 		"realized_equity_vol_pct":      at.realizedEquityVolPct() * 100.0,
 		"latest_market_stress":         at.latestMarketStress,
 		"latest_stress_dispersion":     at.latestStressDispersion,
 		"latest_stress_correlation":    at.latestStressCorrelation,
 		"latest_kelly_scale":           at.latestKellyScale,
+		"latest_news_sentiment":        at.latestNewsSentiment,
+		"latest_news_impact":           at.latestNewsImpact,
+		"latest_news_scale":            at.latestNewsScale,
+		"last_news_refresh":            lastNewsRefresh,
+		"news_last_error":              at.newsLastError,
 		"entry_blocked_until_cycle":    at.openEntryBlockedUntil,
 		"consecutive_loss_closes":      at.consecutiveLossCloses,
 		"close_pnl_ema_pct":            at.closePnLEMA,

@@ -47,6 +47,14 @@ func (tm *TraderManager) AddTrader(cfg config.TraderConfig, coinPoolURL string, 
 	if cfg.RegimeRiskScaling != nil {
 		regimeRiskScaling = *cfg.RegimeRiskScaling
 	}
+	useNewsRisk := true
+	if cfg.UseNewsRisk != nil {
+		useNewsRisk = *cfg.UseNewsRisk
+	}
+	enableNewsInReplay := false
+	if cfg.EnableNewsInReplay != nil {
+		enableNewsInReplay = *cfg.EnableNewsInReplay
+	}
 
 	// Construct AutoTraderConfig parameter map
 	traderConfig := trader.AutoTraderConfig{
@@ -124,6 +132,15 @@ func (tm *TraderManager) AddTrader(cfg config.TraderConfig, coinPoolURL string, 
 		KellyMinTrades:           cfg.KellyMinTrades,
 		MarketStressEntryBlock:   cfg.MarketStressEntryBlock,
 		MarketStressRiskMinScale: cfg.MarketStressRiskMinScale,
+		UseNewsRisk:              useNewsRisk,
+		EnableNewsInReplay:       enableNewsInReplay,
+		NewsProvider:             cfg.NewsProvider,
+		NewsLookbackMinutes:      cfg.NewsLookbackMinutes,
+		NewsRefreshSeconds:       cfg.NewsRefreshSeconds,
+		NewsMarketImpactThresh:   cfg.NewsMarketImpactThresh,
+		NewsSymbolImpactThresh:   cfg.NewsSymbolImpactThresh,
+		NewsHardBlockThresh:      cfg.NewsHardBlockThresh,
+		NewsMaxRiskReduction:     cfg.NewsMaxRiskReduction,
 		MinFactorScore:           cfg.MinFactorScore,
 		RiskPerTradePct:          cfg.RiskPerTradePct,
 		ProfitLockThreshold:      cfg.ProfitLockThreshold,

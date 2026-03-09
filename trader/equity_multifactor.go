@@ -4,6 +4,7 @@ import (
 	"aegistrade/decision"
 	"aegistrade/logger"
 	"aegistrade/market"
+	"aegistrade/news"
 	"fmt"
 	"math"
 	"sort"
@@ -310,6 +311,94 @@ func (at *AutoTrader) kellyRiskScale() float64 {
 	return clampFloat(scale, 0.55, 1.35)
 }
 
+func (at *AutoTrader) currentNewsSnapshot(symbols []string) *news.Snapshot {
+	if at.newsProvider == nil || !at.config.UseNewsRisk {
+		return nil
+	}
+	refreshSec := at.config.NewsRefreshSeconds
+	if refreshSec <= 0 {
+		refreshSec = 120
+	}
+	if at.cachedNews != nil && time.Since(at.lastNewsRefresh) < time.Duration(refreshSec)*time.Second {
+		return at.cachedNews
+	}
+
+	lookback := time.Duration(at.config.NewsLookbackMinutes) * time.Minute
+	if lookback <= 0 {
+		lookback = 4 * time.Hour
+	}
+	snapshot, err := at.newsProvider.Fetch(symbols, lookback)
+	if err != nil {
+		at.newsLastError = err.Error()
+		return at.cachedNews
+	}
+	at.cachedNews = snapshot
+	at.lastNewsRefresh = time.Now()
+	at.newsLastError = ""
+	return at.cachedNews
+}
+
+func newsDirectionalPressure(action string, sentiment float64) float64 {
+	switch action {
+	case "open_long":
+		return clampFloat(-sentiment, 0, 1)
+	case "open_short":
+		return clampFloat(sentiment, 0, 1)
+	default:
+		return 0
+	}
+}
+
+func (at *AutoTrader) newsRiskScale(action string, snapshot *news.Snapshot) float64 {
+	if snapshot == nil {
+		return 1.0
+	}
+	maxReduction := at.config.NewsMaxRiskReduction
+	if maxReduction <= 0 || maxReduction > 0.95 {
+		maxReduction = 0.55
+	}
+	directional := newsDirectionalPressure(action, snapshot.MarketSentiment)
+	pressure := snapshot.MarketImpact * directional
+	scale := 1.0 - clampFloat(pressure*maxReduction, 0, maxReduction)
+	return clampFloat(scale, 1.0-maxReduction, 1.0)
+}
+
+func collectNewsWatchSymbols(ctx *decision.Context, decisions []decision.Decision) []string {
+	seen := make(map[string]struct{}, 24)
+	out := make([]string, 0, 24)
+	add := func(raw string) {
+		s := strings.ToUpper(strings.TrimSpace(raw))
+		if s == "" {
+			return
+		}
+		if _, ok := seen[s]; ok {
+			return
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+
+	if ctx != nil {
+		for _, pos := range ctx.Positions {
+			add(pos.Symbol)
+		}
+		for _, coin := range ctx.CandidateCoins {
+			add(coin.Symbol)
+			if len(out) >= 14 {
+				break
+			}
+		}
+	}
+	for _, d := range decisions {
+		add(d.Symbol)
+	}
+	sort.Strings(out)
+	if len(out) > 12 {
+		out = out[:12]
+	}
+	return out
+}
+
 func (at *AutoTrader) recordEquityObservation(equity float64) {
 	if equity <= 0 {
 		return
@@ -508,6 +597,27 @@ func (at *AutoTrader) applyEquityDecisionOverlay(ctx *decision.Context, fullDeci
 	if stressMinScale <= 0 || stressMinScale > 1.0 {
 		stressMinScale = 0.35
 	}
+	newsSnapshot := at.currentNewsSnapshot(collectNewsWatchSymbols(ctx, fullDecision.Decisions))
+	if newsSnapshot != nil {
+		at.latestNewsSentiment = newsSnapshot.MarketSentiment
+		at.latestNewsImpact = newsSnapshot.MarketImpact
+	}
+	newsMarketThresh := at.config.NewsMarketImpactThresh
+	if newsMarketThresh <= 0 || newsMarketThresh > 1.0 {
+		newsMarketThresh = 0.65
+	}
+	newsSymbolThresh := at.config.NewsSymbolImpactThresh
+	if newsSymbolThresh <= 0 || newsSymbolThresh > 1.0 {
+		newsSymbolThresh = 0.70
+	}
+	newsHardBlock := at.config.NewsHardBlockThresh
+	if newsHardBlock <= 0 || newsHardBlock > 1.0 {
+		newsHardBlock = 0.85
+	}
+	newsMaxReduction := at.config.NewsMaxRiskReduction
+	if newsMaxReduction <= 0 || newsMaxReduction > 0.95 {
+		newsMaxReduction = 0.55
+	}
 
 	maxGross := at.config.MaxGrossExposure * ctx.Account.TotalEquity
 	if maxGross <= 0 {
@@ -578,6 +688,34 @@ func (at *AutoTrader) applyEquityDecisionOverlay(ctx *decision.Context, fullDeci
 					),
 				})
 				continue
+			}
+			if newsSnapshot != nil {
+				marketDirectional := newsDirectionalPressure(d.Action, newsSnapshot.MarketSentiment)
+				marketScore := newsSnapshot.MarketImpact * marketDirectional
+				if marketScore >= newsHardBlock || (newsSnapshot.MarketImpact >= newsMarketThresh && marketDirectional >= 0.98) {
+					filtered = append(filtered, decision.Decision{
+						Action: "wait",
+						Reasoning: fmt.Sprintf(
+							"Execution overlay blocked %s: adverse market news score %.2f (impact %.2f sentiment %.2f)",
+							d.Symbol, marketScore, newsSnapshot.MarketImpact, newsSnapshot.MarketSentiment,
+						),
+					})
+					continue
+				}
+				if signal, ok := newsSnapshot.SymbolSignals[d.Symbol]; ok {
+					symbolDirectional := newsDirectionalPressure(d.Action, signal.Sentiment)
+					symbolScore := signal.Impact * symbolDirectional
+					if symbolScore >= newsSymbolThresh {
+						filtered = append(filtered, decision.Decision{
+							Action: "wait",
+							Reasoning: fmt.Sprintf(
+								"Execution overlay blocked %s: symbol news score %.2f (impact %.2f sentiment %.2f)",
+								d.Symbol, symbolScore, signal.Impact, signal.Sentiment,
+							),
+						})
+						continue
+					}
+				}
 			}
 			edgeScore, edgeTrades := at.getSymbolEdge(d.Symbol)
 			if edgeTrades >= 4 && edgeScore < -0.35 {
@@ -737,6 +875,32 @@ func (at *AutoTrader) applyEquityDecisionOverlay(ctx *decision.Context, fullDeci
 				stressScale = clampFloat(stressScale, stressMinScale, 1.0)
 				d.PositionSizeUSD *= stressScale
 				d.Reasoning = strings.TrimSpace(d.Reasoning + fmt.Sprintf(" | stress=%.2f stress_scale=%.2f", regime.Stress, stressScale))
+			}
+			if newsSnapshot != nil {
+				marketDirectional := newsDirectionalPressure(d.Action, newsSnapshot.MarketSentiment)
+				marketScore := newsSnapshot.MarketImpact * marketDirectional
+				if marketScore > 0 {
+					marketScale := 1.0 - clampFloat(marketScore*newsMaxReduction, 0, newsMaxReduction)
+					d.PositionSizeUSD *= marketScale
+					d.Confidence = clampInt(d.Confidence-int(math.Round(marketScore*18)), 35, 99)
+					d.Reasoning = strings.TrimSpace(d.Reasoning + fmt.Sprintf(
+						" | news_market=%.2f impact=%.2f sentiment=%.2f scale=%.2f",
+						marketScore, newsSnapshot.MarketImpact, newsSnapshot.MarketSentiment, marketScale,
+					))
+				}
+				if signal, ok := newsSnapshot.SymbolSignals[d.Symbol]; ok {
+					symbolDirectional := newsDirectionalPressure(d.Action, signal.Sentiment)
+					symbolScore := signal.Impact * symbolDirectional
+					if symbolScore > 0 {
+						symbolScale := 1.0 - clampFloat(symbolScore*newsMaxReduction, 0, newsMaxReduction)
+						d.PositionSizeUSD *= symbolScale
+						d.Confidence = clampInt(d.Confidence-int(math.Round(symbolScore*12)), 35, 99)
+						d.Reasoning = strings.TrimSpace(d.Reasoning + fmt.Sprintf(
+							" | news_symbol=%.2f sym_impact=%.2f sym_sent=%.2f scale=%.2f",
+							symbolScore, signal.Impact, signal.Sentiment, symbolScale,
+						))
+					}
+				}
 			}
 			signedNotional := d.PositionSizeUSD
 			if wantSide == "short" {
@@ -1448,6 +1612,17 @@ func (at *AutoTrader) effectiveRiskPerTradePct(ctx *decision.Context, action str
 	kellyScale := at.kellyRiskScale()
 	at.latestKellyScale = kellyScale
 	scale *= kellyScale
+	newsScale := 1.0
+	if at.config.UseNewsRisk && ctx != nil {
+		snapshot := at.currentNewsSnapshot(collectNewsWatchSymbols(ctx, nil))
+		newsScale = at.newsRiskScale(action, snapshot)
+		if snapshot != nil {
+			at.latestNewsSentiment = snapshot.MarketSentiment
+			at.latestNewsImpact = snapshot.MarketImpact
+		}
+	}
+	at.latestNewsScale = newsScale
+	scale *= newsScale
 
 	scale = clampFloat(scale, 0.25, 1.45)
 	return clampFloat(base*scale, 0.0015, 0.025)

@@ -50,6 +50,15 @@ go run ./cmd/ibkr-backtest ^
   -kelly-min-trades 10 ^
   -market-stress-entry-block 0.82 ^
   -market-stress-risk-min-scale 0.35 ^
+  -use-news-risk false ^
+  -enable-news-in-replay false ^
+  -news-provider "rss" ^
+  -news-lookback-minutes 240 ^
+  -news-refresh-seconds 120 ^
+  -news-market-impact-thresh 0.65 ^
+  -news-symbol-impact-thresh 0.70 ^
+  -news-hard-block-thresh 0.85 ^
+  -news-max-risk-reduction 0.55 ^
   -min-trades-for-score 4 ^
   -min-traded-symbols 2 ^
   -mc-sims 300 ^

@@ -139,6 +139,15 @@ func main() {
 		kellyMinTrades           = flag.Int("kelly-min-trades", 10, "Minimum closed trades before Kelly scaling activates")
 		marketStressEntryBlock   = flag.Float64("market-stress-entry-block", 0.82, "Block new entries above this market stress score")
 		marketStressRiskMinScale = flag.Float64("market-stress-risk-min-scale", 0.35, "Minimum risk scale applied under market stress")
+		useNewsRisk              = flag.Bool("use-news-risk", false, "Enable headline-driven risk filter (disabled by default for replay)")
+		enableNewsInReplay       = flag.Bool("enable-news-in-replay", false, "Allow news risk module to run in replay mode")
+		newsProvider             = flag.String("news-provider", "rss", "News provider id (rss)")
+		newsLookbackMinutes      = flag.Int("news-lookback-minutes", 240, "News aggregation lookback window in minutes")
+		newsRefreshSeconds       = flag.Int("news-refresh-seconds", 120, "News refresh interval in seconds")
+		newsMarketImpactThresh   = flag.Float64("news-market-impact-thresh", 0.65, "Market news threshold for stricter directional filtering")
+		newsSymbolImpactThresh   = flag.Float64("news-symbol-impact-thresh", 0.70, "Symbol news threshold for entry blocking")
+		newsHardBlockThresh      = flag.Float64("news-hard-block-thresh", 0.85, "Hard block threshold for adverse directional news")
+		newsMaxRiskReduction     = flag.Float64("news-max-risk-reduction", 0.55, "Maximum multiplicative risk reduction from news")
 		minTradesForScore        = flag.Int("min-trades-for-score", 4, "Minimum trades threshold before a profile receives full scoring credit")
 		minTradedSymbols         = flag.Int("min-traded-symbols", 2, "Minimum traded symbols threshold before full scoring credit")
 		mcSims                   = flag.Int("mc-sims", 300, "Monte Carlo bootstrap simulations over closed trades")
@@ -242,6 +251,27 @@ func main() {
 	}
 	if *marketStressRiskMinScale <= 0 || *marketStressRiskMinScale > 1 {
 		*marketStressRiskMinScale = 0.35
+	}
+	if strings.TrimSpace(*newsProvider) == "" {
+		*newsProvider = "rss"
+	}
+	if *newsLookbackMinutes <= 0 {
+		*newsLookbackMinutes = 240
+	}
+	if *newsRefreshSeconds <= 0 {
+		*newsRefreshSeconds = 120
+	}
+	if *newsMarketImpactThresh <= 0 || *newsMarketImpactThresh > 1 {
+		*newsMarketImpactThresh = 0.65
+	}
+	if *newsSymbolImpactThresh <= 0 || *newsSymbolImpactThresh > 1 {
+		*newsSymbolImpactThresh = 0.70
+	}
+	if *newsHardBlockThresh <= 0 || *newsHardBlockThresh > 1 {
+		*newsHardBlockThresh = 0.85
+	}
+	if *newsMaxRiskReduction <= 0 || *newsMaxRiskReduction > 0.95 {
+		*newsMaxRiskReduction = 0.55
 	}
 	if *minTradesForScore < 0 {
 		*minTradesForScore = 0
@@ -406,6 +436,15 @@ func main() {
 			KellyMinTrades:           *kellyMinTrades,
 			MarketStressEntryBlock:   *marketStressEntryBlock,
 			MarketStressRiskMinScale: *marketStressRiskMinScale,
+			UseNewsRisk:              *useNewsRisk,
+			EnableNewsInReplay:       *enableNewsInReplay,
+			NewsProvider:             *newsProvider,
+			NewsLookbackMinutes:      *newsLookbackMinutes,
+			NewsRefreshSeconds:       *newsRefreshSeconds,
+			NewsMarketImpactThresh:   *newsMarketImpactThresh,
+			NewsSymbolImpactThresh:   *newsSymbolImpactThresh,
+			NewsHardBlockThresh:      *newsHardBlockThresh,
+			NewsMaxRiskReduction:     *newsMaxRiskReduction,
 			RiskPerTradePct:          0.0075,
 			ProfitLockThreshold:      1.25,
 			TrailingStopATRMult:      1.6,
@@ -557,7 +596,7 @@ func main() {
 			out = filepath.Join(runRoot, out)
 		}
 		best := results[0]
-		if err := writeBestProfileConfig(out, best, availableSymbols, *initialBalance, *candidateBatch, *maxPairCorr, *minLiquidityUSD, *minConfidence, *regimeRiskScale, *commissionBps, *slippageBps, *executionImpactBps, *maxParticipationRate, *drawdownThrottleStart, *drawdownThrottleMinScale, *maxPortfolioHeatPct, *maxNetExposurePct, *lossStreakPauseThreshold, *lossStreakPauseCycles, *performanceRiskLookback, *volatilityBrakeTargetPct, *volatilityBrakeLookback, *volatilityBrakeMinScale, *kellyFractionCap, *kellyLookback, *kellyMinTrades, *marketStressEntryBlock, *marketStressRiskMinScale); err != nil {
+		if err := writeBestProfileConfig(out, best, availableSymbols, *initialBalance, *candidateBatch, *maxPairCorr, *minLiquidityUSD, *minConfidence, *regimeRiskScale, *commissionBps, *slippageBps, *executionImpactBps, *maxParticipationRate, *drawdownThrottleStart, *drawdownThrottleMinScale, *maxPortfolioHeatPct, *maxNetExposurePct, *lossStreakPauseThreshold, *lossStreakPauseCycles, *performanceRiskLookback, *volatilityBrakeTargetPct, *volatilityBrakeLookback, *volatilityBrakeMinScale, *kellyFractionCap, *kellyLookback, *kellyMinTrades, *marketStressEntryBlock, *marketStressRiskMinScale, *useNewsRisk, *enableNewsInReplay, *newsProvider, *newsLookbackMinutes, *newsRefreshSeconds, *newsMarketImpactThresh, *newsSymbolImpactThresh, *newsHardBlockThresh, *newsMaxRiskReduction); err != nil {
 			log.Printf("failed to write best profile config: %v", err)
 		} else {
 			log.Printf("Best profile config written to %s", out)
@@ -1465,7 +1504,7 @@ func clamp(v, lo, hi float64) float64 {
 	return v
 }
 
-func writeBestProfileConfig(path string, best profileResult, symbols []string, initialBalance float64, candidateBatch int, maxPairCorr, minLiquidityUSD float64, minConfidence int, regimeRiskScale bool, commissionBps, slippageBps, impactBps, maxParticipation, drawdownStart, drawdownMinScale, maxPortfolioHeat, maxNetExposure float64, lossStreakThreshold, lossStreakCycles, performanceLookback int, volBrakeTarget float64, volBrakeLookback int, volBrakeMinScale float64, kellyFractionCap float64, kellyLookback int, kellyMinTrades int, marketStressEntryBlock float64, marketStressRiskMinScale float64) error {
+func writeBestProfileConfig(path string, best profileResult, symbols []string, initialBalance float64, candidateBatch int, maxPairCorr, minLiquidityUSD float64, minConfidence int, regimeRiskScale bool, commissionBps, slippageBps, impactBps, maxParticipation, drawdownStart, drawdownMinScale, maxPortfolioHeat, maxNetExposure float64, lossStreakThreshold, lossStreakCycles, performanceLookback int, volBrakeTarget float64, volBrakeLookback int, volBrakeMinScale float64, kellyFractionCap float64, kellyLookback int, kellyMinTrades int, marketStressEntryBlock float64, marketStressRiskMinScale float64, useNewsRisk bool, enableNewsInReplay bool, newsProvider string, newsLookbackMinutes int, newsRefreshSeconds int, newsMarketImpactThresh float64, newsSymbolImpactThresh float64, newsHardBlockThresh float64, newsMaxRiskReduction float64) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
@@ -1518,6 +1557,15 @@ func writeBestProfileConfig(path string, best profileResult, symbols []string, i
 			"kelly_min_trades":             kellyMinTrades,
 			"market_stress_entry_block":    marketStressEntryBlock,
 			"market_stress_risk_min_scale": marketStressRiskMinScale,
+			"use_news_risk":                useNewsRisk,
+			"enable_news_in_replay":        enableNewsInReplay,
+			"news_provider":                newsProvider,
+			"news_lookback_minutes":        newsLookbackMinutes,
+			"news_refresh_seconds":         newsRefreshSeconds,
+			"news_market_impact_thresh":    newsMarketImpactThresh,
+			"news_symbol_impact_thresh":    newsSymbolImpactThresh,
+			"news_hard_block_thresh":       newsHardBlockThresh,
+			"news_max_risk_reduction":      newsMaxRiskReduction,
 			"benchmark_symbols":            []string{"SPY", "QQQ", "IWM", "DIA"},
 		},
 		"symbols": symbols,
