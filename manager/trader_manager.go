@@ -31,6 +31,23 @@ func (tm *TraderManager) AddTrader(cfg config.TraderConfig, coinPoolURL string, 
 		return fmt.Errorf("trader ID '%s' already exists", cfg.ID)
 	}
 
+	allowShort := true
+	if cfg.AllowShort != nil {
+		allowShort = *cfg.AllowShort
+	}
+	useMacroFilters := true
+	if cfg.UseMacroFilters != nil {
+		useMacroFilters = *cfg.UseMacroFilters
+	}
+	dynamicSizing := true
+	if cfg.DynamicPositionSizing != nil {
+		dynamicSizing = *cfg.DynamicPositionSizing
+	}
+	regimeRiskScaling := true
+	if cfg.RegimeRiskScaling != nil {
+		regimeRiskScaling = *cfg.RegimeRiskScaling
+	}
+
 	// Construct AutoTraderConfig parameter map
 	traderConfig := trader.AutoTraderConfig{
 		ID:                    cfg.ID,
@@ -69,19 +86,56 @@ func (tm *TraderManager) AddTrader(cfg config.TraderConfig, coinPoolURL string, 
 		StopTradingTime:       time.Duration(stopTradingMinutes) * time.Minute,
 
 		// Exec mode and data provider settings integration
-		Mode:                cfg.Mode,
-		DataProvider:        cfg.DataProvider,
-		Broker:              cfg.Broker,
-		CSVDataDir:          cfg.CSVDataDir,
-		InstrumentType:      cfg.InstrumentType,
-		BarsAdjustment:      cfg.BarsAdjustment,
-		CandidateBatchSize:  cfg.CandidateBatchSize,
-		TrustedSymbolsFile:  cfg.TrustedSymbolsFile,
-		StrategyMode:        cfg.StrategyMode,
-		MomentumMinScore:    cfg.MomentumMinScore,
-		FallbackPositionPct: cfg.FallbackPositionPct,
-		MaxCycles:           cfg.MaxCycles,
-		ReplayWarmupBars:    cfg.ReplayWarmupBars,
+		Mode:                     cfg.Mode,
+		DataProvider:             cfg.DataProvider,
+		Broker:                   cfg.Broker,
+		CSVDataDir:               cfg.CSVDataDir,
+		InstrumentType:           cfg.InstrumentType,
+		BarsAdjustment:           cfg.BarsAdjustment,
+		CandidateBatchSize:       cfg.CandidateBatchSize,
+		TrustedSymbolsFile:       cfg.TrustedSymbolsFile,
+		StrategyMode:             cfg.StrategyMode,
+		MomentumMinScore:         cfg.MomentumMinScore,
+		FallbackPositionPct:      cfg.FallbackPositionPct,
+		MaxCycles:                cfg.MaxCycles,
+		ReplayWarmupBars:         cfg.ReplayWarmupBars,
+		MaxGrossExposure:         cfg.MaxGrossExposure,
+		MaxPositionPct:           cfg.MaxPositionPct,
+		MaxDailyLossPct:          cfg.MaxDailyLossPct,
+		MaxPairCorrelation:       cfg.MaxPairCorrelation,
+		MinLiquidityUSD:          cfg.MinLiquidityUSD,
+		MinDecisionConfidence:    cfg.MinDecisionConfidence,
+		ExecutionCommissionBps:   cfg.ExecutionCommissionBps,
+		ExecutionSlippageBps:     cfg.ExecutionSlippageBps,
+		ExecutionImpactBps:       cfg.ExecutionImpactBps,
+		MaxParticipationRate:     cfg.MaxParticipationRate,
+		DrawdownThrottleStartPct: cfg.DrawdownThrottleStartPct,
+		DrawdownThrottleMinScale: cfg.DrawdownThrottleMinScale,
+		MaxPortfolioHeatPct:      cfg.MaxPortfolioHeatPct,
+		MaxNetExposurePct:        cfg.MaxNetExposurePct,
+		LossStreakPauseThreshold: cfg.LossStreakPauseThreshold,
+		LossStreakPauseCycles:    cfg.LossStreakPauseCycles,
+		PerformanceRiskLookback:  cfg.PerformanceRiskLookback,
+		VolatilityBrakeTargetPct: cfg.VolatilityBrakeTargetPct,
+		VolatilityBrakeLookback:  cfg.VolatilityBrakeLookback,
+		VolatilityBrakeMinScale:  cfg.VolatilityBrakeMinScale,
+		KellyFractionCap:         cfg.KellyFractionCap,
+		KellyLookback:            cfg.KellyLookback,
+		KellyMinTrades:           cfg.KellyMinTrades,
+		MarketStressEntryBlock:   cfg.MarketStressEntryBlock,
+		MarketStressRiskMinScale: cfg.MarketStressRiskMinScale,
+		MinFactorScore:           cfg.MinFactorScore,
+		RiskPerTradePct:          cfg.RiskPerTradePct,
+		ProfitLockThreshold:      cfg.ProfitLockThreshold,
+		TrailingStopATRMult:      cfg.TrailingStopATRMult,
+		MaxHoldingCycles:         cfg.MaxHoldingCycles,
+		MaxConcurrentPos:         cfg.MaxConcurrentPos,
+		SymbolCooldownCycles:     cfg.SymbolCooldownCycles,
+		AllowShort:               allowShort,
+		UseMacroFilters:          useMacroFilters,
+		DynamicPositionSizing:    dynamicSizing,
+		RegimeRiskScaling:        regimeRiskScaling,
+		BenchmarkSymbols:         cfg.BenchmarkSymbols,
 	}
 
 	// Create new AutoTrader execution wrapper

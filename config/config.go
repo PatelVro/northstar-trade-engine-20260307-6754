@@ -55,17 +55,51 @@ type TraderConfig struct {
 	StrictLiveMode    bool   `json:"strict_live_mode,omitempty"` // In live mode, block trading if account endpoints are unhealthy
 
 	// Equity config
-	OrderSizingMode     string  `json:"order_sizing_mode,omitempty"`     // "qty" or "notional"
-	BarsAdjustment      string  `json:"bars_adjustment,omitempty"`       // "raw", "split", "dividend", "all"
-	TrustedSymbolsFile  string  `json:"trusted_symbols_file,omitempty"`  // Optional allowlist file for tradable equity symbols
-	StrategyMode        string  `json:"strategy_mode,omitempty"`         // "ai_only", "momentum_fallback", or "momentum_only"
-	MomentumMinScore    float64 `json:"momentum_min_score,omitempty"`    // Minimum score to trigger fallback momentum entries
-	FallbackPositionPct float64 `json:"fallback_position_pct,omitempty"` // Fallback entry sizing as pct of equity (max 0.20)
+	OrderSizingMode       string   `json:"order_sizing_mode,omitempty"`         // "qty" or "notional"
+	BarsAdjustment        string   `json:"bars_adjustment,omitempty"`           // "raw", "split", "dividend", "all"
+	TrustedSymbolsFile    string   `json:"trusted_symbols_file,omitempty"`      // Optional allowlist file for tradable equity symbols
+	StrategyMode          string   `json:"strategy_mode,omitempty"`             // "ai_only", "momentum_fallback", "momentum_only", "multi_factor", or "hybrid_ai"
+	MomentumMinScore      float64  `json:"momentum_min_score,omitempty"`        // Minimum score to trigger fallback momentum entries
+	FallbackPositionPct   float64  `json:"fallback_position_pct,omitempty"`     // Fallback entry sizing as pct of equity (max 0.20)
+	MinFactorScore        float64  `json:"min_factor_score,omitempty"`          // Minimum absolute multi-factor score to open a position
+	RiskPerTradePct       float64  `json:"risk_per_trade_pct,omitempty"`        // Fraction of equity risked per trade (e.g., 0.0075 = 0.75%)
+	ProfitLockThreshold   float64  `json:"profit_lock_threshold_pct,omitempty"` // Start locking gains above this unrealized PnL %
+	TrailingStopATRMult   float64  `json:"trailing_stop_atr_mult,omitempty"`    // ATR multiple for adaptive stop distance
+	MaxHoldingCycles      int      `json:"max_holding_cycles,omitempty"`        // Force-close positions older than this many cycles
+	MaxConcurrentPos      int      `json:"max_concurrent_positions,omitempty"`  // Maximum concurrent open positions
+	SymbolCooldownCycles  int      `json:"symbol_cooldown_cycles,omitempty"`    // Cooldown cycles before reopening a symbol after close
+	AllowShort            *bool    `json:"allow_short,omitempty"`               // Default true
+	UseMacroFilters       *bool    `json:"use_macro_filters,omitempty"`         // Default true
+	DynamicPositionSizing *bool    `json:"dynamic_position_sizing,omitempty"`   // Default true
+	BenchmarkSymbols      []string `json:"benchmark_symbols,omitempty"`         // Macro benchmark symbols
 
 	// Equity risk config
-	MaxGrossExposure float64 `json:"max_gross_exposure,omitempty"` // e.g., 1.0 = 100% of equity
-	MaxPositionPct   float64 `json:"max_position_pct,omitempty"`   // e.g., 0.20 = 20% of equity per symbol
-	MaxDailyLossPct  float64 `json:"max_daily_loss_pct,omitempty"` // e.g., 0.02 = 2%
+	MaxGrossExposure         float64 `json:"max_gross_exposure,omitempty"`           // e.g., 1.0 = 100% of equity
+	MaxPositionPct           float64 `json:"max_position_pct,omitempty"`             // e.g., 0.20 = 20% of equity per symbol
+	MaxDailyLossPct          float64 `json:"max_daily_loss_pct,omitempty"`           // e.g., 0.02 = 2%
+	MaxPairCorrelation       float64 `json:"max_pair_correlation,omitempty"`         // Max allowed abs correlation among same-direction positions
+	MinLiquidityUSD          float64 `json:"min_liquidity_usd,omitempty"`            // Minimum estimated dollar volume for entries
+	MinDecisionConfidence    int     `json:"min_decision_confidence,omitempty"`      // Drop low-confidence open signals
+	RegimeRiskScaling        *bool   `json:"regime_risk_scaling,omitempty"`          // Default true
+	ExecutionCommissionBps   float64 `json:"execution_commission_bps,omitempty"`     // Simulated commission per side (bps)
+	ExecutionSlippageBps     float64 `json:"execution_slippage_bps,omitempty"`       // Simulated slippage per side (bps)
+	ExecutionImpactBps       float64 `json:"execution_impact_bps,omitempty"`         // Extra slippage component scaled by bar participation
+	MaxParticipationRate     float64 `json:"max_participation_rate,omitempty"`       // Max fill participation per bar in simulator (0-1]
+	DrawdownThrottleStartPct float64 `json:"drawdown_throttle_start,omitempty"`      // Drawdown threshold for risk throttling
+	DrawdownThrottleMinScale float64 `json:"drawdown_throttle_min_scale,omitempty"`  // Min risk scale under drawdown throttling
+	MaxPortfolioHeatPct      float64 `json:"max_portfolio_heat_pct,omitempty"`       // Max estimated stop-risk budget as a fraction of equity
+	MaxNetExposurePct        float64 `json:"max_net_exposure_pct,omitempty"`         // Max absolute net (long-short) exposure as a fraction of equity
+	LossStreakPauseThreshold int     `json:"loss_streak_pause_threshold,omitempty"`  // Consecutive losing closes before pausing new entries
+	LossStreakPauseCycles    int     `json:"loss_streak_pause_cycles,omitempty"`     // Number of cycles to pause new entries after loss streak
+	PerformanceRiskLookback  int     `json:"performance_risk_lookback,omitempty"`    // Closed-trade lookback window for performance-aware risk scaling
+	VolatilityBrakeTargetPct float64 `json:"volatility_brake_target_pct,omitempty"`  // Target equity volatility (fraction) for risk brake
+	VolatilityBrakeLookback  int     `json:"volatility_brake_lookback,omitempty"`    // Lookback cycles for realized equity volatility
+	VolatilityBrakeMinScale  float64 `json:"volatility_brake_min_scale,omitempty"`   // Minimum scale applied by volatility brake
+	KellyFractionCap         float64 `json:"kelly_fraction_cap,omitempty"`           // Fraction of Kelly to apply when sizing risk
+	KellyLookback            int     `json:"kelly_lookback,omitempty"`               // Closed-trade lookback used for Kelly estimate
+	KellyMinTrades           int     `json:"kelly_min_trades,omitempty"`             // Minimum closed trades before Kelly scaling activates
+	MarketStressEntryBlock   float64 `json:"market_stress_entry_block,omitempty"`    // Block new entries above this stress score
+	MarketStressRiskMinScale float64 `json:"market_stress_risk_min_scale,omitempty"` // Minimum risk scale under stress
 
 	// AI keys
 	QwenKey     string `json:"qwen_key,omitempty"`
@@ -292,6 +326,99 @@ func (c *Config) Validate() error {
 			if trader.StrategyMode == "" {
 				trader.StrategyMode = "ai_only"
 			}
+			if trader.InstrumentType == "equity" {
+				if trader.MaxGrossExposure <= 0 {
+					trader.MaxGrossExposure = 1.0
+				}
+				if trader.MaxPositionPct <= 0 {
+					trader.MaxPositionPct = 0.20
+				}
+				if trader.MaxDailyLossPct <= 0 {
+					trader.MaxDailyLossPct = 0.05
+				}
+				if trader.MaxPairCorrelation <= 0 || trader.MaxPairCorrelation >= 1 {
+					trader.MaxPairCorrelation = 0.82
+				}
+				if trader.MinLiquidityUSD <= 0 {
+					trader.MinLiquidityUSD = 2_000_000
+				}
+				if trader.MinDecisionConfidence <= 0 || trader.MinDecisionConfidence > 100 {
+					trader.MinDecisionConfidence = 58
+				}
+				if trader.ExecutionCommissionBps < 0 {
+					trader.ExecutionCommissionBps = 0
+				}
+				if trader.ExecutionSlippageBps < 0 {
+					trader.ExecutionSlippageBps = 0
+				}
+				if trader.ExecutionImpactBps < 0 {
+					trader.ExecutionImpactBps = 0
+				}
+				if trader.MaxParticipationRate <= 0 || trader.MaxParticipationRate > 1 {
+					trader.MaxParticipationRate = 0.15
+				}
+				if trader.DrawdownThrottleStartPct <= 0 {
+					trader.DrawdownThrottleStartPct = 0.03
+				}
+				if trader.DrawdownThrottleMinScale <= 0 || trader.DrawdownThrottleMinScale > 1 {
+					trader.DrawdownThrottleMinScale = 0.35
+				}
+				if trader.MaxPortfolioHeatPct <= 0 || trader.MaxPortfolioHeatPct > 0.30 {
+					trader.MaxPortfolioHeatPct = 0.035
+				}
+				if trader.MaxNetExposurePct <= 0 || trader.MaxNetExposurePct > 1 {
+					trader.MaxNetExposurePct = 0.65
+				}
+				if trader.LossStreakPauseThreshold <= 0 {
+					trader.LossStreakPauseThreshold = 3
+				}
+				if trader.LossStreakPauseCycles <= 0 {
+					trader.LossStreakPauseCycles = 5
+				}
+				if trader.PerformanceRiskLookback <= 0 {
+					trader.PerformanceRiskLookback = 20
+				}
+				if trader.VolatilityBrakeTargetPct <= 0 {
+					trader.VolatilityBrakeTargetPct = 0.008
+				}
+				if trader.VolatilityBrakeLookback <= 0 {
+					trader.VolatilityBrakeLookback = 40
+				}
+				if trader.VolatilityBrakeMinScale <= 0 || trader.VolatilityBrakeMinScale > 1 {
+					trader.VolatilityBrakeMinScale = 0.45
+				}
+				if trader.KellyFractionCap <= 0 || trader.KellyFractionCap > 1 {
+					trader.KellyFractionCap = 0.33
+				}
+				if trader.KellyLookback <= 0 {
+					trader.KellyLookback = 30
+				}
+				if trader.KellyMinTrades <= 0 {
+					trader.KellyMinTrades = 10
+				}
+				if trader.MarketStressEntryBlock <= 0 || trader.MarketStressEntryBlock > 1 {
+					trader.MarketStressEntryBlock = 0.82
+				}
+				if trader.MarketStressRiskMinScale <= 0 || trader.MarketStressRiskMinScale > 1 {
+					trader.MarketStressRiskMinScale = 0.35
+				}
+				if trader.AllowShort == nil {
+					v := true
+					trader.AllowShort = &v
+				}
+				if trader.UseMacroFilters == nil {
+					v := true
+					trader.UseMacroFilters = &v
+				}
+				if trader.DynamicPositionSizing == nil {
+					v := true
+					trader.DynamicPositionSizing = &v
+				}
+				if trader.RegimeRiskScaling == nil {
+					v := true
+					trader.RegimeRiskScaling = &v
+				}
+			}
 		} else if trader.Exchange == "binance" {
 			if trader.BinanceAPIKey == "" || trader.BinanceSecretKey == "" {
 				return fmt.Errorf("trader[%d]: Binance requires both binance_api_key and binance_secret_key", i)
@@ -364,6 +491,72 @@ func (c *Config) Validate() error {
 			if trader.MaxDailyLossPct <= 0 {
 				trader.MaxDailyLossPct = 0.05 // Default 5% daily loss limit
 			}
+			if trader.MaxPairCorrelation <= 0 || trader.MaxPairCorrelation >= 1 {
+				trader.MaxPairCorrelation = 0.82
+			}
+			if trader.MinLiquidityUSD <= 0 {
+				trader.MinLiquidityUSD = 2_000_000
+			}
+			if trader.MinDecisionConfidence <= 0 || trader.MinDecisionConfidence > 100 {
+				trader.MinDecisionConfidence = 58
+			}
+			if trader.ExecutionCommissionBps < 0 {
+				trader.ExecutionCommissionBps = 0
+			}
+			if trader.ExecutionSlippageBps < 0 {
+				trader.ExecutionSlippageBps = 0
+			}
+			if trader.ExecutionImpactBps < 0 {
+				trader.ExecutionImpactBps = 0
+			}
+			if trader.MaxParticipationRate <= 0 || trader.MaxParticipationRate > 1 {
+				trader.MaxParticipationRate = 0.15
+			}
+			if trader.DrawdownThrottleStartPct <= 0 {
+				trader.DrawdownThrottleStartPct = 0.03
+			}
+			if trader.DrawdownThrottleMinScale <= 0 || trader.DrawdownThrottleMinScale > 1 {
+				trader.DrawdownThrottleMinScale = 0.35
+			}
+			if trader.MaxPortfolioHeatPct <= 0 || trader.MaxPortfolioHeatPct > 0.30 {
+				trader.MaxPortfolioHeatPct = 0.035
+			}
+			if trader.MaxNetExposurePct <= 0 || trader.MaxNetExposurePct > 1 {
+				trader.MaxNetExposurePct = 0.65
+			}
+			if trader.LossStreakPauseThreshold <= 0 {
+				trader.LossStreakPauseThreshold = 3
+			}
+			if trader.LossStreakPauseCycles <= 0 {
+				trader.LossStreakPauseCycles = 5
+			}
+			if trader.PerformanceRiskLookback <= 0 {
+				trader.PerformanceRiskLookback = 20
+			}
+			if trader.VolatilityBrakeTargetPct <= 0 {
+				trader.VolatilityBrakeTargetPct = 0.008
+			}
+			if trader.VolatilityBrakeLookback <= 0 {
+				trader.VolatilityBrakeLookback = 40
+			}
+			if trader.VolatilityBrakeMinScale <= 0 || trader.VolatilityBrakeMinScale > 1 {
+				trader.VolatilityBrakeMinScale = 0.45
+			}
+			if trader.KellyFractionCap <= 0 || trader.KellyFractionCap > 1 {
+				trader.KellyFractionCap = 0.33
+			}
+			if trader.KellyLookback <= 0 {
+				trader.KellyLookback = 30
+			}
+			if trader.KellyMinTrades <= 0 {
+				trader.KellyMinTrades = 10
+			}
+			if trader.MarketStressEntryBlock <= 0 || trader.MarketStressEntryBlock > 1 {
+				trader.MarketStressEntryBlock = 0.82
+			}
+			if trader.MarketStressRiskMinScale <= 0 || trader.MarketStressRiskMinScale > 1 {
+				trader.MarketStressRiskMinScale = 0.35
+			}
 			if trader.StrategyMode == "" {
 				trader.StrategyMode = "momentum_fallback"
 			}
@@ -372,6 +565,43 @@ func (c *Config) Validate() error {
 			}
 			if trader.FallbackPositionPct <= 0 || trader.FallbackPositionPct > 0.20 {
 				trader.FallbackPositionPct = 0.10
+			}
+			if trader.MinFactorScore <= 0 {
+				trader.MinFactorScore = 0.35
+			}
+			if trader.RiskPerTradePct <= 0 {
+				trader.RiskPerTradePct = 0.0075
+			}
+			if trader.ProfitLockThreshold <= 0 {
+				trader.ProfitLockThreshold = 1.25
+			}
+			if trader.TrailingStopATRMult <= 0 {
+				trader.TrailingStopATRMult = 1.6
+			}
+			if trader.MaxHoldingCycles <= 0 {
+				trader.MaxHoldingCycles = 180
+			}
+			if trader.MaxConcurrentPos <= 0 {
+				trader.MaxConcurrentPos = 3
+			}
+			if trader.SymbolCooldownCycles <= 0 {
+				trader.SymbolCooldownCycles = 6
+			}
+			if trader.AllowShort == nil {
+				v := true
+				trader.AllowShort = &v
+			}
+			if trader.UseMacroFilters == nil {
+				v := true
+				trader.UseMacroFilters = &v
+			}
+			if trader.DynamicPositionSizing == nil {
+				v := true
+				trader.DynamicPositionSizing = &v
+			}
+			if trader.RegimeRiskScaling == nil {
+				v := true
+				trader.RegimeRiskScaling = &v
 			}
 
 		} else if trader.Exchange == "ibkr" {
@@ -413,6 +643,72 @@ func (c *Config) Validate() error {
 			if trader.MaxDailyLossPct <= 0 {
 				trader.MaxDailyLossPct = 0.05 // Default 5% daily loss limit
 			}
+			if trader.MaxPairCorrelation <= 0 || trader.MaxPairCorrelation >= 1 {
+				trader.MaxPairCorrelation = 0.82
+			}
+			if trader.MinLiquidityUSD <= 0 {
+				trader.MinLiquidityUSD = 2_000_000
+			}
+			if trader.MinDecisionConfidence <= 0 || trader.MinDecisionConfidence > 100 {
+				trader.MinDecisionConfidence = 58
+			}
+			if trader.ExecutionCommissionBps < 0 {
+				trader.ExecutionCommissionBps = 0
+			}
+			if trader.ExecutionSlippageBps < 0 {
+				trader.ExecutionSlippageBps = 0
+			}
+			if trader.ExecutionImpactBps < 0 {
+				trader.ExecutionImpactBps = 0
+			}
+			if trader.MaxParticipationRate <= 0 || trader.MaxParticipationRate > 1 {
+				trader.MaxParticipationRate = 0.15
+			}
+			if trader.DrawdownThrottleStartPct <= 0 {
+				trader.DrawdownThrottleStartPct = 0.03
+			}
+			if trader.DrawdownThrottleMinScale <= 0 || trader.DrawdownThrottleMinScale > 1 {
+				trader.DrawdownThrottleMinScale = 0.35
+			}
+			if trader.MaxPortfolioHeatPct <= 0 || trader.MaxPortfolioHeatPct > 0.30 {
+				trader.MaxPortfolioHeatPct = 0.035
+			}
+			if trader.MaxNetExposurePct <= 0 || trader.MaxNetExposurePct > 1 {
+				trader.MaxNetExposurePct = 0.65
+			}
+			if trader.LossStreakPauseThreshold <= 0 {
+				trader.LossStreakPauseThreshold = 3
+			}
+			if trader.LossStreakPauseCycles <= 0 {
+				trader.LossStreakPauseCycles = 5
+			}
+			if trader.PerformanceRiskLookback <= 0 {
+				trader.PerformanceRiskLookback = 20
+			}
+			if trader.VolatilityBrakeTargetPct <= 0 {
+				trader.VolatilityBrakeTargetPct = 0.008
+			}
+			if trader.VolatilityBrakeLookback <= 0 {
+				trader.VolatilityBrakeLookback = 40
+			}
+			if trader.VolatilityBrakeMinScale <= 0 || trader.VolatilityBrakeMinScale > 1 {
+				trader.VolatilityBrakeMinScale = 0.45
+			}
+			if trader.KellyFractionCap <= 0 || trader.KellyFractionCap > 1 {
+				trader.KellyFractionCap = 0.33
+			}
+			if trader.KellyLookback <= 0 {
+				trader.KellyLookback = 30
+			}
+			if trader.KellyMinTrades <= 0 {
+				trader.KellyMinTrades = 10
+			}
+			if trader.MarketStressEntryBlock <= 0 || trader.MarketStressEntryBlock > 1 {
+				trader.MarketStressEntryBlock = 0.82
+			}
+			if trader.MarketStressRiskMinScale <= 0 || trader.MarketStressRiskMinScale > 1 {
+				trader.MarketStressRiskMinScale = 0.35
+			}
 			if trader.StrategyMode == "" {
 				trader.StrategyMode = "momentum_fallback"
 			}
@@ -421,6 +717,43 @@ func (c *Config) Validate() error {
 			}
 			if trader.FallbackPositionPct <= 0 || trader.FallbackPositionPct > 0.20 {
 				trader.FallbackPositionPct = 0.10
+			}
+			if trader.MinFactorScore <= 0 {
+				trader.MinFactorScore = 0.35
+			}
+			if trader.RiskPerTradePct <= 0 {
+				trader.RiskPerTradePct = 0.0075
+			}
+			if trader.ProfitLockThreshold <= 0 {
+				trader.ProfitLockThreshold = 1.25
+			}
+			if trader.TrailingStopATRMult <= 0 {
+				trader.TrailingStopATRMult = 1.6
+			}
+			if trader.MaxHoldingCycles <= 0 {
+				trader.MaxHoldingCycles = 180
+			}
+			if trader.MaxConcurrentPos <= 0 {
+				trader.MaxConcurrentPos = 3
+			}
+			if trader.SymbolCooldownCycles <= 0 {
+				trader.SymbolCooldownCycles = 6
+			}
+			if trader.AllowShort == nil {
+				v := true
+				trader.AllowShort = &v
+			}
+			if trader.UseMacroFilters == nil {
+				v := true
+				trader.UseMacroFilters = &v
+			}
+			if trader.DynamicPositionSizing == nil {
+				v := true
+				trader.DynamicPositionSizing = &v
+			}
+			if trader.RegimeRiskScaling == nil {
+				v := true
+				trader.RegimeRiskScaling = &v
 			}
 			if trader.Mode == "live" && !trader.StrictLiveMode {
 				fmt.Printf("  [Trader %s] strict_live_mode is disabled for LIVE mode. This is unsafe.\n", trader.Name)
@@ -432,7 +765,9 @@ func (c *Config) Validate() error {
 			}
 		}
 
-		requiresAIKeys := !trader.DemoMode && !(trader.InstrumentType == "equity" && trader.StrategyMode == "momentum_only")
+		isLocalOnlyEquityStrategy := trader.InstrumentType == "equity" &&
+			(trader.StrategyMode == "momentum_only" || trader.StrategyMode == "multi_factor")
+		requiresAIKeys := !trader.DemoMode && !isLocalOnlyEquityStrategy
 		if requiresAIKeys {
 			if trader.AIModel == "qwen" && trader.QwenKey == "" {
 				return fmt.Errorf("trader[%d]: Qwen model requires qwen_key", i)
@@ -479,9 +814,76 @@ func (c *Config) Validate() error {
 			trader.CandidateBatchSize = 12
 		}
 		if trader.InstrumentType == "equity" {
-			validStrategy := trader.StrategyMode == "ai_only" || trader.StrategyMode == "momentum_fallback" || trader.StrategyMode == "momentum_only"
+			validStrategy := trader.StrategyMode == "ai_only" ||
+				trader.StrategyMode == "momentum_fallback" ||
+				trader.StrategyMode == "momentum_only" ||
+				trader.StrategyMode == "multi_factor" ||
+				trader.StrategyMode == "hybrid_ai"
 			if !validStrategy {
-				return fmt.Errorf("trader[%d]: strategy_mode must be 'ai_only', 'momentum_fallback', or 'momentum_only'", i)
+				return fmt.Errorf("trader[%d]: strategy_mode must be 'ai_only', 'momentum_fallback', 'momentum_only', 'multi_factor', or 'hybrid_ai'", i)
+			}
+			if trader.MinDecisionConfidence < 0 || trader.MinDecisionConfidence > 100 {
+				return fmt.Errorf("trader[%d]: min_decision_confidence must be between 0 and 100", i)
+			}
+			if trader.MaxPairCorrelation <= 0 || trader.MaxPairCorrelation >= 1 {
+				return fmt.Errorf("trader[%d]: max_pair_correlation must be between 0 and 1 (exclusive)", i)
+			}
+			if trader.ExecutionCommissionBps < 0 {
+				return fmt.Errorf("trader[%d]: execution_commission_bps cannot be negative", i)
+			}
+			if trader.ExecutionSlippageBps < 0 {
+				return fmt.Errorf("trader[%d]: execution_slippage_bps cannot be negative", i)
+			}
+			if trader.ExecutionImpactBps < 0 {
+				return fmt.Errorf("trader[%d]: execution_impact_bps cannot be negative", i)
+			}
+			if trader.MaxParticipationRate <= 0 || trader.MaxParticipationRate > 1 {
+				return fmt.Errorf("trader[%d]: max_participation_rate must be between 0 and 1", i)
+			}
+			if trader.DrawdownThrottleStartPct <= 0 || trader.DrawdownThrottleStartPct >= 1 {
+				return fmt.Errorf("trader[%d]: drawdown_throttle_start must be between 0 and 1", i)
+			}
+			if trader.DrawdownThrottleMinScale <= 0 || trader.DrawdownThrottleMinScale > 1 {
+				return fmt.Errorf("trader[%d]: drawdown_throttle_min_scale must be between 0 and 1", i)
+			}
+			if trader.MaxPortfolioHeatPct <= 0 || trader.MaxPortfolioHeatPct > 0.30 {
+				return fmt.Errorf("trader[%d]: max_portfolio_heat_pct must be between 0 and 0.30", i)
+			}
+			if trader.MaxNetExposurePct <= 0 || trader.MaxNetExposurePct > 1 {
+				return fmt.Errorf("trader[%d]: max_net_exposure_pct must be between 0 and 1", i)
+			}
+			if trader.LossStreakPauseThreshold <= 0 {
+				return fmt.Errorf("trader[%d]: loss_streak_pause_threshold must be > 0", i)
+			}
+			if trader.LossStreakPauseCycles <= 0 {
+				return fmt.Errorf("trader[%d]: loss_streak_pause_cycles must be > 0", i)
+			}
+			if trader.PerformanceRiskLookback <= 0 {
+				return fmt.Errorf("trader[%d]: performance_risk_lookback must be > 0", i)
+			}
+			if trader.VolatilityBrakeTargetPct <= 0 || trader.VolatilityBrakeTargetPct >= 1 {
+				return fmt.Errorf("trader[%d]: volatility_brake_target_pct must be between 0 and 1", i)
+			}
+			if trader.VolatilityBrakeLookback <= 1 {
+				return fmt.Errorf("trader[%d]: volatility_brake_lookback must be > 1", i)
+			}
+			if trader.VolatilityBrakeMinScale <= 0 || trader.VolatilityBrakeMinScale > 1 {
+				return fmt.Errorf("trader[%d]: volatility_brake_min_scale must be between 0 and 1", i)
+			}
+			if trader.KellyFractionCap < 0 || trader.KellyFractionCap > 1 {
+				return fmt.Errorf("trader[%d]: kelly_fraction_cap must be between 0 and 1", i)
+			}
+			if trader.KellyLookback <= 1 {
+				return fmt.Errorf("trader[%d]: kelly_lookback must be > 1", i)
+			}
+			if trader.KellyMinTrades <= 0 {
+				return fmt.Errorf("trader[%d]: kelly_min_trades must be > 0", i)
+			}
+			if trader.MarketStressEntryBlock <= 0 || trader.MarketStressEntryBlock > 1 {
+				return fmt.Errorf("trader[%d]: market_stress_entry_block must be between 0 and 1", i)
+			}
+			if trader.MarketStressRiskMinScale <= 0 || trader.MarketStressRiskMinScale > 1 {
+				return fmt.Errorf("trader[%d]: market_stress_risk_min_scale must be between 0 and 1", i)
 			}
 		}
 		if trader.Mode == "replay" && trader.ReplayWarmupBars <= 0 {

@@ -81,52 +81,105 @@ type AutoTraderConfig struct {
 	StopTradingTime time.Duration // Pause duration after triggering risk control
 
 	// Execution mode and data provider config
-	Mode                string
-	DataProvider        string
-	Broker              string
-	CSVDataDir          string
-	InstrumentType      string
-	BarsAdjustment      string
-	CandidateBatchSize  int
-	TrustedSymbolsFile  string
-	StrategyMode        string
-	MomentumMinScore    float64
-	FallbackPositionPct float64
-	MaxCycles           int
-	ReplayWarmupBars    int
+	Mode                     string
+	DataProvider             string
+	Broker                   string
+	CSVDataDir               string
+	InstrumentType           string
+	BarsAdjustment           string
+	CandidateBatchSize       int
+	TrustedSymbolsFile       string
+	StrategyMode             string
+	MomentumMinScore         float64
+	FallbackPositionPct      float64
+	MinFactorScore           float64
+	RiskPerTradePct          float64
+	ProfitLockThreshold      float64
+	TrailingStopATRMult      float64
+	MaxHoldingCycles         int
+	MaxConcurrentPos         int
+	SymbolCooldownCycles     int
+	MaxGrossExposure         float64
+	MaxPositionPct           float64
+	MaxDailyLossPct          float64
+	MaxPairCorrelation       float64
+	MinLiquidityUSD          float64
+	MinDecisionConfidence    int
+	ExecutionCommissionBps   float64
+	ExecutionSlippageBps     float64
+	ExecutionImpactBps       float64
+	MaxParticipationRate     float64
+	DrawdownThrottleStartPct float64
+	DrawdownThrottleMinScale float64
+	MaxPortfolioHeatPct      float64
+	MaxNetExposurePct        float64
+	LossStreakPauseThreshold int
+	LossStreakPauseCycles    int
+	PerformanceRiskLookback  int
+	VolatilityBrakeTargetPct float64
+	VolatilityBrakeLookback  int
+	VolatilityBrakeMinScale  float64
+	KellyFractionCap         float64
+	KellyLookback            int
+	KellyMinTrades           int
+	MarketStressEntryBlock   float64
+	MarketStressRiskMinScale float64
+	AllowShort               bool
+	UseMacroFilters          bool
+	DynamicPositionSizing    bool
+	RegimeRiskScaling        bool
+	BenchmarkSymbols         []string
+	MaxCycles                int
+	ReplayWarmupBars         int
 }
 
 // AutoTrader The automatic trader engine
 type AutoTrader struct {
-	id                    string // Trader unique identifier
-	name                  string // Trader display name
-	aiModel               string // AI model name
-	exchange              string // Exchange platform name
-	config                AutoTraderConfig
-	trader                Trader // Standardized trader interface
-	mcpClient             *mcp.Client
-	decisionLogger        *logger.DecisionLogger // Decision logger
-	initialBalance        float64
-	dailyPnL              float64
-	lastResetTime         time.Time
-	stopUntil             time.Time
-	isRunning             bool
-	startTime             time.Time           // System start time
-	callCount             int                 // AI invocation cycle counter
-	positionFirstSeenTime map[string]int64    // First appearance of positions (symbol_side -> ms timestamp)
-	provider              market.BarsProvider // Injected data provider
-	candidateCursor       int
-	trustedSymbolSet      map[string]struct{}
-	demoMode              bool
-	demoRand              *rand.Rand
-	demoEquity            float64
-	demoAvailableBalance  float64
-	demoPositionCount     int
-	demoMarginUsedPct     float64
-	demoSnapshotSeed      int64
-	demoLastCycleTime     time.Time
-	replayInitialized     bool
-	backtestMode          bool
+	id                      string // Trader unique identifier
+	name                    string // Trader display name
+	aiModel                 string // AI model name
+	exchange                string // Exchange platform name
+	config                  AutoTraderConfig
+	trader                  Trader // Standardized trader interface
+	mcpClient               *mcp.Client
+	decisionLogger          *logger.DecisionLogger // Decision logger
+	initialBalance          float64
+	dailyPnL                float64
+	dailyStartEquity        float64
+	peakEquitySeen          float64
+	lastResetTime           time.Time
+	stopUntil               time.Time
+	isRunning               bool
+	startTime               time.Time        // System start time
+	callCount               int              // AI invocation cycle counter
+	positionFirstSeenTime   map[string]int64 // First appearance of positions (symbol_side -> ms timestamp)
+	positionEntryCycle      map[string]int
+	positionPeakPnLPct      map[string]float64
+	symbolCooldownUntil     map[string]int
+	symbolEdgeScore         map[string]float64
+	symbolTradeCount        map[string]int
+	openEntryBlockedUntil   int
+	consecutiveLossCloses   int
+	recentClosePnLPct       []float64
+	closePnLEMA             float64
+	recentEquity            []float64
+	latestMarketStress      float64
+	latestStressDispersion  float64
+	latestStressCorrelation float64
+	latestKellyScale        float64
+	provider                market.BarsProvider // Injected data provider
+	candidateCursor         int
+	trustedSymbolSet        map[string]struct{}
+	demoMode                bool
+	demoRand                *rand.Rand
+	demoEquity              float64
+	demoAvailableBalance    float64
+	demoPositionCount       int
+	demoMarginUsedPct       float64
+	demoSnapshotSeed        int64
+	demoLastCycleTime       time.Time
+	replayInitialized       bool
+	backtestMode            bool
 }
 
 // NewAutoTrader Creates a new automatic trader
@@ -164,6 +217,105 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 		}
 		if config.FallbackPositionPct <= 0 || config.FallbackPositionPct > 0.20 {
 			config.FallbackPositionPct = 0.10
+		}
+		if config.MinFactorScore <= 0 {
+			config.MinFactorScore = 0.35
+		}
+		if config.RiskPerTradePct <= 0 {
+			config.RiskPerTradePct = 0.0075
+		}
+		if config.ProfitLockThreshold <= 0 {
+			config.ProfitLockThreshold = 1.25
+		}
+		if config.TrailingStopATRMult <= 0 {
+			config.TrailingStopATRMult = 1.6
+		}
+		if config.MaxHoldingCycles <= 0 {
+			config.MaxHoldingCycles = 180
+		}
+		if config.MaxConcurrentPos <= 0 {
+			config.MaxConcurrentPos = 3
+		}
+		if config.SymbolCooldownCycles <= 0 {
+			config.SymbolCooldownCycles = 6
+		}
+		if config.MaxGrossExposure <= 0 {
+			config.MaxGrossExposure = 1.0
+		}
+		if config.MaxPositionPct <= 0 || config.MaxPositionPct > 1.0 {
+			config.MaxPositionPct = 0.20
+		}
+		if config.MaxDailyLossPct <= 0 {
+			config.MaxDailyLossPct = 0.05
+		}
+		if config.MaxPairCorrelation <= 0 || config.MaxPairCorrelation > 0.99 {
+			config.MaxPairCorrelation = 0.82
+		}
+		if config.MinLiquidityUSD <= 0 {
+			config.MinLiquidityUSD = 2_000_000
+		}
+		if config.MinDecisionConfidence <= 0 {
+			config.MinDecisionConfidence = 58
+		}
+		if config.ExecutionCommissionBps < 0 {
+			config.ExecutionCommissionBps = 0
+		}
+		if config.ExecutionSlippageBps < 0 {
+			config.ExecutionSlippageBps = 0
+		}
+		if config.ExecutionImpactBps < 0 {
+			config.ExecutionImpactBps = 0
+		}
+		if config.MaxParticipationRate <= 0 || config.MaxParticipationRate > 1.0 {
+			config.MaxParticipationRate = 0.15
+		}
+		if config.DrawdownThrottleStartPct <= 0 {
+			config.DrawdownThrottleStartPct = 0.03
+		}
+		if config.DrawdownThrottleMinScale <= 0 || config.DrawdownThrottleMinScale > 1.0 {
+			config.DrawdownThrottleMinScale = 0.35
+		}
+		if config.MaxPortfolioHeatPct <= 0 || config.MaxPortfolioHeatPct > 0.30 {
+			config.MaxPortfolioHeatPct = 0.035
+		}
+		if config.MaxNetExposurePct <= 0 || config.MaxNetExposurePct > 1.0 {
+			config.MaxNetExposurePct = 0.65
+		}
+		if config.LossStreakPauseThreshold <= 0 {
+			config.LossStreakPauseThreshold = 3
+		}
+		if config.LossStreakPauseCycles <= 0 {
+			config.LossStreakPauseCycles = 5
+		}
+		if config.PerformanceRiskLookback <= 0 {
+			config.PerformanceRiskLookback = 20
+		}
+		if config.VolatilityBrakeTargetPct <= 0 {
+			config.VolatilityBrakeTargetPct = 0.008
+		}
+		if config.VolatilityBrakeLookback <= 0 {
+			config.VolatilityBrakeLookback = 40
+		}
+		if config.VolatilityBrakeMinScale <= 0 || config.VolatilityBrakeMinScale > 1.0 {
+			config.VolatilityBrakeMinScale = 0.45
+		}
+		if config.KellyFractionCap <= 0 || config.KellyFractionCap > 1.0 {
+			config.KellyFractionCap = 0.33
+		}
+		if config.KellyLookback <= 0 {
+			config.KellyLookback = 30
+		}
+		if config.KellyMinTrades <= 0 {
+			config.KellyMinTrades = 10
+		}
+		if config.MarketStressEntryBlock <= 0 || config.MarketStressEntryBlock > 1.0 {
+			config.MarketStressEntryBlock = 0.82
+		}
+		if config.MarketStressRiskMinScale <= 0 || config.MarketStressRiskMinScale > 1.0 {
+			config.MarketStressRiskMinScale = 0.35
+		}
+		if len(config.BenchmarkSymbols) == 0 {
+			config.BenchmarkSymbols = []string{"SPY", "QQQ", "IWM", "DIA"}
 		}
 	}
 	if config.Mode == "replay" && config.ReplayWarmupBars <= 0 {
@@ -316,6 +468,30 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 		}
 	}
 
+	if config.InstrumentType == "equity" {
+		normalizedBenchmarks := make([]string, 0, len(config.BenchmarkSymbols))
+		seen := make(map[string]struct{}, len(config.BenchmarkSymbols))
+		for _, raw := range config.BenchmarkSymbols {
+			symbol := strings.ToUpper(strings.TrimSpace(raw))
+			if symbol == "" {
+				continue
+			}
+			if _, ok := seen[symbol]; ok {
+				continue
+			}
+			seen[symbol] = struct{}{}
+			normalizedBenchmarks = append(normalizedBenchmarks, symbol)
+		}
+		if len(normalizedBenchmarks) > 0 {
+			config.BenchmarkSymbols = normalizedBenchmarks
+		}
+	}
+
+	if sim, ok := trader.(*SimTrader); ok {
+		sim.SetExecutionCosts(config.ExecutionCommissionBps, config.ExecutionSlippageBps)
+		sim.SetExecutionImpactModel(config.ExecutionImpactBps, config.MaxParticipationRate)
+	}
+
 	return &AutoTrader{
 		id:                    config.ID,
 		name:                  config.Name,
@@ -326,11 +502,21 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 		mcpClient:             mcpClient,
 		decisionLogger:        decisionLogger,
 		initialBalance:        config.InitialBalance,
+		dailyStartEquity:      config.InitialBalance,
+		peakEquitySeen:        config.InitialBalance,
 		lastResetTime:         time.Now(),
 		startTime:             time.Now(),
 		callCount:             0,
 		isRunning:             false,
 		positionFirstSeenTime: make(map[string]int64),
+		positionEntryCycle:    make(map[string]int),
+		positionPeakPnLPct:    make(map[string]float64),
+		symbolCooldownUntil:   make(map[string]int),
+		symbolEdgeScore:       make(map[string]float64),
+		symbolTradeCount:      make(map[string]int),
+		recentClosePnLPct:     make([]float64, 0, 32),
+		recentEquity:          []float64{config.InitialBalance},
+		latestKellyScale:      1.0,
 		provider:              provider,
 		trustedSymbolSet:      trustedSymbols,
 		demoMode:              config.DemoMode || config.Exchange == "demo",
@@ -357,7 +543,12 @@ func (at *AutoTrader) Run() error {
 
 	log.Printf(" Initial balance: %.2f %s", at.initialBalance, currency)
 	log.Printf("  Scan interval: %v", at.config.ScanInterval)
-	log.Println(" AI will have full control over leverage, position size, and stop/take profit parameters")
+	log.Printf(" Strategy mode: %s", at.config.StrategyMode)
+	if at.config.InstrumentType == "equity" && (at.config.StrategyMode == "momentum_only" || at.config.StrategyMode == "multi_factor") {
+		log.Println(" Local strategy engine controls position sizing and exits for this trader")
+	} else {
+		log.Println(" AI will have full control over leverage, position size, and stop/take profit parameters")
+	}
 
 	for at.isRunning {
 		if err := at.runCycle(); err != nil {
@@ -607,12 +798,8 @@ func (at *AutoTrader) runCycle() error {
 		return nil
 	}
 
-	// 2. Daily P&L Reset loop
-	if time.Since(at.lastResetTime) > 24*time.Hour {
-		at.dailyPnL = 0
-		at.lastResetTime = time.Now()
-		log.Println(" Daily P&L constraints reset")
-	}
+	// 2. Daily P&L reset checkpoint
+	needsDailyReset := time.Since(at.lastResetTime) > 24*time.Hour
 
 	if at.demoMode {
 		return at.runDemoCycle()
@@ -626,6 +813,41 @@ func (at *AutoTrader) runCycle() error {
 		at.decisionLogger.LogDecision(record)
 		return fmt.Errorf("failed to construct market trading context limits configurations array bindings parameter: %w", err)
 	}
+	at.refreshPositionState(ctx.Positions)
+	if ctx.Account.TotalEquity > at.peakEquitySeen {
+		at.peakEquitySeen = ctx.Account.TotalEquity
+	}
+	if at.peakEquitySeen <= 0 {
+		at.peakEquitySeen = ctx.Account.TotalEquity
+	}
+	if needsDailyReset {
+		at.dailyStartEquity = ctx.Account.TotalEquity
+		at.dailyPnL = 0
+		at.lastResetTime = time.Now()
+		log.Println(" Daily P&L constraints reset")
+	} else {
+		if at.dailyStartEquity <= 0 {
+			at.dailyStartEquity = ctx.Account.TotalEquity
+		}
+		at.dailyPnL = ctx.Account.TotalEquity - at.dailyStartEquity
+	}
+	if at.config.InstrumentType == "equity" && at.config.MaxDailyLossPct > 0 {
+		baseline := at.dailyStartEquity
+		if baseline <= 0 {
+			baseline = at.initialBalance
+		}
+		dailyLossLimit := -baseline * at.config.MaxDailyLossPct
+		if at.dailyPnL <= dailyLossLimit {
+			at.stopUntil = time.Now().Add(at.config.StopTradingTime)
+			log.Printf(" Equity daily loss guard triggered: PnL %.2f <= %.2f. Trading paused until %s",
+				at.dailyPnL, dailyLossLimit, at.stopUntil.Format(time.RFC3339))
+			record.Success = false
+			record.ErrorMessage = fmt.Sprintf("daily loss guard triggered at %.2f (limit %.2f)", at.dailyPnL, dailyLossLimit)
+			_ = at.decisionLogger.LogDecision(record)
+			return nil
+		}
+	}
+	at.recordEquityObservation(ctx.Account.TotalEquity)
 
 	// Snapshot configurations mapping constraints Map Limits Tracking strings arrays parameters Array limitation logic tracking maps limits Map strings arrays Tracking Tracking permutations mapping Strings mapping lists values Tracker bounds Map variables Map map variations arrays constraints Limits arrays MAP Array combinations tracking array array arrays limitations parameters limitations limitation limitations Tracking Array Maps values Maps map Limit variations string mapping targets
 	record.AccountState = logger.AccountSnapshot{
@@ -695,6 +917,7 @@ func (at *AutoTrader) runCycle() error {
 	}
 
 	at.maybeApplyEquityMomentumFallback(ctx, fullDecision)
+	at.applyEquityDecisionOverlay(ctx, fullDecision)
 	if len(fullDecision.Decisions) > 0 {
 		decisionJSON, _ := json.MarshalIndent(fullDecision.Decisions, "", "  ")
 		record.DecisionJSON = string(decisionJSON)
@@ -724,6 +947,13 @@ func (at *AutoTrader) runCycle() error {
 
 	// 7. Tracker mapping Tracker map Strings limitation Tracking String Map tracking String LIMIT
 	sortedDecisions := sortDecisionsByPriority(fullDecision.Decisions)
+	positionPnLPctByKey := make(map[string]float64, len(ctx.Positions))
+	for _, pos := range ctx.Positions {
+		key := strings.ToUpper(strings.TrimSpace(pos.Symbol)) + "_" + strings.ToLower(strings.TrimSpace(pos.Side))
+		if key != "_" {
+			positionPnLPctByKey[key] = pos.UnrealizedPnLPct
+		}
+	}
 
 	log.Println(" Execution order optimizations limits parameters bounds Target Mapping Limits Strings limits array (optimized): close first -> open later")
 	for i, d := range sortedDecisions {
@@ -758,6 +988,9 @@ func (at *AutoTrader) runCycle() error {
 
 		record.Decisions = append(record.Decisions, actionRecord)
 	}
+	at.updateExecutionState(record.Decisions)
+	at.updateSymbolEdgeFromActions(record.Decisions, positionPnLPctByKey)
+	at.updateClosePerformanceFromActions(record.Decisions, positionPnLPctByKey)
 
 	// 8. String Tracking string limits map Map Maps Mapping
 	if err := at.decisionLogger.LogDecision(record); err != nil {
@@ -768,11 +1001,33 @@ func (at *AutoTrader) runCycle() error {
 }
 
 func (at *AutoTrader) getDecision(ctx *decision.Context) (*decision.FullDecision, error) {
-	if at.config.InstrumentType == "equity" && at.config.StrategyMode == "momentum_only" {
-		if err := at.loadMomentumMarketData(ctx); err != nil {
-			return nil, err
+	if at.config.InstrumentType == "equity" {
+		switch at.config.StrategyMode {
+		case "momentum_only":
+			if err := at.loadMomentumMarketData(ctx); err != nil {
+				return nil, err
+			}
+			return at.buildMomentumOnlyDecision(ctx), nil
+		case "multi_factor":
+			if err := at.loadMomentumMarketData(ctx); err != nil {
+				return nil, err
+			}
+			return at.buildMultiFactorDecision(ctx), nil
+		case "hybrid_ai":
+			fullDecision, err := decision.GetFullDecision(ctx, at.mcpClient)
+			if err != nil {
+				// Keep the system autonomous: fallback to local factors when AI API is unavailable.
+				if loadErr := at.loadMomentumMarketData(ctx); loadErr == nil {
+					log.Printf(" Hybrid AI fallback activated: switching to local multi-factor engine (%v)", err)
+					return at.buildMultiFactorDecision(ctx), nil
+				}
+				return nil, err
+			}
+			if loadErr := at.loadMomentumMarketData(ctx); loadErr == nil {
+				at.applyHybridFactorFilter(ctx, fullDecision)
+			}
+			return fullDecision, nil
 		}
-		return at.buildMomentumOnlyDecision(ctx), nil
 	}
 	return decision.GetFullDecision(ctx, at.mcpClient)
 }
@@ -784,20 +1039,58 @@ func (at *AutoTrader) loadMomentumMarketData(ctx *decision.Context) error {
 
 	ctx.MarketDataMap = make(map[string]*market.Data)
 
-	symbolSet := make(map[string]struct{})
-	for _, pos := range ctx.Positions {
-		symbolSet[pos.Symbol] = struct{}{}
+	maxSymbols := 32
+	if at.config.CandidateBatchSize > 0 && at.config.CandidateBatchSize < maxSymbols {
+		maxSymbols = at.config.CandidateBatchSize + 8 // include room for benchmarks and held positions
 	}
-	for _, coin := range ctx.CandidateCoins {
-		symbolSet[coin.Symbol] = struct{}{}
+	if at.config.DataProvider == "ibkr" && maxSymbols > 28 {
+		maxSymbols = 28 // avoid aggressive IBKR pacing
 	}
 
-	const maxSymbols = 24
-	loaded := 0
-	for symbol := range symbolSet {
-		if loaded >= maxSymbols {
+	seen := make(map[string]struct{}, maxSymbols+8)
+	addUnique := func(target *[]string, raw string) {
+		symbol := strings.ToUpper(strings.TrimSpace(raw))
+		if symbol == "" {
+			return
+		}
+		if _, exists := seen[symbol]; exists {
+			return
+		}
+		seen[symbol] = struct{}{}
+		*target = append(*target, symbol)
+	}
+
+	mandatory := make([]string, 0, len(ctx.Positions)+len(at.config.BenchmarkSymbols))
+	for _, pos := range ctx.Positions {
+		addUnique(&mandatory, pos.Symbol)
+	}
+	if at.config.UseMacroFilters {
+		for _, benchmark := range at.config.BenchmarkSymbols {
+			addUnique(&mandatory, benchmark)
+		}
+	}
+
+	candidates := make([]string, 0, len(ctx.CandidateCoins))
+	for _, coin := range ctx.CandidateCoins {
+		addUnique(&candidates, coin.Symbol)
+	}
+	sort.Strings(candidates)
+
+	loadOrder := make([]string, 0, maxSymbols)
+	for _, symbol := range mandatory {
+		if len(loadOrder) >= maxSymbols {
 			break
 		}
+		loadOrder = append(loadOrder, symbol)
+	}
+	for _, symbol := range candidates {
+		if len(loadOrder) >= maxSymbols {
+			break
+		}
+		loadOrder = append(loadOrder, symbol)
+	}
+
+	for _, symbol := range loadOrder {
 		data, err := market.Get(market.GetRequest{
 			Symbol:         symbol,
 			Provider:       at.provider,
@@ -808,7 +1101,6 @@ func (at *AutoTrader) loadMomentumMarketData(ctx *decision.Context) error {
 			continue
 		}
 		ctx.MarketDataMap[symbol] = data
-		loaded++
 	}
 
 	if len(ctx.MarketDataMap) == 0 {
@@ -1318,24 +1610,62 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"trader_id":            at.id,
-		"trader_name":          at.name,
-		"ai_model":             at.aiModel,
-		"exchange":             at.exchange,
-		"is_running":           at.isRunning,
-		"start_time":           at.startTime.Format(time.RFC3339),
-		"runtime_minutes":      int(time.Since(at.startTime).Minutes()),
-		"call_count":           at.callCount,
-		"initial_balance":      at.initialBalance,
-		"scan_interval":        at.config.ScanInterval.String(),
-		"max_cycles":           at.config.MaxCycles,
-		"replay_warmup_bars":   at.config.ReplayWarmupBars,
-		"stop_until":           at.stopUntil.Format(time.RFC3339),
-		"last_reset_time":      at.lastResetTime.Format(time.RFC3339),
-		"ai_provider":          aiProvider,
-		"mode":                 at.config.Mode,
-		"is_demo_mode":         at.demoMode,
-		"demo_last_cycle_time": demoLastCycleTime,
+		"trader_id":                    at.id,
+		"trader_name":                  at.name,
+		"ai_model":                     at.aiModel,
+		"exchange":                     at.exchange,
+		"is_running":                   at.isRunning,
+		"start_time":                   at.startTime.Format(time.RFC3339),
+		"runtime_minutes":              int(time.Since(at.startTime).Minutes()),
+		"call_count":                   at.callCount,
+		"initial_balance":              at.initialBalance,
+		"scan_interval":                at.config.ScanInterval.String(),
+		"max_cycles":                   at.config.MaxCycles,
+		"replay_warmup_bars":           at.config.ReplayWarmupBars,
+		"stop_until":                   at.stopUntil.Format(time.RFC3339),
+		"last_reset_time":              at.lastResetTime.Format(time.RFC3339),
+		"ai_provider":                  aiProvider,
+		"mode":                         at.config.Mode,
+		"strategy_mode":                at.config.StrategyMode,
+		"max_gross_exposure":           at.config.MaxGrossExposure,
+		"max_position_pct":             at.config.MaxPositionPct,
+		"max_concurrent_positions":     at.config.MaxConcurrentPos,
+		"risk_per_trade_pct":           at.config.RiskPerTradePct,
+		"min_factor_score":             at.config.MinFactorScore,
+		"max_pair_correlation":         at.config.MaxPairCorrelation,
+		"min_liquidity_usd":            at.config.MinLiquidityUSD,
+		"min_decision_confidence":      at.config.MinDecisionConfidence,
+		"regime_risk_scaling":          at.config.RegimeRiskScaling,
+		"execution_commission_bps":     at.config.ExecutionCommissionBps,
+		"execution_slippage_bps":       at.config.ExecutionSlippageBps,
+		"execution_impact_bps":         at.config.ExecutionImpactBps,
+		"max_participation_rate":       at.config.MaxParticipationRate,
+		"drawdown_throttle_start":      at.config.DrawdownThrottleStartPct,
+		"drawdown_throttle_min_scale":  at.config.DrawdownThrottleMinScale,
+		"max_portfolio_heat_pct":       at.config.MaxPortfolioHeatPct,
+		"max_net_exposure_pct":         at.config.MaxNetExposurePct,
+		"loss_streak_pause_threshold":  at.config.LossStreakPauseThreshold,
+		"loss_streak_pause_cycles":     at.config.LossStreakPauseCycles,
+		"performance_risk_lookback":    at.config.PerformanceRiskLookback,
+		"volatility_brake_target_pct":  at.config.VolatilityBrakeTargetPct,
+		"volatility_brake_lookback":    at.config.VolatilityBrakeLookback,
+		"volatility_brake_min_scale":   at.config.VolatilityBrakeMinScale,
+		"kelly_fraction_cap":           at.config.KellyFractionCap,
+		"kelly_lookback":               at.config.KellyLookback,
+		"kelly_min_trades":             at.config.KellyMinTrades,
+		"market_stress_entry_block":    at.config.MarketStressEntryBlock,
+		"market_stress_risk_min_scale": at.config.MarketStressRiskMinScale,
+		"realized_equity_vol_pct":      at.realizedEquityVolPct() * 100.0,
+		"latest_market_stress":         at.latestMarketStress,
+		"latest_stress_dispersion":     at.latestStressDispersion,
+		"latest_stress_correlation":    at.latestStressCorrelation,
+		"latest_kelly_scale":           at.latestKellyScale,
+		"entry_blocked_until_cycle":    at.openEntryBlockedUntil,
+		"consecutive_loss_closes":      at.consecutiveLossCloses,
+		"close_pnl_ema_pct":            at.closePnLEMA,
+		"learned_symbol_count":         len(at.symbolTradeCount),
+		"is_demo_mode":                 at.demoMode,
+		"demo_last_cycle_time":         demoLastCycleTime,
 	}
 }
 

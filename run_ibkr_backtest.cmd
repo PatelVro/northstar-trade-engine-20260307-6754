@@ -29,7 +29,31 @@ go run ./cmd/ibkr-backtest ^
   -max-cycles 240 ^
   -replay-warmup-bars 120 ^
   -candidate-batch-size 20 ^
-  -profiles "momentum_only:1.10:0.05,momentum_only:1.25:0.10,momentum_only:1.40:0.10,momentum_fallback:1.25:0.10"
+  -auto-grid ^
+  -strategy-grid "multi_factor,momentum_only,momentum_fallback" ^
+  -score-grid "0.30,0.35,0.45,0.55,1.25" ^
+  -position-grid "0.06,0.08,0.10,0.12" ^
+  -commission-bps 0.35 ^
+  -slippage-bps 0.75 ^
+  -execution-impact-bps 12 ^
+  -max-participation-rate 0.15 ^
+  -max-portfolio-heat-pct 0.035 ^
+  -max-net-exposure-pct 0.65 ^
+  -loss-streak-pause-threshold 3 ^
+  -loss-streak-pause-cycles 5 ^
+  -performance-risk-lookback 20 ^
+  -volatility-brake-target-pct 0.008 ^
+  -volatility-brake-lookback 40 ^
+  -volatility-brake-min-scale 0.45 ^
+  -kelly-fraction-cap 0.33 ^
+  -kelly-lookback 30 ^
+  -kelly-min-trades 10 ^
+  -market-stress-entry-block 0.82 ^
+  -market-stress-risk-min-scale 0.35 ^
+  -min-trades-for-score 4 ^
+  -min-traded-symbols 2 ^
+  -mc-sims 300 ^
+  -write-best-profile "best_profile.json"
 
 echo.
-echo Done. Check output\ibkr_backtests\run_* for leaderboard and per-profile artifacts.
+echo Done. Check output\ibkr_backtests\run_* for leaderboard, per-profile artifacts, and best_profile.json.

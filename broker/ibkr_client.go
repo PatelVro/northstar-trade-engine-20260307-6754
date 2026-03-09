@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/cookiejar"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -370,13 +371,13 @@ func (c *IBKRClient) ResolveContract(symbol string) (int, error) {
 	}
 
 	var searchResults []struct {
-		Conid         int    `json:"conid"`
-		Companyname   string `json:"companyName"`
-		CompanyHeader string `json:"companyHeader"`
-		Symbol        string `json:"symbol"`
-		Description   string `json:"description"`
-		Opt           string `json:"opt"`
-		Exchange      string `json:"exchange"` // Should prefer SMART or NYSE/NASDAQ
+		Conid         interface{} `json:"conid"`
+		Companyname   string      `json:"companyName"`
+		CompanyHeader string      `json:"companyHeader"`
+		Symbol        string      `json:"symbol"`
+		Description   string      `json:"description"`
+		Opt           string      `json:"opt"`
+		Exchange      string      `json:"exchange"` // Should prefer SMART or NYSE/NASDAQ
 	}
 
 	if err := json.Unmarshal(bodyBytes, &searchResults); err != nil {
@@ -390,17 +391,29 @@ func (c *IBKRClient) ResolveContract(symbol string) (int, error) {
 	// Find best match: SMART routed on US exchange
 	var bestConID int
 	for _, res := range searchResults {
+		conid, ok := parseConID(res.Conid)
+		if !ok || conid <= 0 {
+			continue
+		}
 		// Prefer SMART routing for US Equities. If not, fallback to first STK.
 		if res.Description == "STK" && (strings.Contains(res.CompanyHeader, "SMART") || strings.Contains(res.CompanyHeader, "US")) {
-			bestConID = res.Conid
+			bestConID = conid
 			break
+		}
+		if bestConID == 0 {
+			bestConID = conid
 		}
 	}
 
-	// Fallback to first if no perfect match
 	if bestConID == 0 {
-		bestConID = searchResults[0].Conid
-		log.Printf(" IBKR: Ambiguous contract for %s. Using default conid %d (%s)", cleanSymbol, bestConID, searchResults[0].CompanyHeader)
+		return 0, fmt.Errorf("no valid conid in secdef response for symbol %s", cleanSymbol)
+	}
+
+	// Logging fallback case for visibility
+	if len(searchResults) > 0 {
+		if fallbackConID, ok := parseConID(searchResults[0].Conid); ok && fallbackConID == bestConID {
+			log.Printf(" IBKR: Ambiguous contract for %s. Using default conid %d (%s)", cleanSymbol, bestConID, searchResults[0].CompanyHeader)
+		}
 	}
 
 	// Update cache
@@ -410,4 +423,40 @@ func (c *IBKRClient) ResolveContract(symbol string) (int, error) {
 
 	log.Printf("IBKR: Resolved %s to conid %d", cleanSymbol, bestConID)
 	return bestConID, nil
+}
+
+func parseConID(v interface{}) (int, bool) {
+	switch t := v.(type) {
+	case float64:
+		if t <= 0 {
+			return 0, false
+		}
+		return int(t), true
+	case string:
+		s := strings.TrimSpace(t)
+		if s == "" {
+			return 0, false
+		}
+		if n, err := strconv.Atoi(s); err == nil {
+			return n, true
+		}
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			if f > 0 {
+				return int(f), true
+			}
+		}
+		return 0, false
+	case int:
+		if t <= 0 {
+			return 0, false
+		}
+		return t, true
+	case int64:
+		if t <= 0 {
+			return 0, false
+		}
+		return int(t), true
+	default:
+		return 0, false
+	}
 }
