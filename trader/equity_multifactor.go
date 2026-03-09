@@ -62,6 +62,8 @@ func (at *AutoTrader) refreshPositionState(positions []decision.PositionInfo) {
 		if _, ok := active[key]; !ok {
 			delete(at.positionEntryCycle, key)
 			delete(at.positionPeakPnLPct, key)
+			delete(at.positionNewsBias, key)
+			delete(at.plannedNewsBias, key)
 		}
 	}
 }
@@ -83,19 +85,23 @@ func (at *AutoTrader) updateExecutionState(actions []logger.DecisionAction) {
 			key := symbol + "_long"
 			at.positionEntryCycle[key] = at.callCount
 			at.positionPeakPnLPct[key] = 0
+			at.promotePlannedNewsBias(symbol, "long")
 			delete(at.symbolCooldownUntil, symbol)
 		case "open_short":
 			key := symbol + "_short"
 			at.positionEntryCycle[key] = at.callCount
 			at.positionPeakPnLPct[key] = 0
+			at.promotePlannedNewsBias(symbol, "short")
 			delete(at.symbolCooldownUntil, symbol)
 		case "close_long":
 			delete(at.positionEntryCycle, symbol+"_long")
 			delete(at.positionPeakPnLPct, symbol+"_long")
+			delete(at.plannedNewsBias, symbol+"_long")
 			at.symbolCooldownUntil[symbol] = at.callCount + cooldown
 		case "close_short":
 			delete(at.positionEntryCycle, symbol+"_short")
 			delete(at.positionPeakPnLPct, symbol+"_short")
+			delete(at.plannedNewsBias, symbol+"_short")
 			at.symbolCooldownUntil[symbol] = at.callCount + cooldown
 		}
 	}
@@ -182,6 +188,7 @@ func (at *AutoTrader) updateClosePerformanceFromActions(actions []logger.Decisio
 		if !ok {
 			continue
 		}
+		at.learnNewsOutcome(symbol, side, pnlPct)
 
 		if len(at.recentClosePnLPct) == 0 {
 			at.closePnLEMA = pnlPct
@@ -358,7 +365,7 @@ func (at *AutoTrader) newsRiskScale(action string, snapshot *news.Snapshot) floa
 		maxReduction = 0.55
 	}
 	directional := newsDirectionalPressure(action, snapshot.MarketSentiment)
-	pressure := snapshot.MarketImpact * directional
+	pressure := snapshot.MarketImpact * directional * at.effectiveNewsCredibility("")
 	scale := 1.0 - clampFloat(pressure*maxReduction, 0, maxReduction)
 	return clampFloat(scale, 1.0-maxReduction, 1.0)
 }
@@ -581,6 +588,9 @@ func (at *AutoTrader) applyEquityDecisionOverlay(ctx *decision.Context, fullDeci
 	if fullDecision == nil || ctx == nil || at.config.InstrumentType != "equity" {
 		return
 	}
+	for key := range at.plannedNewsBias {
+		delete(at.plannedNewsBias, key)
+	}
 
 	if len(fullDecision.Decisions) == 0 {
 		fullDecision.Decisions = []decision.Decision{{Action: "wait", Reasoning: "No decisions returned"}}
@@ -679,6 +689,10 @@ func (at *AutoTrader) applyEquityDecisionOverlay(ctx *decision.Context, fullDeci
 				filtered = append(filtered, decision.Decision{Action: "wait", Reasoning: "Execution overlay skipped unnamed symbol"})
 				continue
 			}
+			newsCredibility := at.effectiveNewsCredibility(d.Symbol)
+			marketNewsAdverse := 0.0
+			symbolNewsAdverse := 0.0
+			newsSupportScore := 0.0
 			if regime.Stress >= stressBlock {
 				filtered = append(filtered, decision.Decision{
 					Action: "wait",
@@ -691,26 +705,42 @@ func (at *AutoTrader) applyEquityDecisionOverlay(ctx *decision.Context, fullDeci
 			}
 			if newsSnapshot != nil {
 				marketDirectional := newsDirectionalPressure(d.Action, newsSnapshot.MarketSentiment)
-				marketScore := newsSnapshot.MarketImpact * marketDirectional
-				if marketScore >= newsHardBlock || (newsSnapshot.MarketImpact >= newsMarketThresh && marketDirectional >= 0.98) {
+				marketScore := newsSnapshot.MarketImpact * marketDirectional * newsCredibility
+				marketNewsAdverse = marketScore
+
+				marketSupport := newsSnapshot.MarketSentiment * newsSnapshot.MarketImpact * newsCredibility
+				if d.Action == "open_short" {
+					marketSupport = -marketSupport
+				}
+				newsSupportScore += 0.55 * marketSupport
+
+				if marketScore >= newsHardBlock || (newsSnapshot.MarketImpact >= newsMarketThresh && marketDirectional*newsCredibility >= 0.98) {
 					filtered = append(filtered, decision.Decision{
 						Action: "wait",
 						Reasoning: fmt.Sprintf(
-							"Execution overlay blocked %s: adverse market news score %.2f (impact %.2f sentiment %.2f)",
-							d.Symbol, marketScore, newsSnapshot.MarketImpact, newsSnapshot.MarketSentiment,
+							"Execution overlay blocked %s: adverse market news score %.2f (impact %.2f sentiment %.2f cred=%.2f)",
+							d.Symbol, marketScore, newsSnapshot.MarketImpact, newsSnapshot.MarketSentiment, newsCredibility,
 						),
 					})
 					continue
 				}
 				if signal, ok := newsSnapshot.SymbolSignals[d.Symbol]; ok {
 					symbolDirectional := newsDirectionalPressure(d.Action, signal.Sentiment)
-					symbolScore := signal.Impact * symbolDirectional
+					symbolScore := signal.Impact * symbolDirectional * newsCredibility
+					symbolNewsAdverse = symbolScore
+
+					symbolSupport := signal.Sentiment * signal.Impact * newsCredibility
+					if d.Action == "open_short" {
+						symbolSupport = -symbolSupport
+					}
+					newsSupportScore += 0.45 * symbolSupport
+
 					if symbolScore >= newsSymbolThresh {
 						filtered = append(filtered, decision.Decision{
 							Action: "wait",
 							Reasoning: fmt.Sprintf(
-								"Execution overlay blocked %s: symbol news score %.2f (impact %.2f sentiment %.2f)",
-								d.Symbol, symbolScore, signal.Impact, signal.Sentiment,
+								"Execution overlay blocked %s: symbol news score %.2f (impact %.2f sentiment %.2f cred=%.2f)",
+								d.Symbol, symbolScore, signal.Impact, signal.Sentiment, newsCredibility,
 							),
 						})
 						continue
@@ -877,27 +907,23 @@ func (at *AutoTrader) applyEquityDecisionOverlay(ctx *decision.Context, fullDeci
 				d.Reasoning = strings.TrimSpace(d.Reasoning + fmt.Sprintf(" | stress=%.2f stress_scale=%.2f", regime.Stress, stressScale))
 			}
 			if newsSnapshot != nil {
-				marketDirectional := newsDirectionalPressure(d.Action, newsSnapshot.MarketSentiment)
-				marketScore := newsSnapshot.MarketImpact * marketDirectional
-				if marketScore > 0 {
-					marketScale := 1.0 - clampFloat(marketScore*newsMaxReduction, 0, newsMaxReduction)
+				if marketNewsAdverse > 0 {
+					marketScale := 1.0 - clampFloat(marketNewsAdverse*newsMaxReduction, 0, newsMaxReduction)
 					d.PositionSizeUSD *= marketScale
-					d.Confidence = clampInt(d.Confidence-int(math.Round(marketScore*18)), 35, 99)
+					d.Confidence = clampInt(d.Confidence-int(math.Round(marketNewsAdverse*18)), 35, 99)
 					d.Reasoning = strings.TrimSpace(d.Reasoning + fmt.Sprintf(
-						" | news_market=%.2f impact=%.2f sentiment=%.2f scale=%.2f",
-						marketScore, newsSnapshot.MarketImpact, newsSnapshot.MarketSentiment, marketScale,
+						" | news_market=%.2f impact=%.2f sentiment=%.2f cred=%.2f scale=%.2f",
+						marketNewsAdverse, newsSnapshot.MarketImpact, newsSnapshot.MarketSentiment, newsCredibility, marketScale,
 					))
 				}
-				if signal, ok := newsSnapshot.SymbolSignals[d.Symbol]; ok {
-					symbolDirectional := newsDirectionalPressure(d.Action, signal.Sentiment)
-					symbolScore := signal.Impact * symbolDirectional
-					if symbolScore > 0 {
-						symbolScale := 1.0 - clampFloat(symbolScore*newsMaxReduction, 0, newsMaxReduction)
-						d.PositionSizeUSD *= symbolScale
-						d.Confidence = clampInt(d.Confidence-int(math.Round(symbolScore*12)), 35, 99)
+				if symbolNewsAdverse > 0 {
+					symbolScale := 1.0 - clampFloat(symbolNewsAdverse*newsMaxReduction, 0, newsMaxReduction)
+					d.PositionSizeUSD *= symbolScale
+					d.Confidence = clampInt(d.Confidence-int(math.Round(symbolNewsAdverse*12)), 35, 99)
+					if signal, ok := newsSnapshot.SymbolSignals[d.Symbol]; ok {
 						d.Reasoning = strings.TrimSpace(d.Reasoning + fmt.Sprintf(
-							" | news_symbol=%.2f sym_impact=%.2f sym_sent=%.2f scale=%.2f",
-							symbolScore, signal.Impact, signal.Sentiment, symbolScale,
+							" | news_symbol=%.2f sym_impact=%.2f sym_sent=%.2f cred=%.2f scale=%.2f",
+							symbolNewsAdverse, signal.Impact, signal.Sentiment, newsCredibility, symbolScale,
 						))
 					}
 				}
@@ -962,6 +988,7 @@ func (at *AutoTrader) applyEquityDecisionOverlay(ctx *decision.Context, fullDeci
 				})
 				continue
 			}
+			at.trackPlannedNewsBias(d.Symbol, wantSide, clampFloat(newsSupportScore, -1, 1))
 			filtered = append(filtered, d)
 			plannedAdds++
 			plannedExposure += d.PositionSizeUSD

@@ -184,6 +184,14 @@ type AutoTrader struct {
 	newsLastError           string
 	cachedNews              *news.Snapshot
 	newsProvider            news.Provider
+	newsCredibilityGlobal   float64
+	newsCredibility         map[string]float64
+	newsSampleCount         map[string]int
+	plannedNewsBias         map[string]float64
+	positionNewsBias        map[string]float64
+	lastNewsLearnDelta      float64
+	lastNewsLearnSymbol     string
+	newsMemoryPath          string
 	provider                market.BarsProvider // Injected data provider
 	candidateCursor         int
 	trustedSymbolSet        map[string]struct{}
@@ -543,7 +551,7 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 		}
 	}
 
-	return &AutoTrader{
+	at := &AutoTrader{
 		id:                    config.ID,
 		name:                  config.Name,
 		aiModel:               config.AIModel,
@@ -570,6 +578,11 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 		latestKellyScale:      1.0,
 		latestNewsScale:       1.0,
 		newsProvider:          newsProvider,
+		newsCredibilityGlobal: 1.0,
+		newsCredibility:       make(map[string]float64),
+		newsSampleCount:       make(map[string]int),
+		plannedNewsBias:       make(map[string]float64),
+		positionNewsBias:      make(map[string]float64),
 		provider:              provider,
 		trustedSymbolSet:      trustedSymbols,
 		demoMode:              config.DemoMode || config.Exchange == "demo",
@@ -578,7 +591,15 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 		demoAvailableBalance:  config.InitialBalance,
 		demoPositionCount:     0,
 		demoMarginUsedPct:     0,
-	}, nil
+	}
+
+	if at.newsProvider != nil && at.config.UseNewsRisk {
+		if err := at.loadNewsLearningState(); err != nil {
+			log.Printf(" [%s] News learning state unavailable: %v", config.Name, err)
+		}
+	}
+
+	return at, nil
 }
 
 // Run the automated trading loop
@@ -1729,6 +1750,10 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 		"latest_news_sentiment":        at.latestNewsSentiment,
 		"latest_news_impact":           at.latestNewsImpact,
 		"latest_news_scale":            at.latestNewsScale,
+		"news_credibility_global":      at.newsCredibilityGlobal,
+		"news_credibility_symbols":     len(at.newsCredibility),
+		"last_news_learn_symbol":       at.lastNewsLearnSymbol,
+		"last_news_learn_delta":        at.lastNewsLearnDelta,
 		"last_news_refresh":            lastNewsRefresh,
 		"news_last_error":              at.newsLastError,
 		"entry_blocked_until_cycle":    at.openEntryBlockedUntil,

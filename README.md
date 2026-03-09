@@ -128,6 +128,7 @@ Key automation/risk fields:
 - `news_symbol_impact_thresh`
 - `news_hard_block_thresh`
 - `news_max_risk_reduction`
+- automatic news credibility learning per symbol (persistent memory under `runtime/news_learning/`)
 - adaptive symbol edge memory (learns from realized closes)
 - `risk_per_trade_pct`
 - `min_factor_score`
