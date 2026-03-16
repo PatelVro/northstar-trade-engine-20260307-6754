@@ -1,0 +1,26 @@
+{
+  "traders": [
+    {
+      "id": "replay_trader",
+      "name": "Northstar Replay",
+      "enabled": true,
+      "ai_model": "deepseek",
+      "exchange": "alpaca",
+      "mode": "replay",
+      "data_provider": "csv",
+      "broker": "sim",
+      "csv_data_dir": "./data/csv",
+      "instrument_type": "equity",
+      "deepseek_key": "${NORTHSTAR_DEEPSEEK_API_KEY}",
+      "initial_balance": 1000.0,
+      "scan_interval_seconds": 10
+    }
+  ],
+  "use_default_coins": false,
+  "default_coins": [
+    "AAPL",
+    "MSFT",
+    "NVDA"
+  ],
+  "api_server_port": 8080
+}

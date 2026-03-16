@@ -6,8 +6,10 @@ import (
 	"io/ioutil"
 	"math"
 	"net/http"
+	dataquality "northstar/data"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Data holds market data structures
@@ -65,10 +67,11 @@ type Kline struct {
 
 // GetRequest encapsulates parameters for fetching market data
 type GetRequest struct {
-	Symbol         string
-	Provider       BarsProvider
-	InstrumentType string
-	BarsAdjustment string
+	Symbol            string
+	Provider          BarsProvider
+	InstrumentType    string
+	BarsAdjustment    string
+	ValidationOptions dataquality.Options
 }
 
 // Get fetches market data for a target symbol
@@ -84,6 +87,9 @@ func Get(req GetRequest) (*Data, error) {
 		return nil, fmt.Errorf("failed to process 3-minute klines: %v", err)
 	}
 	klines3m := klines3mMap[symbol]
+	if err := validateBars(symbol, "3m", klines3m, 40, req.ValidationOptions); err != nil {
+		return nil, err
+	}
 
 	// Retrieve 4-hour klines
 	klines4hMap, err := req.Provider.GetBars([]string{symbol}, "4h", 60)
@@ -91,6 +97,9 @@ func Get(req GetRequest) (*Data, error) {
 		return nil, fmt.Errorf("failed to process 4-hour klines: %v", err)
 	}
 	klines4h := klines4hMap[symbol]
+	if err := validateBars(symbol, "4h", klines4h, 60, req.ValidationOptions); err != nil {
+		return nil, err
+	}
 
 	// Calculate current indicators (based on latest 3-minute data)
 	currentPrice := klines3m[len(klines3m)-1].Close
@@ -120,7 +129,7 @@ func Get(req GetRequest) (*Data, error) {
 	// Fetch specific Perp data only for crypto
 	var oiData *OIData
 	var fundingRate float64
-	
+
 	if req.InstrumentType != "equity" {
 		// Fetch Open Interest data
 		oiData, err = getOpenInterestData(symbol)
@@ -156,6 +165,31 @@ func Get(req GetRequest) (*Data, error) {
 		IntradaySeries:    intradayData,
 		LongerTermContext: longerTermData,
 	}, nil
+}
+
+func validateBars(symbol, interval string, klines []Kline, expected int, opts dataquality.Options) error {
+	bars := make([]dataquality.Bar, 0, len(klines))
+	for _, k := range klines {
+		bars = append(bars, dataquality.Bar{
+			OpenTime:  k.OpenTime,
+			Open:      k.Open,
+			High:      k.High,
+			Low:       k.Low,
+			Close:     k.Close,
+			Volume:    k.Volume,
+			CloseTime: k.CloseTime,
+		})
+	}
+	options := opts
+	if options.Now.IsZero() {
+		options.Now = time.Now().UTC()
+	}
+	options.ExpectedBars = expected
+	result := dataquality.ValidateBars(symbol, interval, bars, options)
+	if result.Failed() {
+		return &dataquality.ValidationError{Result: result}
+	}
+	return nil
 }
 
 // calculateEMA computes Exponential Moving Average
@@ -504,7 +538,7 @@ func formatFloatSlice(values []float64) string {
 // Normalize binds limits tracking configurations values tracking bounds mapping limitations arrays limit array map maps arrays logic Map limitation maps arrays configurations arrays map parameters Tracking limits mappings parameters maps Maps
 func Normalize(symbol string, instrumentType string) string {
 	symbol = strings.ToUpper(strings.TrimSpace(symbol))
-	
+
 	if instrumentType == "equity" {
 		// Equity symbols typically don't need 'USDT' appended.
 		// Simply remove USDT if it somehow got in there.
@@ -513,7 +547,7 @@ func Normalize(symbol string, instrumentType string) string {
 		}
 		return symbol
 	}
-	
+
 	// Default crypto_perp behavior
 	if strings.HasSuffix(symbol, "USDT") {
 		return symbol

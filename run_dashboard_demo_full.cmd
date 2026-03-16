@@ -1,5 +1,6 @@
 @echo off
 setlocal
+set "NORTHSTAR_BIN=northstar.exe"
 
 echo =========================================================
 echo   Live Dashboard Demo Full Startup
@@ -15,7 +16,11 @@ if not exist config.demo.json (
 )
 
 echo [2/3] Starting backend window...
-start "Northstar Demo Backend" cmd /k "cd /d \"%~dp0\" && go run main.go config.demo.json"
+if exist "%NORTHSTAR_BIN%" (
+  start "Northstar Demo Backend" cmd /k "cd /d \"%~dp0\" && %NORTHSTAR_BIN% config.demo.json"
+) else (
+  start "Northstar Demo Backend" cmd /k "cd /d \"%~dp0\" && go run main.go config.demo.json"
+)
 
 echo [3/3] Starting frontend window...
 start "Northstar Demo Frontend" cmd /k "cd /d \"%~dp0web\" && npm run dev"

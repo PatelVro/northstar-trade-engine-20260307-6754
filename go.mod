@@ -1,4 +1,4 @@
-module aegistrade
+module northstar
 
 go 1.25.0
 

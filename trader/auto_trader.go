@@ -1,20 +1,29 @@
 package trader
 
 import (
-	"aegistrade/decision"
-	"aegistrade/logger"
-	"aegistrade/market"
-	"aegistrade/mcp"
-	"aegistrade/news"
-	"aegistrade/pool"
 	"encoding/json"
 	"fmt"
 	"log"
 	"math"
 	"math/rand"
+	"northstar/alerts"
+	"northstar/audit"
+	"northstar/decision"
+	"northstar/execution"
+	"northstar/incidents"
+	"northstar/logger"
+	"northstar/market"
+	"northstar/mcp"
+	"northstar/news"
+	"northstar/orders"
+	"northstar/pool"
+	"northstar/positions"
+	"northstar/risk"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -48,10 +57,18 @@ type AutoTraderConfig struct {
 	AlpacaPaperTrading bool
 
 	// Interactive Brokers Config
-	IBKRGatewayURL    string
-	IBKRAccountID     string
-	IBKRSessionCookie string
-	StrictLiveMode    bool
+	IBKRGatewayURL              string
+	IBKRAccountID               string
+	IBKRSessionCookie           string
+	StrictLiveMode              bool
+	LivePromotionApproved       bool
+	PromotionSourceTraderID     string
+	MinPaperSessionReports      int
+	RequireBacktestSummary      bool
+	RequireReleaseBuildForLive  bool
+	PromotionMaxEvidenceAgeDays int
+	EmergencyKillSwitch         bool
+	KillSwitchFile              string
 
 	CoinPoolAPIURL string
 
@@ -82,129 +99,186 @@ type AutoTraderConfig struct {
 	StopTradingTime time.Duration // Pause duration after triggering risk control
 
 	// Execution mode and data provider config
-	Mode                     string
-	DataProvider             string
-	Broker                   string
-	CSVDataDir               string
-	InstrumentType           string
-	BarsAdjustment           string
-	CandidateBatchSize       int
-	TrustedSymbolsFile       string
-	StrategyMode             string
-	MomentumMinScore         float64
-	FallbackPositionPct      float64
-	MinFactorScore           float64
-	RiskPerTradePct          float64
-	ProfitLockThreshold      float64
-	TrailingStopATRMult      float64
-	MaxHoldingCycles         int
-	MaxConcurrentPos         int
-	SymbolCooldownCycles     int
-	MaxGrossExposure         float64
-	MaxPositionPct           float64
-	MaxDailyLossPct          float64
-	MaxPairCorrelation       float64
-	MinLiquidityUSD          float64
-	MinDecisionConfidence    int
-	ExecutionCommissionBps   float64
-	ExecutionSlippageBps     float64
-	ExecutionImpactBps       float64
-	MaxParticipationRate     float64
-	DrawdownThrottleStartPct float64
-	DrawdownThrottleMinScale float64
-	MaxPortfolioHeatPct      float64
-	MaxNetExposurePct        float64
-	LossStreakPauseThreshold int
-	LossStreakPauseCycles    int
-	PerformanceRiskLookback  int
-	VolatilityBrakeTargetPct float64
-	VolatilityBrakeLookback  int
-	VolatilityBrakeMinScale  float64
-	KellyFractionCap         float64
-	KellyLookback            int
-	KellyMinTrades           int
-	MarketStressEntryBlock   float64
-	MarketStressRiskMinScale float64
-	UseNewsRisk              bool
-	EnableNewsInReplay       bool
-	NewsProvider             string
-	NewsLookbackMinutes      int
-	NewsRefreshSeconds       int
-	NewsMarketImpactThresh   float64
-	NewsSymbolImpactThresh   float64
-	NewsHardBlockThresh      float64
-	NewsMaxRiskReduction     float64
-	AllowShort               bool
-	UseMacroFilters          bool
-	DynamicPositionSizing    bool
-	RegimeRiskScaling        bool
-	BenchmarkSymbols         []string
-	MaxCycles                int
-	ReplayWarmupBars         int
+	Mode                                string
+	DataProvider                        string
+	Broker                              string
+	CSVDataDir                          string
+	InstrumentType                      string
+	BarsAdjustment                      string
+	CandidateBatchSize                  int
+	TrustedSymbolsFile                  string
+	StrategyMode                        string
+	MomentumMinScore                    float64
+	FallbackPositionPct                 float64
+	MinFactorScore                      float64
+	RiskPerTradePct                     float64
+	ProfitLockThreshold                 float64
+	TrailingStopATRMult                 float64
+	MaxHoldingCycles                    int
+	MaxConcurrentPos                    int
+	SymbolCooldownCycles                int
+	MaxGrossExposure                    float64
+	MaxPositionPct                      float64
+	MaxDailyLossPct                     float64
+	MaxPairCorrelation                  float64
+	MinLiquidityUSD                     float64
+	MinDecisionConfidence               int
+	ExecutionCommissionBps              float64
+	ExecutionSlippageBps                float64
+	ExecutionImpactBps                  float64
+	MaxParticipationRate                float64
+	DrawdownThrottleStartPct            float64
+	DrawdownThrottleMinScale            float64
+	MaxPortfolioHeatPct                 float64
+	MaxNetExposurePct                   float64
+	MaxSectorExposurePct                float64
+	MaxCorrelatedPositions              int
+	LossStreakPauseThreshold            int
+	LossStreakPauseCycles               int
+	PerformanceRiskLookback             int
+	VolatilityBrakeTargetPct            float64
+	VolatilityBrakeLookback             int
+	VolatilityBrakeMinScale             float64
+	KellyFractionCap                    float64
+	KellyLookback                       int
+	KellyMinTrades                      int
+	MarketStressEntryBlock              float64
+	MarketStressRiskMinScale            float64
+	MaxRuntimeDegradationsPerSession    int
+	MaxReconciliationFailuresPerSession int
+	MaxOrderRejectsPerSession           int
+	SupervisorReduceOnlyOnDrawdown      bool
+	SupervisorReduceOnlyOnDrawdownSet   bool
+	UseNewsRisk                         bool
+	EnableNewsInReplay                  bool
+	NewsProvider                        string
+	NewsLookbackMinutes                 int
+	NewsRefreshSeconds                  int
+	NewsMarketImpactThresh              float64
+	NewsSymbolImpactThresh              float64
+	NewsHardBlockThresh                 float64
+	NewsMaxRiskReduction                float64
+	AllowShort                          bool
+	UseMacroFilters                     bool
+	DynamicPositionSizing               bool
+	RegimeRiskScaling                   bool
+	BenchmarkSymbols                    []string
+	MaxCycles                           int
+	ReplayWarmupBars                    int
 }
 
 // AutoTrader The automatic trader engine
 type AutoTrader struct {
-	id                      string // Trader unique identifier
-	name                    string // Trader display name
-	aiModel                 string // AI model name
-	exchange                string // Exchange platform name
-	config                  AutoTraderConfig
-	trader                  Trader // Standardized trader interface
-	mcpClient               *mcp.Client
-	decisionLogger          *logger.DecisionLogger // Decision logger
-	initialBalance          float64
-	dailyPnL                float64
-	dailyStartEquity        float64
-	peakEquitySeen          float64
-	lastResetTime           time.Time
-	stopUntil               time.Time
-	isRunning               bool
-	startTime               time.Time        // System start time
-	callCount               int              // AI invocation cycle counter
-	positionFirstSeenTime   map[string]int64 // First appearance of positions (symbol_side -> ms timestamp)
-	positionEntryCycle      map[string]int
-	positionPeakPnLPct      map[string]float64
-	symbolCooldownUntil     map[string]int
-	symbolEdgeScore         map[string]float64
-	symbolTradeCount        map[string]int
-	openEntryBlockedUntil   int
-	consecutiveLossCloses   int
-	recentClosePnLPct       []float64
-	closePnLEMA             float64
-	recentEquity            []float64
-	latestMarketStress      float64
-	latestStressDispersion  float64
-	latestStressCorrelation float64
-	latestKellyScale        float64
-	latestNewsSentiment     float64
-	latestNewsImpact        float64
-	latestNewsScale         float64
-	lastNewsRefresh         time.Time
-	newsLastError           string
-	cachedNews              *news.Snapshot
-	newsProvider            news.Provider
-	newsCredibilityGlobal   float64
-	newsCredibility         map[string]float64
-	newsSampleCount         map[string]int
-	plannedNewsBias         map[string]float64
-	positionNewsBias        map[string]float64
-	lastNewsLearnDelta      float64
-	lastNewsLearnSymbol     string
-	newsMemoryPath          string
-	provider                market.BarsProvider // Injected data provider
-	candidateCursor         int
-	trustedSymbolSet        map[string]struct{}
-	demoMode                bool
-	demoRand                *rand.Rand
-	demoEquity              float64
-	demoAvailableBalance    float64
-	demoPositionCount       int
-	demoMarginUsedPct       float64
-	demoSnapshotSeed        int64
-	demoLastCycleTime       time.Time
-	replayInitialized       bool
-	backtestMode            bool
+	id                                    string // Trader unique identifier
+	name                                  string // Trader display name
+	aiModel                               string // AI model name
+	exchange                              string // Exchange platform name
+	config                                AutoTraderConfig
+	riskEngine                            *risk.Engine
+	executionManager                      *execution.Manager
+	auditRecorder                         *audit.Recorder
+	alertManager                          *alerts.Manager
+	incidentManager                       *incidents.Manager
+	trader                                Trader // Standardized trader interface
+	mcpClient                             *mcp.Client
+	decisionLogger                        *logger.DecisionLogger // Decision logger
+	initialBalance                        float64
+	strategyRealizedPnL                   float64
+	dailyPnL                              float64
+	dailyStartEquity                      float64
+	peakEquitySeen                        float64
+	lastResetTime                         time.Time
+	stopUntil                             time.Time
+	isRunning                             bool
+	startTime                             time.Time // System start time
+	callCount                             int       // AI invocation cycle counter
+	runDone                               chan struct{}
+	positionFirstSeenTime                 map[string]int64 // First appearance of positions (symbol_side -> ms timestamp)
+	positionEntryCycle                    map[string]int
+	positionPeakPnLPct                    map[string]float64
+	symbolCooldownUntil                   map[string]int
+	symbolEdgeScore                       map[string]float64
+	symbolTradeCount                      map[string]int
+	openEntryBlockedUntil                 int
+	consecutiveLossCloses                 int
+	recentClosePnLPct                     []float64
+	closePnLEMA                           float64
+	recentEquity                          []float64
+	latestMarketStress                    float64
+	latestStressDispersion                float64
+	latestStressCorrelation               float64
+	latestKellyScale                      float64
+	latestNewsSentiment                   float64
+	latestNewsImpact                      float64
+	latestNewsScale                       float64
+	lastNewsRefresh                       time.Time
+	newsLastError                         string
+	cachedNews                            *news.Snapshot
+	newsProvider                          news.Provider
+	newsCredibilityGlobal                 float64
+	newsCredibility                       map[string]float64
+	newsSampleCount                       map[string]int
+	plannedNewsBias                       map[string]float64
+	positionNewsBias                      map[string]float64
+	lastNewsLearnDelta                    float64
+	lastNewsLearnSymbol                   string
+	newsMemoryPath                        string
+	provider                              market.BarsProvider // Injected data provider
+	candidateCursor                       int
+	trustedSymbolSet                      map[string]struct{}
+	demoMode                              bool
+	demoRand                              *rand.Rand
+	demoEquity                            float64
+	demoAvailableBalance                  float64
+	demoPositionCount                     int
+	demoMarginUsedPct                     float64
+	demoSnapshotSeed                      int64
+	demoLastCycleTime                     time.Time
+	replayInitialized                     bool
+	backtestMode                          bool
+	readinessMu                           sync.RWMutex
+	readinessSummary                      ReadinessSummary
+	promotionMu                           sync.RWMutex
+	promotionSummary                      PromotionSummary
+	accountSummaryMu                      sync.RWMutex
+	lastAccountSummary                    *AccountSummary
+	riskSupervisorMu                      sync.RWMutex
+	riskSupervisor                        *risk.Supervisor
+	riskSupervisorState                   risk.SupervisorState
+	riskSupervisorSessionDay              string
+	riskSupervisorBrokerDegradationEvents int
+	riskSupervisorReconciliationFailures  int
+	riskSupervisorOrderRejects            int
+	strictLiveMu                          sync.RWMutex
+	strictLiveHealthy                     bool
+	strictLiveMessage                     string
+	strictLiveLastCheckedAt               time.Time
+	killSwitchMu                          sync.RWMutex
+	killSwitchState                       killSwitchSummary
+	dataQualityMu                         sync.RWMutex
+	dataQualityState                      dataQualityState
+	positionReconMu                       sync.RWMutex
+	positionReconSummary                  positionReconciliationSummary
+	localPositionSnapshots                map[string]positions.Snapshot
+	portfolioRiskMu                       sync.RWMutex
+	portfolioRiskState                    *portfolioRiskState
+	sessionReportMu                       sync.Mutex
+	sessionReportState                    *paperSessionTracker
+	lastSessionReportPath                 string
+	lastSessionReportAt                   time.Time
+	lastSessionReportStatus               string
+	brokerStateMu                         sync.RWMutex
+	brokerState                           BrokerRuntimeState
+	brokerStateReason                     string
+	brokerLastError                       string
+	brokerStateSince                      time.Time
+	brokerLastHealthyAt                   time.Time
+	brokerLastReconciledAt                time.Time
+	brokerReconnectAttempts               int
+	brokerNextRetryAt                     time.Time
+	brokerRecoveryActive                  bool
+	brokerLastStateLogKey                 string
+	brokerLastStateLogAt                  time.Time
 }
 
 // NewAutoTrader Creates a new automatic trader
@@ -306,6 +380,24 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 		if config.MaxNetExposurePct <= 0 || config.MaxNetExposurePct > 1.0 {
 			config.MaxNetExposurePct = 0.65
 		}
+		if config.MaxSectorExposurePct <= 0 || config.MaxSectorExposurePct > 1.0 {
+			config.MaxSectorExposurePct = 0.35
+		}
+		if config.MaxCorrelatedPositions <= 0 {
+			config.MaxCorrelatedPositions = 1
+		}
+		if config.MaxRuntimeDegradationsPerSession <= 0 {
+			config.MaxRuntimeDegradationsPerSession = 3
+		}
+		if config.MaxReconciliationFailuresPerSession <= 0 {
+			config.MaxReconciliationFailuresPerSession = 3
+		}
+		if config.MaxOrderRejectsPerSession <= 0 {
+			config.MaxOrderRejectsPerSession = 5
+		}
+		if !config.SupervisorReduceOnlyOnDrawdownSet {
+			config.SupervisorReduceOnlyOnDrawdown = true
+		}
 		if config.LossStreakPauseThreshold <= 0 {
 			config.LossStreakPauseThreshold = 3
 		}
@@ -369,6 +461,18 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 	}
 	if config.Mode == "replay" && config.ReplayWarmupBars <= 0 {
 		config.ReplayWarmupBars = 120
+	}
+	if config.MaxRuntimeDegradationsPerSession <= 0 {
+		config.MaxRuntimeDegradationsPerSession = 3
+	}
+	if config.MaxReconciliationFailuresPerSession <= 0 {
+		config.MaxReconciliationFailuresPerSession = 3
+	}
+	if config.MaxOrderRejectsPerSession <= 0 {
+		config.MaxOrderRejectsPerSession = 5
+	}
+	if !config.SupervisorReduceOnlyOnDrawdownSet {
+		config.SupervisorReduceOnlyOnDrawdown = true
 	}
 	if config.DemoMode {
 		if config.Mode == "" {
@@ -552,11 +656,22 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 	}
 
 	at := &AutoTrader{
-		id:                    config.ID,
-		name:                  config.Name,
-		aiModel:               config.AIModel,
-		exchange:              config.Exchange,
-		config:                config,
+		id:         config.ID,
+		name:       config.Name,
+		aiModel:    config.AIModel,
+		exchange:   config.Exchange,
+		config:     config,
+		riskEngine: risk.NewEngine(buildRiskConfig(config)),
+		executionManager: execution.NewManager(execution.Config{}),
+		auditRecorder: audit.NewRecorder(filepath.Join("output", "audit"), audit.Metadata{
+			TraderID:     config.ID,
+			TraderName:   config.Name,
+			Mode:         config.Mode,
+			Broker:       config.Broker,
+			StrategyMode: config.StrategyMode,
+		}),
+		alertManager:          newAlertManager(config),
+		incidentManager:       incidents.NewManager(config.ID),
 		trader:                trader,
 		mcpClient:             mcpClient,
 		decisionLogger:        decisionLogger,
@@ -592,12 +707,26 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 		demoPositionCount:     0,
 		demoMarginUsedPct:     0,
 	}
+	if observerSetter, ok := trader.(interface{ SetOrderObserver(orders.Observer) }); ok && at.auditRecorder != nil {
+		observerSetter.SetOrderObserver(at.auditRecorder)
+	}
+	if orderLookup, ok := trader.(execution.OrderLookup); ok && at.executionManager != nil {
+		at.executionManager.SetOrderLookup(orderLookup)
+	}
 
 	if at.newsProvider != nil && at.config.UseNewsRisk {
 		if err := at.loadNewsLearningState(); err != nil {
 			log.Printf(" [%s] News learning state unavailable: %v", config.Name, err)
 		}
 	}
+	at.initializeBrokerRuntimeState()
+	at.initializeReadinessSummary()
+	at.initializePromotionSummary()
+	at.initializeKillSwitchState()
+	at.initializeDataQualityState()
+	at.initializePositionReconciliationState()
+	at.initializeRiskSupervisorState()
+	at.restoreStrategyAccountingState()
 
 	return at, nil
 }
@@ -609,6 +738,10 @@ func (at *AutoTrader) Run() error {
 	}
 
 	at.isRunning = true
+	at.runDone = make(chan struct{})
+	defer close(at.runDone)
+	at.startPaperSessionReporting(time.Now())
+	defer at.finalizePaperSessionReport("run_exit")
 	log.Println(" AI-driven auto trading system started")
 	currency := "USDT"
 	if at.exchange == "ibkr" || at.exchange == "alpaca" {
@@ -623,6 +756,23 @@ func (at *AutoTrader) Run() error {
 	} else {
 		log.Println(" AI will have full control over leverage, position size, and stop/take profit parameters")
 	}
+	if err := at.waitForKillSwitchClear(); err != nil {
+		return err
+	}
+	at.startKillSwitchMonitor()
+	if err := at.waitForStartupReadiness(); err != nil {
+		return err
+	}
+	if err := at.waitForLivePromotionApproval(); err != nil {
+		return err
+	}
+	if err := at.waitForPositionReconciliationBootstrap(); err != nil {
+		return err
+	}
+	if err := at.waitForKillSwitchClear(); err != nil {
+		return err
+	}
+	at.startPositionReconciliationLoop()
 
 	for at.isRunning {
 		if err := at.runCycle(); err != nil {
@@ -647,6 +797,16 @@ func (at *AutoTrader) RunBacktest(maxCycles int) error {
 	at.backtestMode = true
 	defer func() { at.backtestMode = false }()
 	log.Printf(" Backtest mode started (%d cycles)", maxCycles)
+	if err := at.waitForKillSwitchClear(); err != nil {
+		at.isRunning = false
+		return err
+	}
+	summary := at.runReadinessChecks()
+	at.logReadinessSummary(summary)
+	if !summary.TradingAllowed {
+		at.isRunning = false
+		return fmt.Errorf("startup readiness blocked backtest start: %s", summary.Message)
+	}
 
 	for at.isRunning && at.callCount < maxCycles {
 		if err := at.runCycle(); err != nil {
@@ -662,12 +822,23 @@ func (at *AutoTrader) RunBacktest(maxCycles int) error {
 // Stop shuts down the auto trader
 func (at *AutoTrader) Stop() {
 	at.isRunning = false
+	done := at.runDone
 
 	type summarizer interface {
 		ExportSummary()
 	}
 	if s, ok := at.trader.(summarizer); ok {
 		s.ExportSummary()
+	}
+
+	if done != nil {
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			at.finalizePaperSessionReport("stop_timeout")
+		}
+	} else {
+		at.finalizePaperSessionReport("stop")
 	}
 
 	log.Println(" Auto trading system stopped")
@@ -807,24 +978,37 @@ func (at *AutoTrader) runDemoCycle() error {
 
 	totalPnL := at.demoEquity - at.initialBalance
 	at.dailyPnL = totalPnL
+	summary := at.buildDemoAccountSummary(positions)
 
 	record := &logger.DecisionRecord{
 		InputPrompt:  "Demo mode cycle: synthetic paper update",
 		CoTTrace:     "Demo mode is enabled. No live broker, market data, or AI API call was used in this cycle.",
 		DecisionJSON: "[]",
 		AccountState: logger.AccountSnapshot{
-			TotalBalance:          at.demoEquity,
-			AvailableBalance:      at.demoAvailableBalance,
-			TotalUnrealizedProfit: totalUnrealized,
-			PositionCount:         len(positions),
-			MarginUsedPct:         at.demoMarginUsedPct,
+			AccountingVersion:      summary.AccountingVersion,
+			AccountCash:            summary.AccountCash,
+			AccountEquity:          summary.AccountEquity,
+			AvailableBalance:       summary.AvailableBalance,
+			GrossMarketValue:       summary.GrossMarketValue,
+			UnrealizedPnL:          summary.UnrealizedPnL,
+			RealizedPnL:            summary.RealizedPnL,
+			TotalPnL:               summary.TotalPnL,
+			StrategyInitialCapital: summary.StrategyInitialCapital,
+			StrategyEquity:         summary.StrategyEquity,
+			StrategyReturnPct:      summary.StrategyReturnPct,
+			DailyPnL:               summary.DailyPnL,
+			PositionCount:          summary.PositionCount,
+			MarginUsed:             summary.MarginUsed,
+			MarginUsedPct:          summary.MarginUsedPct,
+			TotalBalance:           summary.AccountEquity,
+			TotalUnrealizedProfit:  summary.UnrealizedPnL,
 		},
 		Decisions:    []logger.DecisionAction{},
 		ExecutionLog: []string{fmt.Sprintf("demo cycle update: equity=%.2f pnl=%.2f delta=%.4f%%", at.demoEquity, totalPnL, changePct)},
 		Success:      true,
 	}
 
-	if err := at.decisionLogger.LogDecision(record); err != nil {
+	if err := at.logDecisionAndAudit(record, nil, nil); err != nil {
 		return fmt.Errorf("failed to write demo decision record: %w", err)
 	}
 
@@ -834,26 +1018,161 @@ func (at *AutoTrader) runDemoCycle() error {
 	return nil
 }
 
+func (at *AutoTrader) restoreStrategyAccountingState() {
+	records, err := at.decisionLogger.GetLatestRecords(1)
+	if err != nil || len(records) == 0 {
+		return
+	}
+	snapshot := records[len(records)-1].AccountState
+	if snapshot.AccountingVersion < accountingVersion {
+		return
+	}
+	at.strategyRealizedPnL = snapshot.RealizedPnL
+}
+
+func (at *AutoTrader) buildAccountSummaryFromRaw(balance map[string]interface{}, positions []map[string]interface{}) AccountSummary {
+	broker := normalizeBrokerAccount(balance, positions)
+	return buildAccountSummary(broker, at.initialBalance, at.strategyRealizedPnL, at.dailyPnL)
+}
+
+func (at *AutoTrader) buildDemoAccountSummary(positions []map[string]interface{}) AccountSummary {
+	grossMarketValue := 0.0
+	unrealizedPnL := 0.0
+	marginUsed := 0.0
+	for _, pos := range positions {
+		markPrice, _ := parseFloat(pos["mark_price"])
+		quantity, _ := parseFloat(pos["quantity"])
+		if quantity < 0 {
+			quantity = -quantity
+		}
+		grossMarketValue += markPrice * quantity
+		if pnl, ok := parseFloat(pos["unrealized_pnl"]); ok {
+			unrealizedPnL += pnl
+		}
+		if used, ok := parseFloat(pos["margin_used"]); ok {
+			marginUsed += used
+		}
+	}
+
+	accountCash := at.demoEquity - grossMarketValue - unrealizedPnL
+	if accountCash < 0 {
+		accountCash = 0
+	}
+	realizedPnL := (at.demoEquity - at.initialBalance) - unrealizedPnL
+	marginUsedPct := 0.0
+	if at.demoEquity > 0 {
+		marginUsedPct = (marginUsed / at.demoEquity) * 100.0
+	}
+
+	return buildAccountSummary(normalizedBrokerAccount{
+		AccountCash:      accountCash,
+		AvailableBalance: at.demoAvailableBalance,
+		AccountEquity:    at.demoEquity,
+		GrossMarketValue: grossMarketValue,
+		UnrealizedPnL:    unrealizedPnL,
+		RealizedPnL:      realizedPnL,
+		MarginUsed:       marginUsed,
+		MarginUsedPct:    marginUsedPct,
+		PositionCount:    len(positions),
+	}, at.initialBalance, realizedPnL, at.dailyPnL)
+}
+
+func (at *AutoTrader) applyActionAccountingMetadata(actionRecord *logger.DecisionAction, order map[string]interface{}) {
+	if actionRecord == nil || order == nil {
+		return
+	}
+	if localID := strings.TrimSpace(toString(firstPresent(order["localOrderId"], order["local_order_id"]))); localID != "" {
+		actionRecord.LocalOrderID = localID
+	}
+	if brokerOrderID := strings.TrimSpace(toString(firstPresent(order["brokerOrderId"], order["broker_order_id"], order["orderId"], order["order_id"], order["id"]))); brokerOrderID != "" {
+		actionRecord.BrokerOrderID = brokerOrderID
+		if numericOrderID, ok := parseFloat(brokerOrderID); ok {
+			actionRecord.OrderID = int64(numericOrderID)
+		}
+	}
+	if status := strings.TrimSpace(toString(firstPresent(order["status"], order["orderStatus"], order["order_status"]))); status != "" {
+		actionRecord.OrderStatus = status
+	}
+	if filledQty, ok := parseFloat(order["filled_qty"]); ok && filledQty > 0 {
+		actionRecord.Quantity = filledQty
+	}
+	if price, ok := parseFloat(order["price"]); ok && price > 0 {
+		actionRecord.Price = price
+	}
+	if fees, ok := parseFloat(order["fees"]); ok {
+		actionRecord.FeesUSD = fees
+	}
+	if pnl, ok := parseFloat(order["pnl"]); ok {
+		actionRecord.RealizedPnL = pnl
+	}
+}
+
+func positionActionKey(symbol, side string) string {
+	return strings.ToUpper(strings.TrimSpace(symbol)) + "_" + strings.ToLower(strings.TrimSpace(side))
+}
+
+func (at *AutoTrader) updateStrategyAccountingFromAction(actionRecord *logger.DecisionAction, positionsByKey map[string]decision.PositionInfo) {
+	if actionRecord == nil || !actionHasImmediatePositionEffect(*actionRecord) {
+		return
+	}
+
+	switch actionRecord.Action {
+	case "open_long", "open_short":
+		if actionRecord.FeesUSD != 0 {
+			at.strategyRealizedPnL -= actionRecord.FeesUSD
+		}
+	case "close_long", "close_short":
+		if actionRecord.RealizedPnL == 0 {
+			side := "long"
+			if actionRecord.Action == "close_short" {
+				side = "short"
+			}
+			pos, exists := positionsByKey[positionActionKey(actionRecord.Symbol, side)]
+			if !exists {
+				return
+			}
+			quantity := actionRecord.Quantity
+			if quantity <= 0 || quantity > pos.Quantity {
+				quantity = pos.Quantity
+			}
+			exitPrice := actionRecord.Price
+			if exitPrice <= 0 {
+				exitPrice = pos.MarkPrice
+			}
+			if side == "long" {
+				actionRecord.RealizedPnL = (exitPrice - pos.EntryPrice) * quantity
+			} else {
+				actionRecord.RealizedPnL = (pos.EntryPrice - exitPrice) * quantity
+			}
+			if actionRecord.FeesUSD != 0 {
+				actionRecord.RealizedPnL -= actionRecord.FeesUSD
+			}
+		}
+		at.strategyRealizedPnL += actionRecord.RealizedPnL
+	}
+}
+
 func (at *AutoTrader) runCycle() error {
 	if at.prepareReplayStep() {
 		return nil
 	}
+	at.ensurePaperSessionReportingForTime(time.Now())
+	at.recordPaperSessionCycleStart()
 	at.callCount++
 
 	log.Println("\n" + strings.Repeat("=", 70))
 	log.Printf(" %s - AI Decision cycle #%d", time.Now().Format("2006-01-02 15:04:05"), at.callCount)
 	log.Println(strings.Repeat("=", 70))
 
-	// 0. IBeam Authentication Circuit Breaker
-	if ibkrProv, ok := at.provider.(*market.IBKRProvider); ok {
-		if !ibkrProv.Client.IsAuthenticated() {
-			log.Printf(" IBKR Gateway disconnected. Pausing AI engine until IBeam automated login is active.")
-			return nil
-		}
-	}
-	if err := at.ensureIBKRLiveReady(); err != nil {
-		log.Printf(" strict_live_mode blocked this cycle: %v", err)
+	// 0. Independent supervisory risk gate
+	initialGate := at.currentTradingGateDecision(true, at.currentLatestAccountSummary())
+	if !initialGate.ExitsAllowed {
+		at.recordPaperSessionBlockedCycle(initialGate.BlockReason)
+		log.Printf(" risk supervisor gate active: %s", initialGate.Message)
 		return nil
+	}
+	if !initialGate.EntriesAllowed {
+		log.Printf(" risk supervisor mode=%s: existing exposure may be reduced, new entries are blocked", initialGate.Mode)
 	}
 
 	// Generate decision record
@@ -861,49 +1180,41 @@ func (at *AutoTrader) runCycle() error {
 		ExecutionLog: []string{},
 		Success:      true,
 	}
+	defer at.observePaperSessionDecisionRecord(record)
 
-	// 1. Check for trading suspensions
-	if time.Now().Before(at.stopUntil) {
-		remaining := at.stopUntil.Sub(time.Now())
-		log.Printf(" Risk control bounds active: trading paused, time remaining: %.0f minutes", remaining.Minutes())
-		record.Success = false
-		record.ErrorMessage = fmt.Sprintf("Risk control cooldown spanning %.0f minutes active", remaining.Minutes())
-		at.decisionLogger.LogDecision(record)
-		return nil
-	}
-
-	// 2. Daily P&L reset checkpoint
+	// 1. Daily P&L reset checkpoint
 	needsDailyReset := time.Since(at.lastResetTime) > 24*time.Hour
 
 	if at.demoMode {
 		return at.runDemoCycle()
 	}
 
-	// 3. Collect context mappings
+	// 2. Collect context mappings
 	ctx, err := at.buildTradingContext()
 	if err != nil {
+		err = at.handleIBKRRuntimeError("build_context", err)
 		record.Success = false
 		record.ErrorMessage = fmt.Sprintf("Failed to construct market trading context: %v", err)
-		at.decisionLogger.LogDecision(record)
+		_ = at.logDecisionAndAudit(record, nil, nil)
 		return fmt.Errorf("failed to construct market trading context limits configurations array bindings parameter: %w", err)
 	}
 	at.refreshPositionState(ctx.Positions)
-	if ctx.Account.TotalEquity > at.peakEquitySeen {
-		at.peakEquitySeen = ctx.Account.TotalEquity
+	if ctx.Account.StrategyEquity > at.peakEquitySeen {
+		at.peakEquitySeen = ctx.Account.StrategyEquity
 	}
 	if at.peakEquitySeen <= 0 {
-		at.peakEquitySeen = ctx.Account.TotalEquity
+		at.peakEquitySeen = ctx.Account.StrategyEquity
 	}
 	if needsDailyReset {
-		at.dailyStartEquity = ctx.Account.TotalEquity
+		at.dailyStartEquity = ctx.Account.StrategyEquity
 		at.dailyPnL = 0
 		at.lastResetTime = time.Now()
 		log.Println(" Daily P&L constraints reset")
 	} else {
 		if at.dailyStartEquity <= 0 {
-			at.dailyStartEquity = ctx.Account.TotalEquity
+			at.dailyStartEquity = ctx.Account.StrategyEquity
 		}
-		at.dailyPnL = ctx.Account.TotalEquity - at.dailyStartEquity
+		at.dailyPnL = ctx.Account.StrategyEquity - at.dailyStartEquity
 	}
 	if at.config.InstrumentType == "equity" && at.config.MaxDailyLossPct > 0 {
 		baseline := at.dailyStartEquity
@@ -912,24 +1223,63 @@ func (at *AutoTrader) runCycle() error {
 		}
 		dailyLossLimit := -baseline * at.config.MaxDailyLossPct
 		if at.dailyPnL <= dailyLossLimit {
-			at.stopUntil = time.Now().Add(at.config.StopTradingTime)
-			log.Printf(" Equity daily loss guard triggered: PnL %.2f <= %.2f. Trading paused until %s",
-				at.dailyPnL, dailyLossLimit, at.stopUntil.Format(time.RFC3339))
-			record.Success = false
-			record.ErrorMessage = fmt.Sprintf("daily loss guard triggered at %.2f (limit %.2f)", at.dailyPnL, dailyLossLimit)
-			_ = at.decisionLogger.LogDecision(record)
-			return nil
+			if at.stopUntil.Before(time.Now()) {
+				at.stopUntil = time.Now().Add(at.config.StopTradingTime)
+				at.alertDailyLossLimit(at.dailyPnL, dailyLossLimit, at.stopUntil)
+				log.Printf(" Equity daily loss guard triggered: PnL %.2f <= %.2f. Trading paused until %s",
+					at.dailyPnL, dailyLossLimit, at.stopUntil.Format(time.RFC3339))
+			}
 		}
 	}
-	at.recordEquityObservation(ctx.Account.TotalEquity)
+	postAccount := at.currentLatestAccountSummary()
+	if postAccount == nil {
+		postAccount = &AccountSummary{AccountingVersion: accountingVersion}
+	}
+	postAccount.AccountingVersion = accountingVersion
+	postAccount.AccountCash = ctx.Account.AccountCash
+	postAccount.AvailableBalance = ctx.Account.AvailableBalance
+	postAccount.AccountEquity = ctx.Account.AccountEquity
+	postAccount.GrossMarketValue = ctx.Account.GrossMarketValue
+	postAccount.UnrealizedPnL = ctx.Account.UnrealizedPnL
+	postAccount.RealizedPnL = ctx.Account.RealizedPnL
+	postAccount.TotalPnL = ctx.Account.TotalPnL
+	postAccount.StrategyInitialCapital = ctx.Account.StrategyInitialCapital
+	postAccount.StrategyEquity = ctx.Account.StrategyEquity
+	postAccount.StrategyReturnPct = ctx.Account.StrategyReturnPct
+	postAccount.DailyPnL = at.dailyPnL
+	postAccount.PositionCount = ctx.Account.PositionCount
+	postAccount.MarginUsed = ctx.Account.MarginUsed
+	postAccount.MarginUsedPct = ctx.Account.MarginUsedPct
+	at.setLatestAccountSummary(postAccount)
+	postAccount = at.currentLatestAccountSummary()
+	postGate := at.currentTradingGateDecision(false, postAccount)
+	if !postGate.ExitsAllowed {
+		at.recordPaperSessionBlockedCycle(postGate.BlockReason)
+		record.Success = false
+		record.ErrorMessage = postGate.BlockReason
+		_ = at.logDecisionAndAudit(record, ctx, nil)
+		return nil
+	}
+	at.recordEquityObservation(ctx.Account.StrategyEquity)
 
-	// Snapshot configurations mapping constraints Map Limits Tracking strings arrays parameters Array limitation logic tracking maps limits Map strings arrays Tracking Tracking permutations mapping Strings mapping lists values Tracker bounds Map variables Map map variations arrays constraints Limits arrays MAP Array combinations tracking array array arrays limitations parameters limitations limitation limitations Tracking Array Maps values Maps map Limit variations string mapping targets
 	record.AccountState = logger.AccountSnapshot{
-		TotalBalance:          ctx.Account.TotalEquity,
-		AvailableBalance:      ctx.Account.AvailableBalance,
-		TotalUnrealizedProfit: ctx.Account.TotalPnL,
-		PositionCount:         ctx.Account.PositionCount,
-		MarginUsedPct:         ctx.Account.MarginUsedPct,
+		AccountingVersion:      accountingVersion,
+		AccountCash:            ctx.Account.AccountCash,
+		AccountEquity:          ctx.Account.AccountEquity,
+		AvailableBalance:       ctx.Account.AvailableBalance,
+		GrossMarketValue:       ctx.Account.GrossMarketValue,
+		UnrealizedPnL:          ctx.Account.UnrealizedPnL,
+		RealizedPnL:            ctx.Account.RealizedPnL,
+		TotalPnL:               ctx.Account.TotalPnL,
+		StrategyInitialCapital: ctx.Account.StrategyInitialCapital,
+		StrategyEquity:         ctx.Account.StrategyEquity,
+		StrategyReturnPct:      ctx.Account.StrategyReturnPct,
+		DailyPnL:               at.dailyPnL,
+		PositionCount:          ctx.Account.PositionCount,
+		MarginUsed:             ctx.Account.MarginUsed,
+		MarginUsedPct:          ctx.Account.MarginUsedPct,
+		TotalBalance:           ctx.Account.AccountEquity,
+		TotalUnrealizedProfit:  ctx.Account.UnrealizedPnL,
 	}
 
 	// Save Strings Limit Tracker
@@ -956,8 +1306,11 @@ func (at *AutoTrader) runCycle() error {
 		currency = "$"
 	}
 
-	log.Printf(" Account equity: %.2f %s | available: %.2f %s | Positions: %d",
-		ctx.Account.TotalEquity, currency, ctx.Account.AvailableBalance, currency, ctx.Account.PositionCount)
+	log.Printf(" Broker equity: %.2f %s | strategy equity: %.2f %s | total P&L: %.2f %s | Positions: %d",
+		ctx.Account.AccountEquity, currency,
+		ctx.Account.StrategyEquity, currency,
+		ctx.Account.TotalPnL, currency,
+		ctx.Account.PositionCount)
 
 	// 4. Request decision logic
 	log.Println(" Requesting decision analysis...")
@@ -974,6 +1327,7 @@ func (at *AutoTrader) runCycle() error {
 	}
 
 	if err != nil {
+		err = at.handleIBKRRuntimeError("decision_generation", err)
 		record.Success = false
 		record.ErrorMessage = fmt.Sprintf("AI string array targeting Map array MAP maps limitations array configurations constraints limitation: %v", err)
 
@@ -986,7 +1340,7 @@ func (at *AutoTrader) runCycle() error {
 			log.Println(strings.Repeat("-", 70))
 		}
 
-		at.decisionLogger.LogDecision(record)
+		_ = at.logDecisionAndAudit(record, ctx, nil)
 		return fmt.Errorf("AI strings Array Map constraints maps Logic variables tracking maps limitations Array Mapping Parameters tracking Targeting limitations parameters MAP limitations MAP target MAP strings maps map limitation tracking loops mapping limits limit limitations bounds Mapping: %w", err)
 	}
 
@@ -1022,10 +1376,12 @@ func (at *AutoTrader) runCycle() error {
 	// 7. Tracker mapping Tracker map Strings limitation Tracking String Map tracking String LIMIT
 	sortedDecisions := sortDecisionsByPriority(fullDecision.Decisions)
 	positionPnLPctByKey := make(map[string]float64, len(ctx.Positions))
+	positionsByKey := make(map[string]decision.PositionInfo, len(ctx.Positions))
 	for _, pos := range ctx.Positions {
-		key := strings.ToUpper(strings.TrimSpace(pos.Symbol)) + "_" + strings.ToLower(strings.TrimSpace(pos.Side))
+		key := positionActionKey(pos.Symbol, pos.Side)
 		if key != "_" {
 			positionPnLPctByKey[key] = pos.UnrealizedPnLPct
+			positionsByKey[key] = pos
 		}
 	}
 
@@ -1038,21 +1394,33 @@ func (at *AutoTrader) runCycle() error {
 	// Tracker mapping string strings Array variables Target limit tracking limits Maps Limit String Variables mapping limits LIMIT tracking values tracking Array Tracking Target tracking Map Arrays limitations Tracker MAP parameters
 	for _, d := range sortedDecisions {
 		actionRecord := logger.DecisionAction{
-			Action:    d.Action,
-			Symbol:    d.Symbol,
-			Quantity:  0,
-			Leverage:  d.Leverage,
-			Price:     0,
-			Timestamp: time.Now(),
-			Success:   false,
+			Action:               d.Action,
+			Symbol:               d.Symbol,
+			DecisionReasoning:    d.Reasoning,
+			DecisionConfidence:   d.Confidence,
+			DecisionPositionSize: d.PositionSizeUSD,
+			DecisionStopLoss:     d.StopLoss,
+			DecisionTakeProfit:   d.TakeProfit,
+			Quantity:             0,
+			Leverage:             d.Leverage,
+			Price:                0,
+			Timestamp:            time.Now(),
+			Success:              false,
 		}
 
 		if err := at.executeDecisionWithRecord(&d, &actionRecord); err != nil {
 			log.Printf(" Decision execution failed (%s %s): %v", d.Symbol, d.Action, err)
 			actionRecord.Error = err.Error()
+			if strings.TrimSpace(actionRecord.RiskSummary) != "" {
+				record.ExecutionLog = append(record.ExecutionLog, fmt.Sprintf(" risk %s %s", d.Symbol, actionRecord.RiskSummary))
+			}
 			record.ExecutionLog = append(record.ExecutionLog, fmt.Sprintf(" %s %s limit Mapping limitations map tracking Map limit: %v", d.Symbol, d.Action, err))
 		} else {
 			actionRecord.Success = true
+			at.updateStrategyAccountingFromAction(&actionRecord, positionsByKey)
+			if strings.TrimSpace(actionRecord.RiskSummary) != "" {
+				record.ExecutionLog = append(record.ExecutionLog, fmt.Sprintf(" risk %s %s", d.Symbol, actionRecord.RiskSummary))
+			}
 			record.ExecutionLog = append(record.ExecutionLog, fmt.Sprintf(" %s %s target Array limit logic Map limitations parameter Strings values configurations tracking String string combinations limit maps", d.Symbol, d.Action))
 			// Strings Strings limitations Target limit limitations parameters
 			if !strings.EqualFold(at.config.Mode, "replay") {
@@ -1067,7 +1435,7 @@ func (at *AutoTrader) runCycle() error {
 	at.updateClosePerformanceFromActions(record.Decisions, positionPnLPctByKey)
 
 	// 8. String Tracking string limits map Map Maps Mapping
-	if err := at.decisionLogger.LogDecision(record); err != nil {
+	if err := at.logDecisionAndAudit(record, ctx, fullDecision); err != nil {
 		log.Printf(" Failed to save decision record strings tracking permutations limits Limits Mapping string Maps tracking : %v", err)
 	}
 
@@ -1165,12 +1533,7 @@ func (at *AutoTrader) loadMomentumMarketData(ctx *decision.Context) error {
 	}
 
 	for _, symbol := range loadOrder {
-		data, err := market.Get(market.GetRequest{
-			Symbol:         symbol,
-			Provider:       at.provider,
-			InstrumentType: at.config.InstrumentType,
-			BarsAdjustment: at.config.BarsAdjustment,
-		})
+		data, err := at.getValidatedMarketData(symbol)
 		if err != nil {
 			continue
 		}
@@ -1247,38 +1610,21 @@ func (at *AutoTrader) buildMomentumOnlyDecision(ctx *decision.Context) *decision
 
 // buildTradingContext Tracking tracking Target limitations limits Variable combinations strings Variables arrays Tracking MAP parameters strings mapping mapping string Maps List mapping Target configurations Mapping Variable lists permutations limit MAP limitations Maps maps Targeting limitations Limit strings
 func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
-	// 1. Array Limit mapping MAP boundaries strings limit variables arrays String targets limitations configurations Maps arrays
+	// 1. Load broker state and current positions first so account metrics are derived from one snapshot.
 	balance, err := at.trader.GetBalance()
 	if err != nil {
 		return nil, fmt.Errorf("variables Strings Map tracking string Arrays Arrays Maps String map mapping string Target mapping arrays limits Mapping %w", err)
 	}
-
-	// Map map variables map targeting loops array Mapping
-	totalWalletBalance := 0.0
-	totalUnrealizedProfit := 0.0
-	availableBalance := 0.0
-
-	if wallet, ok := balance["totalWalletBalance"].(float64); ok {
-		totalWalletBalance = wallet
-	}
-	if unrealized, ok := balance["totalUnrealizedProfit"].(float64); ok {
-		totalUnrealizedProfit = unrealized
-	}
-	if avail, ok := balance["availableBalance"].(float64); ok {
-		availableBalance = avail
-	}
-
-	// Total Equity = strings Logic Variable List mapping Target limitations permutations
-	totalEquity := totalWalletBalance + totalUnrealizedProfit
 
 	// 2. Logic List Tracking Maps constraints Strings mapping lists Tracking tracker Targeting Matrix Array Map Map MAP MAP Tracking limits limitations Target limit array Target Tracker mapping
 	positions, err := at.trader.GetPositions()
 	if err != nil {
 		return nil, fmt.Errorf("tracking limits permutations Maps Tracking Limit parameters array parameters: %w", err)
 	}
+	summary := at.buildAccountSummaryFromRaw(balance, positions)
+	at.setLatestAccountSummary(&summary)
 
 	var positionInfos []decision.PositionInfo
-	totalMarginUsed := 0.0
 
 	// Tracking Mapping Tracking map Limit combinations Target limit String limitations Maps limitations Maps maps Tracking map Array Tracking mapping Target arrays limitation parameter
 	currentPositionKeys := make(map[string]bool)
@@ -1301,7 +1647,6 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 			leverage = int(lev)
 		}
 		marginUsed := (quantity * markPrice) / float64(leverage)
-		totalMarginUsed += marginUsed
 
 		// Tracker String combinations target array Maps Variables tracking Strings maps array string string Variables permutations Limit Map Mapping Tracker map String targeting Strings MAP Object limitations map Map Mapping Limits Tracker Array limitations variations targeting variables combinations Strings Targets maps Map limitation map parameters String Variables Maps Strings map limits Limits map Targeting Tracking Limit mapping Tracker Limits mapping Tracker combinations tracking Limit Object limit
 		pnlPct := 0.0
@@ -1395,18 +1740,6 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 		})
 	}
 
-	// 4. MAP Limits Limit Map tracking Variables Tracker Lists tracking map Limit map tracking strings MAP Limit Map tracking
-	totalPnL := totalEquity - at.initialBalance
-	totalPnLPct := 0.0
-	if at.initialBalance > 0 {
-		totalPnLPct = (totalPnL / at.initialBalance) * 100
-	}
-
-	marginUsedPct := 0.0
-	if totalEquity > 0 {
-		marginUsedPct = (totalMarginUsed / totalEquity) * 100
-	}
-
 	// 5. String strings Array Tracking mapping constraints limitations limits Array Targeting variables tracking string Limitations Arrays Strings strings Map Target MAP Target Tracker Limits Variables Mapping logic arrays Limit map Array variations Map Tracking Map Object strings limits limitation constraints LIMIT arrays
 	// Limitations maps Tracking Variables Tracker limitation Strings Target MAP Array variables target Variables Map Tracking Tracker tracking maps configurations Mapping Maps parameter Tracking Maps limitations tracking strings Array array variables array
 	performance, err := at.decisionLogger.AnalyzePerformance(100)
@@ -1424,22 +1757,30 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 		BTCETHLeverage:  at.config.BTCETHLeverage,  // Limit Mapper Parameter arrays Limit
 		AltcoinLeverage: at.config.AltcoinLeverage, // permutations variations strings combinations Arrays
 		Account: decision.AccountInfo{
-			TotalEquity:      totalEquity,
-			AvailableBalance: availableBalance,
-			TotalPnL:         totalPnL,
-			TotalPnLPct:      totalPnLPct,
-			MarginUsed:       totalMarginUsed,
-			MarginUsedPct:    marginUsedPct,
-			PositionCount:    len(positionInfos),
+			AccountCash:            summary.AccountCash,
+			AccountEquity:          summary.AccountEquity,
+			AvailableBalance:       summary.AvailableBalance,
+			GrossMarketValue:       summary.GrossMarketValue,
+			UnrealizedPnL:          summary.UnrealizedPnL,
+			RealizedPnL:            summary.RealizedPnL,
+			TotalPnL:               summary.TotalPnL,
+			StrategyInitialCapital: summary.StrategyInitialCapital,
+			StrategyEquity:         summary.StrategyEquity,
+			StrategyReturnPct:      summary.StrategyReturnPct,
+			MarginUsed:             summary.MarginUsed,
+			MarginUsedPct:          summary.MarginUsedPct,
+			PositionCount:          len(positionInfos),
 		},
 		Positions:      positionInfos,
 		CandidateCoins: candidateCoins,
 		Performance:    performance, // Lists arrays Target limits strings
 
-		Provider:       at.provider,
-		InstrumentType: at.config.InstrumentType,
-		BarsAdjustment: at.config.BarsAdjustment,
-		IsReplay:       at.config.Mode == "replay",
+		Provider:              at.provider,
+		InstrumentType:        at.config.InstrumentType,
+		BarsAdjustment:        at.config.BarsAdjustment,
+		IsReplay:              at.config.Mode == "replay",
+		DataValidationOptions: at.currentDataValidationOptions(),
+		DataQualityObserver:   at.observeDataQualityEvent,
 	}
 
 	return ctx, nil
@@ -1447,35 +1788,115 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 
 // executeDecisionWithRecord MAP Lists lists Arrays targets Tracker Array string maps Limit map permutations Mapper targeting strings limitations arrays map Limit LIMIT Maps Tracking
 func (at *AutoTrader) executeDecisionWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction) error {
+	var preTrade *preTradeRiskContext
 	if decision.Action != "hold" && decision.Action != "wait" {
-		if err := at.ensureIBKRLiveReady(); err != nil {
-			return fmt.Errorf("strict_live_mode blocked order execution: %w", err)
+		riskCtx, err := at.evaluatePreTradeRisk(decision)
+		if err != nil {
+			return at.handleIBKRRuntimeError("risk_"+decision.Action, err)
+		}
+		preTrade = riskCtx
+		at.applyRiskEvaluation(actionRecord, riskCtx.evaluation)
+		logRiskEvaluation(decision.Symbol, riskCtx.evaluation)
+		if riskCtx.evaluation.Outcome == risk.OutcomeReject {
+			return fmt.Errorf("risk engine rejected %s %s: %s", decision.Symbol, decision.Action, riskCtx.evaluation.Summary)
 		}
 	}
 
+	var err error
 	switch decision.Action {
 	case "open_long":
-		return at.executeOpenLongWithRecord(decision, actionRecord)
+		err = at.executeOpenLongWithRecord(decision, actionRecord, preTrade)
 	case "open_short":
-		return at.executeOpenShortWithRecord(decision, actionRecord)
+		err = at.executeOpenShortWithRecord(decision, actionRecord, preTrade)
 	case "close_long":
-		return at.executeCloseLongWithRecord(decision, actionRecord)
+		err = at.executeCloseLongWithRecord(decision, actionRecord, preTrade)
 	case "close_short":
-		return at.executeCloseShortWithRecord(decision, actionRecord)
+		err = at.executeCloseShortWithRecord(decision, actionRecord, preTrade)
 	case "hold", "wait":
-		// Limits target strings MAP configurations Target Tracker limitations parameter Limit Limit
 		return nil
 	default:
 		return fmt.Errorf("variables strings MAP MAP Target Tracking limitations variables Limit configurations tracking Limit tracking strings: %s", decision.Action)
 	}
+	if strings.EqualFold(strings.TrimSpace(actionRecord.OrderStatus), string(execution.StatusRejected)) {
+		at.observeRiskSupervisorOrderReject()
+	}
+	if err == nil {
+		return nil
+	}
+	status := strings.ToLower(strings.TrimSpace(actionRecord.OrderStatus))
+	switch execution.Status(status) {
+	case execution.StatusFailed:
+		return at.handleIBKRRuntimeError("execute_"+decision.Action, err)
+	case execution.StatusBlocked, execution.StatusDuplicateSuppressed, execution.StatusRejected, execution.StatusStale, execution.StatusCancelled:
+		return err
+	}
+	if isTrackedExecutionStatus(actionRecord.OrderStatus) {
+		return err
+	}
+	return at.handleIBKRRuntimeError("execute_"+decision.Action, err)
+}
+
+func (at *AutoTrader) cappedEntryNotional(requested float64) float64 {
+	notional := requested
+	if notional <= 0 {
+		return 0
+	}
+
+	equityCap := at.initialBalance
+	available := 0.0
+	if bal, err := at.trader.GetBalance(); err == nil {
+		if positions, posErr := at.trader.GetPositions(); posErr == nil {
+			summary := at.buildAccountSummaryFromRaw(bal, positions)
+			available = summary.AvailableBalance
+			if sizingEquity := summary.DecisionSizingEquity(); sizingEquity > 0 && (equityCap <= 0 || sizingEquity < equityCap) {
+				equityCap = sizingEquity
+			}
+		} else if v, ok := parseFloat(bal["availableBalance"]); ok {
+			available = v
+		}
+	}
+
+	if equityCap <= 0 {
+		equityCap = at.initialBalance
+	}
+	if equityCap <= 0 {
+		return notional
+	}
+
+	maxPositionPct := at.config.MaxPositionPct
+	if maxPositionPct <= 0 {
+		maxPositionPct = 0.20
+	}
+
+	maxNotional := equityCap * maxPositionPct
+	if maxNotional > 0 && notional > maxNotional {
+		log.Printf(" Entry notional cap applied: requested %.2f -> %.2f", notional, maxNotional)
+		notional = maxNotional
+	}
+
+	if available > 0 {
+		availCap := available * 0.95
+		if notional > availCap {
+			log.Printf(" Available-balance cap applied: requested %.2f -> %.2f", notional, availCap)
+			notional = availCap
+		}
+	}
+
+	return notional
 }
 
 // executeOpenLongWithRecord Strings map String mapping Map arrays Limit strings variables Mapping LIMIT MAP String string string arrays Mapper array mapping targets array Target tracking Limit values Map Mapping strings Tracker strings Target Mapping MAP
-func (at *AutoTrader) executeOpenLongWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction) error {
+func (at *AutoTrader) executeOpenLongWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction, preTrade *preTradeRiskContext) error {
 	log.Printf("   Open long: %s", decision.Symbol)
 
 	//  Target variables tracker Object Map Array combinations Variables Object limits Variables Maps limitation List Tracking String map limit MAP Tracker
-	positions, err := at.trader.GetPositions()
+	positions := []map[string]interface{}{}
+	var err error
+	if preTrade != nil && len(preTrade.positions) > 0 {
+		positions = preTrade.positions
+	} else {
+		positions, err = at.trader.GetPositions()
+	}
 	if err == nil {
 		for _, pos := range positions {
 			if pos["symbol"] == decision.Symbol && pos["side"] == "long" {
@@ -1485,55 +1906,75 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *decision.Decision, act
 	}
 
 	// Maps Maps parameter mapping Limits
-	marketData, err := market.Get(market.GetRequest{
-		Symbol:         decision.Symbol,
-		Provider:       at.provider,
-		InstrumentType: at.config.InstrumentType,
-		BarsAdjustment: at.config.BarsAdjustment,
-	})
-	if err != nil {
-		return err
+	marketData := (*market.Data)(nil)
+	if preTrade != nil && preTrade.marketData != nil {
+		marketData = preTrade.marketData
+	} else {
+		marketData, err = at.getValidatedMarketData(decision.Symbol)
+		if err != nil {
+			return err
+		}
 	}
 
-	// combinations Limit Tracking Maps Map maps Strings Matrix Tracker arrays Limits values Map
-	quantity := decision.PositionSizeUSD / marketData.CurrentPrice
+	approvedNotional := decision.PositionSizeUSD
+	quantity := 0.0
+	if preTrade != nil {
+		if preTrade.evaluation.ApprovedNotional > 0 {
+			approvedNotional = preTrade.evaluation.ApprovedNotional
+		}
+		if preTrade.evaluation.ApprovedQuantity > 0 {
+			quantity = preTrade.evaluation.ApprovedQuantity
+		}
+	}
+	if approvedNotional <= 0 {
+		return fmt.Errorf("invalid approved notional %.2f for %s", approvedNotional, decision.Symbol)
+	}
+	if quantity <= 0 && marketData.CurrentPrice > 0 {
+		quantity = approvedNotional / marketData.CurrentPrice
+	}
+	if approvedNotional < marketData.CurrentPrice {
+		return fmt.Errorf("approved notional %.2f is below one share price %.2f for %s", approvedNotional, marketData.CurrentPrice, decision.Symbol)
+	}
 	actionRecord.Quantity = quantity
 	actionRecord.Price = marketData.CurrentPrice
 
 	// Mapping Map Maps arrays Target LIMIT Limit Target Strings arrays Map arrays constraints tracking Mapping logic Map tracking Target tracking targeting Target map limitations Maps combinations
-	order, err := at.trader.OpenLong(decision.Symbol, quantity, decision.Leverage)
+	result, err := at.submitExecutionIntent(decision, actionRecord, quantity)
 	if err != nil {
 		return err
 	}
 
-	// Limit array String Tracking parameters Limit Mapper variations Map map mapping Variables
-	if orderID, ok := order["orderId"].(int64); ok {
-		actionRecord.OrderID = orderID
-	}
+	log.Printf("   Execution accepted for %s long entry, status=%s, broker_order_id=%s, quantity=%.4f", decision.Symbol, result.Status, result.BrokerOrderID, actionRecord.Quantity)
 
-	log.Printf("   Position opened successfully, OrderID: %v, quantity: %.4f", order["orderId"], quantity)
+	if executionStatusHasImmediateFill(actionRecord.OrderStatus) {
+		posKey := decision.Symbol + "_long"
+		at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
 
-	// String limitations map limits List Limit limits Maps Strings limitation targets Array
-	posKey := decision.Symbol + "_long"
-	at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
-
-	// strings Maps Limit mapping String mapping Lists Variables Variables maps Tracker maps LIMIT limitations Map Arrays variations
-	if err := at.trader.SetStopLoss(decision.Symbol, "LONG", quantity, decision.StopLoss); err != nil {
-		log.Printf("   Failed to set stop loss limitations: %v", err)
-	}
-	if err := at.trader.SetTakeProfit(decision.Symbol, "LONG", quantity, decision.TakeProfit); err != nil {
-		log.Printf("   Failed to set take profit limitations: %v", err)
+		if err := at.trader.SetStopLoss(decision.Symbol, "LONG", actionRecord.Quantity, decision.StopLoss); err != nil {
+			log.Printf("   Failed to set stop loss limitations: %v", err)
+		}
+		if err := at.trader.SetTakeProfit(decision.Symbol, "LONG", actionRecord.Quantity, decision.TakeProfit); err != nil {
+			log.Printf("   Failed to set take profit limitations: %v", err)
+		}
+	} else {
+		log.Printf("   Skipping protective order setup for %s until execution is filled; current status=%s", decision.Symbol, result.Status)
 	}
 
 	return nil
 }
 
 // executeOpenShortWithRecord maps String Values Map Map arrays Maps limitations Mapper Limit Variable Tracker arrays MAP
-func (at *AutoTrader) executeOpenShortWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction) error {
+func (at *AutoTrader) executeOpenShortWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction, preTrade *preTradeRiskContext) error {
 	log.Printf("   Open short: %s", decision.Symbol)
 
 	//  List tracking Arrays Limit Mapping List Mapping strings limits Matrix Logic Map tracking arrays Map String Arrays Maps combinations limits maps limitations limitations tracking Limit LIMIT Tracking
-	positions, err := at.trader.GetPositions()
+	positions := []map[string]interface{}{}
+	var err error
+	if preTrade != nil && len(preTrade.positions) > 0 {
+		positions = preTrade.positions
+	} else {
+		positions, err = at.trader.GetPositions()
+	}
 	if err == nil {
 		for _, pos := range positions {
 			if pos["symbol"] == decision.Symbol && pos["side"] == "short" {
@@ -1543,108 +1984,124 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *decision.Decision, ac
 	}
 
 	// Strings mapping Map Limit strings MAP arrays
-	marketData, err := market.Get(market.GetRequest{
-		Symbol:         decision.Symbol,
-		Provider:       at.provider,
-		InstrumentType: at.config.InstrumentType,
-		BarsAdjustment: at.config.BarsAdjustment,
-	})
-	if err != nil {
-		return err
+	marketData := (*market.Data)(nil)
+	if preTrade != nil && preTrade.marketData != nil {
+		marketData = preTrade.marketData
+	} else {
+		marketData, err = at.getValidatedMarketData(decision.Symbol)
+		if err != nil {
+			return err
+		}
 	}
 
-	// Tracking mapping
-	quantity := decision.PositionSizeUSD / marketData.CurrentPrice
+	approvedNotional := decision.PositionSizeUSD
+	quantity := 0.0
+	if preTrade != nil {
+		if preTrade.evaluation.ApprovedNotional > 0 {
+			approvedNotional = preTrade.evaluation.ApprovedNotional
+		}
+		if preTrade.evaluation.ApprovedQuantity > 0 {
+			quantity = preTrade.evaluation.ApprovedQuantity
+		}
+	}
+	if approvedNotional <= 0 {
+		return fmt.Errorf("invalid approved notional %.2f for %s", approvedNotional, decision.Symbol)
+	}
+	if quantity <= 0 && marketData.CurrentPrice > 0 {
+		quantity = approvedNotional / marketData.CurrentPrice
+	}
+	if approvedNotional < marketData.CurrentPrice {
+		return fmt.Errorf("approved notional %.2f is below one share price %.2f for %s", approvedNotional, marketData.CurrentPrice, decision.Symbol)
+	}
 	actionRecord.Quantity = quantity
 	actionRecord.Price = marketData.CurrentPrice
 
 	// Map combinations Array Mapper Limit
-	order, err := at.trader.OpenShort(decision.Symbol, quantity, decision.Leverage)
+	result, err := at.submitExecutionIntent(decision, actionRecord, quantity)
 	if err != nil {
 		return err
 	}
 
-	// Limit Mapper String Array string Strings limitation maps Logic MAP arrays map Map Tracker variables Object variations Array MAP maps
-	if orderID, ok := order["orderId"].(int64); ok {
-		actionRecord.OrderID = orderID
-	}
+	log.Printf("   Execution accepted for %s short entry, status=%s, broker_order_id=%s, quantity=%.4f", decision.Symbol, result.Status, result.BrokerOrderID, actionRecord.Quantity)
 
-	log.Printf("   Position opened successfully, OrderID: %v, quantity: %.4f", order["orderId"], quantity)
+	if executionStatusHasImmediateFill(actionRecord.OrderStatus) {
+		posKey := decision.Symbol + "_short"
+		at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
 
-	// arrays Limitations Variables constraints Maps Arrays Tracking Mapping mapping Limits limits Map map Object Lists strings tracking Targeting Variables map map Array combinations
-	posKey := decision.Symbol + "_short"
-	at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
-
-	// Strings Map limitations Strings arrays
-	if err := at.trader.SetStopLoss(decision.Symbol, "SHORT", quantity, decision.StopLoss); err != nil {
-		log.Printf("   Failed to set stop loss maps lists Mapper Target Maps parameters Variables limitations Mapping strings Target configurations arrays map Arrays array Map strings limitations maps strings bounds combinations: %v", err)
-	}
-	if err := at.trader.SetTakeProfit(decision.Symbol, "SHORT", quantity, decision.TakeProfit); err != nil {
-		log.Printf("   Failed to set take profit parameter: %v", err)
+		if err := at.trader.SetStopLoss(decision.Symbol, "SHORT", actionRecord.Quantity, decision.StopLoss); err != nil {
+			log.Printf("   Failed to set stop loss maps lists Mapper Target Maps parameters Variables limitations Mapping strings Target configurations arrays map Arrays array Map strings limitations maps strings bounds combinations: %v", err)
+		}
+		if err := at.trader.SetTakeProfit(decision.Symbol, "SHORT", actionRecord.Quantity, decision.TakeProfit); err != nil {
+			log.Printf("   Failed to set take profit parameter: %v", err)
+		}
+	} else {
+		log.Printf("   Skipping protective order setup for %s until execution is filled; current status=%s", decision.Symbol, result.Status)
 	}
 
 	return nil
 }
 
 // executeCloseLongWithRecord Maps Matrix tracking limit strings bounds tracking limits Limitation Maps Mapping variables parameters Arrays limit Target Tracker map Mapper Target Tracker limits bounds array tracking constraints
-func (at *AutoTrader) executeCloseLongWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction) error {
+func (at *AutoTrader) executeCloseLongWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction, preTrade *preTradeRiskContext) error {
 	log.Printf("   Close long: %s", decision.Symbol)
 
 	// array List Parameter maps parameters strings String Tracker Map Array Mapper strings
-	marketData, err := market.Get(market.GetRequest{
-		Symbol:         decision.Symbol,
-		Provider:       at.provider,
-		InstrumentType: at.config.InstrumentType,
-		BarsAdjustment: at.config.BarsAdjustment,
-	})
-	if err != nil {
-		return err
+	marketData := (*market.Data)(nil)
+	var err error
+	if preTrade != nil && preTrade.marketData != nil {
+		marketData = preTrade.marketData
+	} else {
+		marketData, err = at.getValidatedMarketData(decision.Symbol)
+		if err != nil {
+			return err
+		}
 	}
 	actionRecord.Price = marketData.CurrentPrice
 
 	// Variable Mapping Maps variables MAP Logic limitation limits
-	order, err := at.trader.CloseLong(decision.Symbol, 0) // 0 = Strings map MAP Limit variables variables limitations Maps arrays map Tracking Target Target limitation Strings Target string mapping LIMIT Maps constraints Limits
+	quantity := 0.0
+	if preTrade != nil && preTrade.evaluation.ApprovedQuantity > 0 {
+		quantity = preTrade.evaluation.ApprovedQuantity
+	}
+	actionRecord.Quantity = quantity
+	result, err := at.submitExecutionIntent(decision, actionRecord, quantity)
 	if err != nil {
 		return err
 	}
 
-	// limits Variables tracking array Tracking targets Strings strings Tracker tracking
-	if orderID, ok := order["orderId"].(int64); ok {
-		actionRecord.OrderID = orderID
-	}
-
-	log.Printf("   Position closed successfully")
+	log.Printf("   Close long execution accepted for %s, status=%s, broker_order_id=%s", decision.Symbol, result.Status, result.BrokerOrderID)
 	return nil
 }
 
 // executeCloseShortWithRecord variables Parameters limitations combinations Mapping Maps strings Maps String Mapping mapping Map LIMIT configurations Mapping limitations tracking Variables Logic List map Target Limit LIMIT tracking arrays Logic Mapping Arrays array List constraints Tracking map tracking parameters variables combinations Limit limitations Target LIMIT Parameter Variable
-func (at *AutoTrader) executeCloseShortWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction) error {
+func (at *AutoTrader) executeCloseShortWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction, preTrade *preTradeRiskContext) error {
 	log.Printf("   Close short: %s", decision.Symbol)
 
 	// parameter Tracker limits limits lists maps limits Limits tracking permutations Object limits MAP LIMIT Mapping Limit
-	marketData, err := market.Get(market.GetRequest{
-		Symbol:         decision.Symbol,
-		Provider:       at.provider,
-		InstrumentType: at.config.InstrumentType,
-		BarsAdjustment: at.config.BarsAdjustment,
-	})
-	if err != nil {
-		return err
+	marketData := (*market.Data)(nil)
+	var err error
+	if preTrade != nil && preTrade.marketData != nil {
+		marketData = preTrade.marketData
+	} else {
+		marketData, err = at.getValidatedMarketData(decision.Symbol)
+		if err != nil {
+			return err
+		}
 	}
 	actionRecord.Price = marketData.CurrentPrice
 
 	// maps configurations variables String bounds mappings variables Map Mapping MAP Map mapping Tracking Target Mapping Array logic combinations Tracker arrays Strings Array
-	order, err := at.trader.CloseShort(decision.Symbol, 0) // 0 = permutations limits Strings mapping map Map Limit lists Arrays Limit
+	quantity := 0.0
+	if preTrade != nil && preTrade.evaluation.ApprovedQuantity > 0 {
+		quantity = preTrade.evaluation.ApprovedQuantity
+	}
+	actionRecord.Quantity = quantity
+	result, err := at.submitExecutionIntent(decision, actionRecord, quantity)
 	if err != nil {
 		return err
 	}
 
-	// MAP limitations Logic limitations Lists limitations arrays arrays Strings LIMIT limitations values strings Targets Limit Parameters tracking maps strings Map limitations mapping Array Limits Tracking maps Map configurations Limits
-	if orderID, ok := order["orderId"].(int64); ok {
-		actionRecord.OrderID = orderID
-	}
-
-	log.Printf("   Position closed successfully")
+	log.Printf("   Close short execution accepted for %s, status=%s, broker_order_id=%s", decision.Symbol, result.Status, result.BrokerOrderID)
 	return nil
 }
 
@@ -1670,6 +2127,46 @@ func (at *AutoTrader) GetDecisionLogger() *logger.DecisionLogger {
 
 // GetStatus Object Map parameters limit Targeting strings LIMIT parameters Object Limit Target Strings String Limits Lists Tracker tracking Variable tracking Tracker Arrays mappings Variables
 func (at *AutoTrader) GetStatus() map[string]interface{} {
+	brokerStatus := at.brokerRuntimeStatus()
+	readiness := at.getReadinessSummary()
+	killSwitch := at.currentKillSwitchSummary()
+	lastSessionReportPath := at.lastSessionReportPath
+	lastSessionReportStatus := at.lastSessionReportStatus
+	lastSessionReportAt := ""
+	if !at.lastSessionReportAt.IsZero() {
+		lastSessionReportAt = at.lastSessionReportAt.Format(time.RFC3339)
+	}
+	brokerStateSince := ""
+	if !brokerStatus.Since.IsZero() {
+		brokerStateSince = brokerStatus.Since.Format(time.RFC3339)
+	}
+	brokerLastHealthyAt := ""
+	if !brokerStatus.LastHealthyAt.IsZero() {
+		brokerLastHealthyAt = brokerStatus.LastHealthyAt.Format(time.RFC3339)
+	}
+	brokerLastReconciledAt := ""
+	if !brokerStatus.LastReconciledAt.IsZero() {
+		brokerLastReconciledAt = brokerStatus.LastReconciledAt.Format(time.RFC3339)
+	}
+	brokerNextRetryAt := ""
+	if !brokerStatus.NextRetryAt.IsZero() {
+		brokerNextRetryAt = brokerStatus.NextRetryAt.Format(time.RFC3339)
+	}
+	readinessCheckedAt := ""
+	if !readiness.CheckedAt.IsZero() {
+		readinessCheckedAt = readiness.CheckedAt.Format(time.RFC3339)
+	}
+	portfolioRisk := at.currentPortfolioRiskState()
+	alertSummary := at.currentAlertsSummary()
+	executionSummary := at.currentExecutionSummary()
+	brokerTradingAllowed := !at.managesIBKRBrokerRuntime() || brokerStatus.State == BrokerRuntimeHealthy
+	gate := at.currentTradingGateDecision(false, at.currentLatestAccountSummary())
+	riskSupervisorState := at.currentRiskSupervisorState()
+	if riskSupervisorState.EvaluatedAt.IsZero() {
+		riskSupervisorState = at.evaluateRiskSupervisor(at.currentLatestAccountSummary(), false)
+		gate = at.currentTradingGateDecision(false, at.currentLatestAccountSummary())
+	}
+
 	aiProvider := "DeepSeek"
 	if at.demoMode {
 		aiProvider = "Demo"
@@ -1686,82 +2183,199 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 	if !at.lastNewsRefresh.IsZero() {
 		lastNewsRefresh = at.lastNewsRefresh.Format(time.RFC3339)
 	}
+	portfolioRiskLastEvaluatedAt := ""
+	portfolioRiskOutcome := ""
+	portfolioRiskSummary := ""
+	portfolioGrossExposurePct := 0.0
+	portfolioNetExposurePct := 0.0
+	portfolioLargestSector := ""
+	portfolioLargestSectorPct := 0.0
+	portfolioCorrelatedPositions := 0
+	portfolioMaxCorrelation := 0.0
+	portfolioCurrentDrawdownPct := 0.0
+	var portfolioRiskMetrics interface{}
+	if portfolioRisk != nil {
+		portfolioRiskLastEvaluatedAt = portfolioRisk.EvaluatedAt.Format(time.RFC3339)
+		portfolioRiskOutcome = string(portfolioRisk.Outcome)
+		portfolioRiskSummary = portfolioRisk.Summary
+		portfolioGrossExposurePct = portfolioRisk.Metrics.CurrentGrossExposurePct
+		portfolioNetExposurePct = portfolioRisk.Metrics.CurrentNetExposurePct
+		portfolioLargestSector = portfolioRisk.Metrics.LargestSector
+		portfolioLargestSectorPct = portfolioRisk.Metrics.LargestSectorExposurePct
+		portfolioCorrelatedPositions = portfolioRisk.Metrics.CorrelatedPositionCount
+		portfolioMaxCorrelation = portfolioRisk.Metrics.MaxObservedCorrelation
+		portfolioCurrentDrawdownPct = portfolioRisk.Metrics.CurrentDrawdownPct
+		portfolioRiskMetrics = portfolioRisk.Metrics.Clone()
+	}
+	var recentAlerts interface{}
+	if len(alertSummary.Recent) > 0 {
+		recentAlerts = append([]alerts.Alert(nil), alertSummary.Recent...)
+	}
 
 	return map[string]interface{}{
-		"trader_id":                    at.id,
-		"trader_name":                  at.name,
-		"ai_model":                     at.aiModel,
-		"exchange":                     at.exchange,
-		"is_running":                   at.isRunning,
-		"start_time":                   at.startTime.Format(time.RFC3339),
-		"runtime_minutes":              int(time.Since(at.startTime).Minutes()),
-		"call_count":                   at.callCount,
-		"initial_balance":              at.initialBalance,
-		"scan_interval":                at.config.ScanInterval.String(),
-		"max_cycles":                   at.config.MaxCycles,
-		"replay_warmup_bars":           at.config.ReplayWarmupBars,
-		"stop_until":                   at.stopUntil.Format(time.RFC3339),
-		"last_reset_time":              at.lastResetTime.Format(time.RFC3339),
-		"ai_provider":                  aiProvider,
-		"mode":                         at.config.Mode,
-		"strategy_mode":                at.config.StrategyMode,
-		"max_gross_exposure":           at.config.MaxGrossExposure,
-		"max_position_pct":             at.config.MaxPositionPct,
-		"max_concurrent_positions":     at.config.MaxConcurrentPos,
-		"risk_per_trade_pct":           at.config.RiskPerTradePct,
-		"min_factor_score":             at.config.MinFactorScore,
-		"max_pair_correlation":         at.config.MaxPairCorrelation,
-		"min_liquidity_usd":            at.config.MinLiquidityUSD,
-		"min_decision_confidence":      at.config.MinDecisionConfidence,
-		"regime_risk_scaling":          at.config.RegimeRiskScaling,
-		"execution_commission_bps":     at.config.ExecutionCommissionBps,
-		"execution_slippage_bps":       at.config.ExecutionSlippageBps,
-		"execution_impact_bps":         at.config.ExecutionImpactBps,
-		"max_participation_rate":       at.config.MaxParticipationRate,
-		"drawdown_throttle_start":      at.config.DrawdownThrottleStartPct,
-		"drawdown_throttle_min_scale":  at.config.DrawdownThrottleMinScale,
-		"max_portfolio_heat_pct":       at.config.MaxPortfolioHeatPct,
-		"max_net_exposure_pct":         at.config.MaxNetExposurePct,
-		"loss_streak_pause_threshold":  at.config.LossStreakPauseThreshold,
-		"loss_streak_pause_cycles":     at.config.LossStreakPauseCycles,
-		"performance_risk_lookback":    at.config.PerformanceRiskLookback,
-		"volatility_brake_target_pct":  at.config.VolatilityBrakeTargetPct,
-		"volatility_brake_lookback":    at.config.VolatilityBrakeLookback,
-		"volatility_brake_min_scale":   at.config.VolatilityBrakeMinScale,
-		"kelly_fraction_cap":           at.config.KellyFractionCap,
-		"kelly_lookback":               at.config.KellyLookback,
-		"kelly_min_trades":             at.config.KellyMinTrades,
-		"market_stress_entry_block":    at.config.MarketStressEntryBlock,
-		"market_stress_risk_min_scale": at.config.MarketStressRiskMinScale,
-		"use_news_risk":                at.config.UseNewsRisk,
-		"enable_news_in_replay":        at.config.EnableNewsInReplay,
-		"news_provider":                at.config.NewsProvider,
-		"news_lookback_minutes":        at.config.NewsLookbackMinutes,
-		"news_refresh_seconds":         at.config.NewsRefreshSeconds,
-		"news_market_impact_thresh":    at.config.NewsMarketImpactThresh,
-		"news_symbol_impact_thresh":    at.config.NewsSymbolImpactThresh,
-		"news_hard_block_thresh":       at.config.NewsHardBlockThresh,
-		"news_max_risk_reduction":      at.config.NewsMaxRiskReduction,
-		"realized_equity_vol_pct":      at.realizedEquityVolPct() * 100.0,
-		"latest_market_stress":         at.latestMarketStress,
-		"latest_stress_dispersion":     at.latestStressDispersion,
-		"latest_stress_correlation":    at.latestStressCorrelation,
-		"latest_kelly_scale":           at.latestKellyScale,
-		"latest_news_sentiment":        at.latestNewsSentiment,
-		"latest_news_impact":           at.latestNewsImpact,
-		"latest_news_scale":            at.latestNewsScale,
-		"news_credibility_global":      at.newsCredibilityGlobal,
-		"news_credibility_symbols":     len(at.newsCredibility),
-		"last_news_learn_symbol":       at.lastNewsLearnSymbol,
-		"last_news_learn_delta":        at.lastNewsLearnDelta,
-		"last_news_refresh":            lastNewsRefresh,
-		"news_last_error":              at.newsLastError,
-		"entry_blocked_until_cycle":    at.openEntryBlockedUntil,
-		"consecutive_loss_closes":      at.consecutiveLossCloses,
-		"close_pnl_ema_pct":            at.closePnLEMA,
-		"learned_symbol_count":         len(at.symbolTradeCount),
-		"is_demo_mode":                 at.demoMode,
-		"demo_last_cycle_time":         demoLastCycleTime,
+		"trader_id":                             at.id,
+		"trader_name":                           at.name,
+		"ai_model":                              at.aiModel,
+		"exchange":                              at.exchange,
+		"is_running":                            at.isRunning,
+		"start_time":                            at.startTime.Format(time.RFC3339),
+		"runtime_minutes":                       int(time.Since(at.startTime).Minutes()),
+		"broker_state":                          brokerStatus.State,
+		"broker_state_reason":                   brokerStatus.Reason,
+		"broker_last_error":                     brokerStatus.LastError,
+		"broker_state_since":                    brokerStateSince,
+		"broker_last_healthy_at":                brokerLastHealthyAt,
+		"broker_last_reconciled_at":             brokerLastReconciledAt,
+		"broker_reconnect_attempts":             brokerStatus.ReconnectAttempts,
+		"broker_next_retry_at":                  brokerNextRetryAt,
+		"broker_recovery_active":                brokerStatus.RecoveryActive,
+		"broker_trading_allowed":                brokerTradingAllowed,
+		"readiness_status":                      readiness.Status,
+		"readiness_message":                     readiness.Message,
+		"readiness_checked_at":                  readinessCheckedAt,
+		"readiness_trading_allowed":             readiness.TradingAllowed,
+		"readiness_pass_count":                  readiness.PassCount,
+		"readiness_warn_count":                  readiness.WarnCount,
+		"readiness_fail_count":                  readiness.FailCount,
+		"readiness_checks":                      readiness.Checks,
+		"trading_allowed":                       gate.TradingAllowed,
+		"entries_allowed":                       gate.EntriesAllowed,
+		"exits_allowed":                         gate.ExitsAllowed,
+		"reduce_only":                           gate.ReduceOnly,
+		"trading_block_reason":                  gate.BlockReason,
+		"blocking_reasons":                      gate.BlockingReasons,
+		"risk_supervisor_mode":                  riskSupervisorState.Mode,
+		"risk_supervisor_summary":               riskSupervisorState.Summary,
+		"risk_supervisor_active_incidents":      riskSupervisorState.ActiveIncidentCount,
+		"risk_supervisor_critical_incidents":    riskSupervisorState.CriticalIncidentCount,
+		"risk_supervisor_incidents":             riskSupervisorState.Incidents,
+		"execution": map[string]interface{}{
+			"available":                    executionSummary.Available,
+			"in_flight_count":              executionSummary.InFlightCount,
+			"stale_count":                  executionSummary.StaleCount,
+			"last_execution_at":            formatRFC3339(executionSummary.LastExecutionAt),
+			"last_execution_symbol":        executionSummary.LastExecutionSymbol,
+			"last_execution_status":        executionSummary.LastExecutionStatus,
+			"duplicate_suppressed_count":   executionSummary.DuplicateSuppressedCount,
+			"blocked_execution_count":      executionSummary.BlockedExecutionCount,
+			"submitted_count":              executionSummary.SubmittedCount,
+			"filled_count":                 executionSummary.FilledCount,
+			"rejected_count":               executionSummary.RejectedCount,
+			"failed_count":                 executionSummary.FailedCount,
+		},
+		"execution_available":                   executionSummary.Available,
+		"execution_in_flight_count":             executionSummary.InFlightCount,
+		"execution_stale_count":                 executionSummary.StaleCount,
+		"execution_last_execution_at":           formatRFC3339(executionSummary.LastExecutionAt),
+		"execution_last_execution_symbol":       executionSummary.LastExecutionSymbol,
+		"execution_last_execution_status":       executionSummary.LastExecutionStatus,
+		"execution_duplicate_suppressed_count":  executionSummary.DuplicateSuppressedCount,
+		"execution_blocked_count":               executionSummary.BlockedExecutionCount,
+		"execution_submitted_count":             executionSummary.SubmittedCount,
+		"execution_filled_count":                executionSummary.FilledCount,
+		"execution_rejected_count":              executionSummary.RejectedCount,
+		"execution_failed_count":                executionSummary.FailedCount,
+		"kill_switch_active":                    killSwitch.Active,
+		"kill_switch_source":                    killSwitch.Source,
+		"kill_switch_message":                   killSwitch.Message,
+		"kill_switch_file_path":                 killSwitch.FilePath,
+		"kill_switch_triggered_at":              formatRFC3339(killSwitch.TriggeredAt),
+		"kill_switch_last_checked_at":           formatRFC3339(killSwitch.LastCheckedAt),
+		"kill_switch_last_cleared_at":           formatRFC3339(killSwitch.LastClearedAt),
+		"kill_switch_orders_cancelled":          killSwitch.OrdersCancelled,
+		"kill_switch_last_cancel_attempt_at":    formatRFC3339(killSwitch.LastCancelAttemptAt),
+		"kill_switch_last_cancel_error":         killSwitch.LastCancelError,
+		"kill_switch_activation_count":          killSwitch.ActivationCount,
+		"last_session_report_path":              lastSessionReportPath,
+		"last_session_report_status":            lastSessionReportStatus,
+		"last_session_report_at":                lastSessionReportAt,
+		"call_count":                            at.callCount,
+		"initial_balance":                       at.initialBalance,
+		"scan_interval":                         at.config.ScanInterval.String(),
+		"max_cycles":                            at.config.MaxCycles,
+		"replay_warmup_bars":                    at.config.ReplayWarmupBars,
+		"stop_until":                            at.stopUntil.Format(time.RFC3339),
+		"last_reset_time":                       at.lastResetTime.Format(time.RFC3339),
+		"ai_provider":                           aiProvider,
+		"mode":                                  at.config.Mode,
+		"strategy_mode":                         at.config.StrategyMode,
+		"max_gross_exposure":                    at.config.MaxGrossExposure,
+		"max_position_pct":                      at.config.MaxPositionPct,
+		"max_concurrent_positions":              at.config.MaxConcurrentPos,
+		"risk_per_trade_pct":                    at.config.RiskPerTradePct,
+		"min_factor_score":                      at.config.MinFactorScore,
+		"max_pair_correlation":                  at.config.MaxPairCorrelation,
+		"min_liquidity_usd":                     at.config.MinLiquidityUSD,
+		"min_decision_confidence":               at.config.MinDecisionConfidence,
+		"regime_risk_scaling":                   at.config.RegimeRiskScaling,
+		"execution_commission_bps":              at.config.ExecutionCommissionBps,
+		"execution_slippage_bps":                at.config.ExecutionSlippageBps,
+		"execution_impact_bps":                  at.config.ExecutionImpactBps,
+		"max_participation_rate":                at.config.MaxParticipationRate,
+		"drawdown_throttle_start":               at.config.DrawdownThrottleStartPct,
+		"drawdown_throttle_min_scale":           at.config.DrawdownThrottleMinScale,
+		"max_portfolio_heat_pct":                at.config.MaxPortfolioHeatPct,
+		"max_net_exposure_pct":                  at.config.MaxNetExposurePct,
+		"max_sector_exposure_pct":               at.config.MaxSectorExposurePct,
+		"max_correlated_positions":              at.config.MaxCorrelatedPositions,
+		"loss_streak_pause_threshold":           at.config.LossStreakPauseThreshold,
+		"loss_streak_pause_cycles":              at.config.LossStreakPauseCycles,
+		"performance_risk_lookback":             at.config.PerformanceRiskLookback,
+		"volatility_brake_target_pct":           at.config.VolatilityBrakeTargetPct,
+		"volatility_brake_lookback":             at.config.VolatilityBrakeLookback,
+		"volatility_brake_min_scale":            at.config.VolatilityBrakeMinScale,
+		"kelly_fraction_cap":                    at.config.KellyFractionCap,
+		"kelly_lookback":                        at.config.KellyLookback,
+		"kelly_min_trades":                      at.config.KellyMinTrades,
+		"market_stress_entry_block":             at.config.MarketStressEntryBlock,
+		"market_stress_risk_min_scale":          at.config.MarketStressRiskMinScale,
+		"use_news_risk":                         at.config.UseNewsRisk,
+		"enable_news_in_replay":                 at.config.EnableNewsInReplay,
+		"news_provider":                         at.config.NewsProvider,
+		"news_lookback_minutes":                 at.config.NewsLookbackMinutes,
+		"news_refresh_seconds":                  at.config.NewsRefreshSeconds,
+		"news_market_impact_thresh":             at.config.NewsMarketImpactThresh,
+		"news_symbol_impact_thresh":             at.config.NewsSymbolImpactThresh,
+		"news_hard_block_thresh":                at.config.NewsHardBlockThresh,
+		"news_max_risk_reduction":               at.config.NewsMaxRiskReduction,
+		"realized_equity_vol_pct":               at.realizedEquityVolPct() * 100.0,
+		"latest_market_stress":                  at.latestMarketStress,
+		"latest_stress_dispersion":              at.latestStressDispersion,
+		"latest_stress_correlation":             at.latestStressCorrelation,
+		"latest_kelly_scale":                    at.latestKellyScale,
+		"latest_news_sentiment":                 at.latestNewsSentiment,
+		"latest_news_impact":                    at.latestNewsImpact,
+		"latest_news_scale":                     at.latestNewsScale,
+		"news_credibility_global":               at.newsCredibilityGlobal,
+		"news_credibility_symbols":              len(at.newsCredibility),
+		"last_news_learn_symbol":                at.lastNewsLearnSymbol,
+		"last_news_learn_delta":                 at.lastNewsLearnDelta,
+		"last_news_refresh":                     lastNewsRefresh,
+		"news_last_error":                       at.newsLastError,
+		"entry_blocked_until_cycle":             at.openEntryBlockedUntil,
+		"consecutive_loss_closes":               at.consecutiveLossCloses,
+		"close_pnl_ema_pct":                     at.closePnLEMA,
+		"learned_symbol_count":                  len(at.symbolTradeCount),
+		"is_demo_mode":                          at.demoMode,
+		"demo_last_cycle_time":                  demoLastCycleTime,
+		"portfolio_risk_available":              portfolioRisk != nil,
+		"portfolio_risk_last_evaluated_at":      portfolioRiskLastEvaluatedAt,
+		"portfolio_risk_outcome":                portfolioRiskOutcome,
+		"portfolio_risk_summary":                portfolioRiskSummary,
+		"portfolio_gross_exposure_pct":          portfolioGrossExposurePct,
+		"portfolio_net_exposure_pct":            portfolioNetExposurePct,
+		"portfolio_largest_sector":              portfolioLargestSector,
+		"portfolio_largest_sector_exposure_pct": portfolioLargestSectorPct,
+		"portfolio_correlated_positions":        portfolioCorrelatedPositions,
+		"portfolio_max_observed_correlation":    portfolioMaxCorrelation,
+		"portfolio_current_drawdown_pct":        portfolioCurrentDrawdownPct,
+		"portfolio_risk_metrics":                portfolioRiskMetrics,
+		"recent_alerts":                         recentAlerts,
+		"alert_count":                           alertSummary.TotalCount,
+		"critical_alert_count":                  alertSummary.CriticalCount,
+		"warning_alert_count":                   alertSummary.WarningCount,
+		"info_alert_count":                      alertSummary.InfoCount,
+		"last_alert_at":                         alertSummary.LastAlertAt,
 	}
 }
 
@@ -1770,133 +2384,28 @@ func (at *AutoTrader) GetProvider() market.BarsProvider {
 	return at.provider
 }
 
-// GetAccountInfo Map mapping Tracker limits Maps bounds limits Lists Variables Map Tracker Map array Tracking Mapper Maps string limits Tracking values mapping Array mapping loops bounds Map parameter Variables Tracker values Maps variables variables limit Tracker LIMIT map parameters tracking
-func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
+// GetAccountInfo returns canonical broker-account and strategy-performance metrics.
+func (at *AutoTrader) GetAccountInfo() (*AccountSummary, error) {
 	if at.demoMode {
-		positions := at.buildDemoPositions()
-		totalUnrealized := 0.0
-		totalMarginUsed := 0.0
-		for _, pos := range positions {
-			if v, ok := pos["unrealized_pnl"].(float64); ok {
-				totalUnrealized += v
-			}
-			if v, ok := pos["margin_used"].(float64); ok {
-				totalMarginUsed += v
-			}
-		}
-
-		totalPnL := at.demoEquity - at.initialBalance
-		totalPnLPct := 0.0
-		if at.initialBalance > 0 {
-			totalPnLPct = (totalPnL / at.initialBalance) * 100
-		}
-		marginUsedPct := 0.0
-		if at.demoEquity > 0 {
-			marginUsedPct = (totalMarginUsed / at.demoEquity) * 100.0
-		}
-		walletBalance := at.demoEquity - totalUnrealized
-		if walletBalance < 0 {
-			walletBalance = 0
-		}
-		availableBalance := walletBalance - totalMarginUsed
-		if availableBalance < 0 {
-			availableBalance = 0
-		}
-
-		return map[string]interface{}{
-			"total_equity":         at.demoEquity,
-			"wallet_balance":       walletBalance,
-			"unrealized_profit":    totalUnrealized,
-			"available_balance":    availableBalance,
-			"total_pnl":            totalPnL,
-			"total_pnl_pct":        totalPnLPct,
-			"total_unrealized_pnl": totalUnrealized,
-			"initial_balance":      at.initialBalance,
-			"daily_pnl":            at.dailyPnL,
-			"position_count":       len(positions),
-			"margin_used":          totalMarginUsed,
-			"margin_used_pct":      marginUsedPct,
-		}, nil
+		summary := at.buildDemoAccountSummary(at.buildDemoPositions())
+		return &summary, nil
+	}
+	if at.trader == nil {
+		return nil, fmt.Errorf("trader is not initialized")
 	}
 
 	balance, err := at.trader.GetBalance()
 	if err != nil {
-		return nil, fmt.Errorf("variables Logic Limit maps Strings Limits Map Target Limit limitations Mapping List parameter Map mapping Tracker MAP limits: %w", err)
+		return nil, fmt.Errorf("failed to get broker balance: %w", err)
 	}
-
-	// Variables limits maps Array MAP variables string Strings Arrays mappings
-	totalWalletBalance := 0.0
-	totalUnrealizedProfit := 0.0
-	availableBalance := 0.0
-
-	if wallet, ok := balance["totalWalletBalance"].(float64); ok {
-		totalWalletBalance = wallet
-	}
-	if unrealized, ok := balance["totalUnrealizedProfit"].(float64); ok {
-		totalUnrealizedProfit = unrealized
-	}
-	if avail, ok := balance["availableBalance"].(float64); ok {
-		availableBalance = avail
-	}
-
-	// Total Equity = tracking Map strings strings limits Maps Map MAP parameters variables
-	totalEquity := totalWalletBalance + totalUnrealizedProfit
-
-	// Map List limits Map Tracker limit string Maps limitations MAP
 	positions, err := at.trader.GetPositions()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get positions: %w", err)
 	}
 
-	totalMarginUsed := 0.0
-	totalUnrealizedPnL := 0.0
-	for _, pos := range positions {
-		markPrice := pos["markPrice"].(float64)
-		quantity := pos["positionAmt"].(float64)
-		if quantity < 0 {
-			quantity = -quantity
-		}
-		unrealizedPnl := pos["unRealizedProfit"].(float64)
-		totalUnrealizedPnL += unrealizedPnl
-
-		leverage := 10
-		if lev, ok := pos["leverage"].(float64); ok {
-			leverage = int(lev)
-		}
-		marginUsed := (quantity * markPrice) / float64(leverage)
-		totalMarginUsed += marginUsed
-	}
-
-	totalPnL := totalEquity - at.initialBalance
-	totalPnLPct := 0.0
-	if at.initialBalance > 0 {
-		totalPnLPct = (totalPnL / at.initialBalance) * 100
-	}
-
-	marginUsedPct := 0.0
-	if totalEquity > 0 {
-		marginUsedPct = (totalMarginUsed / totalEquity) * 100
-	}
-
-	return map[string]interface{}{
-		// limits Values arrays strings Target Parameter lists targeting bounds strings Variables Maps Strings Mapping variables loops Variables MAP tracking Map MAP Map Tracker limits list Tracker Maps Tracking string Tracking Tracking parameters permutations Object Mapping Limitation tracking Maps List Tracker Limits Tracking variables limitations Lists maps configurations List Parameter Tracker Variable Targets array Maps Mapping
-		"total_equity":      totalEquity,           // Account equity = wallet + unrealized
-		"wallet_balance":    totalWalletBalance,    // wallet Target loops Limits arrays tracking Tracker arrays
-		"unrealized_profit": totalUnrealizedProfit, // unrealizedP&L String List limitations
-		"available_balance": availableBalance,      // available limits limitations Target Limit map strings Parameter Map Mapping target Parameter strings
-
-		// P&L Strings Limits loops String parameter limits strings Strings List variables mapping map Object map Mapping tracking parameters limits Limit map Logic limitations Tracking List Maps limitation mapping loops
-		"total_pnl":            totalPnL,           // strings MAP Mapping Limits Target configurations List List Matrix configurations Parameter Map lists Strings maps limit Maps Limits limitations Object Array Variables arrays Target Limit Map Targeting Object map Strings parameter Tracker limit Parameter arrays List array parameters map Limit lists loops mapping Tracking arrays Array Mapper Tracking Tracker map array string Variable logic strings Map mapping Mapper Map map array Strings Targets Targeting Mapper String Limits map Mapper maps Tracker Maps mapping lists MAP limitations Mapping permutations Variable Map mapping parameters MAP variables tracking Limits String Array Tracker map Mapper limits limit Limits Limit string variables limit array loops string limits loops map Limits Array MAP limitation parameter Values mapping String loops Limits Target
-		"total_pnl_pct":        totalPnLPct,        // Tracking Map Variable parameter limits Variable Arrays Tracker List variables Tracking map limitation limits Tracker Maps mapping
-		"total_unrealized_pnl": totalUnrealizedPnL, // unrealizedP&L Maps Target Limits arrays limit Object Mapper limitations limits
-		"initial_balance":      at.initialBalance,  // Initial balance
-		"daily_pnl":            at.dailyPnL,        // limits map String Variable Variables MAP limitations Maps limitations Mapping MAP tracking Limitation Targeting Variables Strings List limits maps MAP maps variables Strings mapping Limits String Variables String logic Object mapping strings Variables MAP Matrix Limits Logic variables mapping Limits array limitations mapping maps Object String Tracking array Mapper limitations Tracker Limitation tracking mapping variables Lists Limits map permutations
-
-		// Positions Target Matrix mapping strings constraints limits Tracker Mapping Mapping Tracking maps limitation maps variables Lists
-		"position_count":  len(positions),  // Positions Array maps parameter
-		"margin_used":     totalMarginUsed, // margin used
-		"margin_used_pct": marginUsedPct,   // map Target MAP array limitation Tracker
-	}, nil
+	summary := at.buildAccountSummaryFromRaw(balance, positions)
+	at.setLatestAccountSummary(&summary)
+	return &summary, nil
 }
 
 // GetPositions Mapping variables maps List arrays limits Parameter string strings Logic loops MAP combinations Arrays target Map limitation Tracking array variables MAP Array maps tracking string Strings Lists array Maps variations Tracking limits limit limits loops Mapper mapping maps Tracker maps Object
@@ -2256,8 +2765,9 @@ func buildMomentumFallbackDecision(ctx *decision.Context, minScore, positionPct 
 		positionPct = 0.10
 	}
 
-	notional := ctx.Account.TotalEquity * positionPct
-	maxPerTrade := ctx.Account.TotalEquity * 0.20
+	decisionEquity := ctx.Account.DecisionSizingEquity()
+	notional := decisionEquity * positionPct
+	maxPerTrade := decisionEquity * 0.20
 	if notional > maxPerTrade {
 		notional = maxPerTrade
 	}

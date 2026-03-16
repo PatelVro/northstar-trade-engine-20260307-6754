@@ -1,50 +1,73 @@
-# Git
+# Git and local metadata
 .git
 .gitignore
-.github
+.github/
 
-# Docker
-Dockerfile
-docker-compose.yml
-.dockerignore
-
-# IDE
-.idea
-.vscode
+# IDE and editor files
+.idea/
+.vscode/
 *.swp
 *.swo
 *~
 
-# Build artifacts
-aegistrade
-aegistrade_test
-*.exe
-*.dll
-*.so
-*.dylib
+# Local environment and runtime config
+.env
+.env.local
+.env.*.local
+.env.release.local
+.env.ibkr
+config.json
+config.demo.json
+config-working.json
+config.local.json
+config_*.json
+!config_*.example.json
+*.local.json
+cook*.txt
+cookies*.txt
+*.cookies.txt
+*.cookiejar
 
-# Test files
+# Build artifacts
+northstar
+northstar.exe
+northstar_test
+nofx.exe
+nofx_bin.exe
+test_build.exe
+*.dll
+*.dylib
+*.exe
+*.so
+
+# Test and local tooling files
 *_test.go
 test_*
 
-# Documentation
+# Documentation not needed in build context
 *.md
 !README.md
 docs/
 
-# Runtime data
+# Runtime data and generated outputs
 decision_logs/
 coin_pool_cache/
+runtime/
+output/
+logs/
+tmp/
+temp/
+screenshots/
+ibeam_outputs/
+data/csv/
 *.log
-
-# Config files (should be mounted)
-config.json
+*.pid
 
 # Web build artifacts (keep source for multi-stage build)
 web/node_modules/
 web/dist/
 
-# Temporary files
-tmp/
-temp/
-*.tmp
+# Local workspace/vendor copies
+nginx_certs/
+walmart-dashboard/
+ibeam/

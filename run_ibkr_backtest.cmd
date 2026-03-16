@@ -1,16 +1,22 @@
 @echo off
 setlocal
 
+set "GATEWAY_URL=%NORTHSTAR_IBKR_BASE_URL%"
+if "%GATEWAY_URL%"=="" set "GATEWAY_URL=https://127.0.0.1:5002/v1/api"
+
+set "ACCOUNT_ID=%NORTHSTAR_IBKR_ACCOUNT_ID%"
+if not "%~1"=="" (
+  set "ACCOUNT_ID=%~1"
+)
+
 echo =========================================================
 echo   Northstar Automated IBKR Backtest Matrix
 echo =========================================================
 echo.
 
-set "GATEWAY_URL=https://127.0.0.1:5002/v1/api"
-set "ACCOUNT_ID=DUP200062"
-
-if not "%~1"=="" (
-  set "ACCOUNT_ID=%~1"
+if "%ACCOUNT_ID%"=="" (
+  echo [ERROR] Set NORTHSTAR_IBKR_ACCOUNT_ID or pass the IBKR account ID as the first argument.
+  exit /b 1
 )
 
 echo Gateway: %GATEWAY_URL%
@@ -65,4 +71,4 @@ go run ./cmd/ibkr-backtest ^
   -write-best-profile "best_profile.json"
 
 echo.
-echo Done. Check output\ibkr_backtests\run_* for leaderboard, per-profile artifacts, and best_profile.json.
+echo Done. Check output\ibkr_backtests\run_* for leaderboard, study_summary.json, study_summary.md, per-profile artifacts, and best_profile.json.

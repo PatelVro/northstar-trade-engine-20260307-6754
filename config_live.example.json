@@ -1,0 +1,33 @@
+{
+  "traders": [
+    {
+      "id": "alpaca_live_trader",
+      "name": "Northstar Alpaca Live",
+      "enabled": true,
+      "ai_model": "deepseek",
+      "exchange": "alpaca",
+      "alpaca_api_key": "${NORTHSTAR_ALPACA_API_KEY}",
+      "alpaca_secret_key": "${NORTHSTAR_ALPACA_SECRET_KEY}",
+      "mode": "live",
+      "data_provider": "alpaca",
+      "broker": "alpaca",
+      "live_promotion_approved": false,
+      "promotion_source_trader_id": "alpaca_paper_trader",
+      "min_paper_session_reports": 1,
+      "require_backtest_summary": false,
+      "require_release_build_for_live": true,
+      "promotion_max_evidence_age_days": 30,
+      "instrument_type": "equity",
+      "deepseek_key": "${NORTHSTAR_DEEPSEEK_API_KEY}",
+      "initial_balance": 100000.0,
+      "scan_interval_minutes": 5
+    }
+  ],
+  "use_default_coins": false,
+  "default_coins": [
+    "AAPL",
+    "MSFT",
+    "NVDA"
+  ],
+  "api_server_port": 8080
+}

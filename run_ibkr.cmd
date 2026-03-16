@@ -1,6 +1,10 @@
 @echo off
 setlocal
 
+set "CONFIG_FILE=config_ibkr.json"
+if not exist "%CONFIG_FILE%" set "CONFIG_FILE=config_ibkr.example.json"
+set "NORTHSTAR_BIN=northstar.exe"
+
 echo =========================================================
 echo   Northstar Canadian Equities (Interactive Brokers API) 
 echo =========================================================
@@ -15,7 +19,13 @@ if not exist data\universe\us_companies.txt (
   echo.
 )
 
-echo [2/2] Running Northstar with config_ibkr.json...
+echo [2/2] Running Northstar with %CONFIG_FILE%...
 echo.
 
-go run main.go config_ibkr.json
+if exist "%NORTHSTAR_BIN%" (
+  echo Using release binary: %NORTHSTAR_BIN%
+  "%NORTHSTAR_BIN%" "%CONFIG_FILE%"
+) else (
+  echo Release binary not found, falling back to go run.
+  go run main.go "%CONFIG_FILE%"
+)

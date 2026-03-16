@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 
-# AegisTrade AI Trading System - Docker Quick Start Script
+# Northstar - Docker Quick Start Script
 # Usage: ./start.sh [command]
 # 
 
@@ -124,7 +124,7 @@ check_config() {
 # Service Management: Start
 # ------------------------------------------------------------------------
 start() {
-    print_info " AegisTrade AI Trading System..."
+    print_info " Starting Northstar..."
 
     # Auto-build frontend if missing or forced
     # if [ ! -d "web/dist" ] || [ "$1" == "--build" ]; then
@@ -173,7 +173,17 @@ logs() {
     if [ -z "$2" ]; then
         $COMPOSE_CMD logs -f
     else
-        $COMPOSE_CMD logs -f "$2"
+        case "$2" in
+            backend)
+                $COMPOSE_CMD logs -f northstar-backend
+                ;;
+            frontend)
+                $COMPOSE_CMD logs -f northstar-frontend
+                ;;
+            *)
+                $COMPOSE_CMD logs -f "$2"
+                ;;
+        esac
     fi
 }
 
@@ -217,7 +227,7 @@ update() {
 # Help: Usage Information
 # ------------------------------------------------------------------------
 show_help() {
-    echo "AegisTrade AI Trading System - Docker "
+    echo "Northstar - Docker"
     echo ""
     echo ": ./start.sh [command] [options]"
     echo ""
@@ -225,7 +235,7 @@ show_help() {
     echo "  start [--build]    "
     echo "  stop               "
     echo "  restart            "
-    echo "  logs [service]      backend/frontend"
+    echo "  logs [service]      backend/frontend or northstar-backend/northstar-frontend"
     echo "  status             "
     echo "  clean              "
     echo "  update             "

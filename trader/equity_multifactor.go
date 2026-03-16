@@ -1,12 +1,12 @@
 package trader
 
 import (
-	"aegistrade/decision"
-	"aegistrade/logger"
-	"aegistrade/market"
-	"aegistrade/news"
 	"fmt"
 	"math"
+	"northstar/decision"
+	"northstar/logger"
+	"northstar/market"
+	"northstar/news"
 	"sort"
 	"strings"
 	"time"
@@ -69,13 +69,15 @@ func (at *AutoTrader) refreshPositionState(positions []decision.PositionInfo) {
 }
 
 func (at *AutoTrader) updateExecutionState(actions []logger.DecisionAction) {
+	at.updateLocalPositionStateFromActions(actions)
+
 	cooldown := at.config.SymbolCooldownCycles
 	if cooldown <= 0 {
 		cooldown = 1
 	}
 
 	for _, action := range actions {
-		if !action.Success {
+		if !actionHasImmediatePositionEffect(action) {
 			continue
 		}
 
@@ -112,7 +114,7 @@ func (at *AutoTrader) updateSymbolEdgeFromActions(actions []logger.DecisionActio
 		return
 	}
 	for _, action := range actions {
-		if !action.Success {
+		if !actionHasImmediatePositionEffect(action) {
 			continue
 		}
 		side := ""
@@ -166,7 +168,7 @@ func (at *AutoTrader) updateClosePerformanceFromActions(actions []logger.Decisio
 	}
 
 	for _, action := range actions {
-		if !action.Success {
+		if !actionHasImmediatePositionEffect(action) {
 			continue
 		}
 		side := ""
@@ -629,9 +631,10 @@ func (at *AutoTrader) applyEquityDecisionOverlay(ctx *decision.Context, fullDeci
 		newsMaxReduction = 0.55
 	}
 
-	maxGross := at.config.MaxGrossExposure * ctx.Account.TotalEquity
+	decisionEquity := ctx.Account.DecisionSizingEquity()
+	maxGross := at.config.MaxGrossExposure * decisionEquity
 	if maxGross <= 0 {
-		maxGross = ctx.Account.TotalEquity
+		maxGross = decisionEquity
 	}
 	if maxGross <= 0 {
 		maxGross = 1
@@ -672,14 +675,14 @@ func (at *AutoTrader) applyEquityDecisionOverlay(ctx *decision.Context, fullDeci
 	if maxHeatPct <= 0 || maxHeatPct > 0.30 {
 		maxHeatPct = 0.035
 	}
-	heatLimitUSD := ctx.Account.TotalEquity * maxHeatPct
+	heatLimitUSD := decisionEquity * maxHeatPct
 	currentHeatUSD := at.estimateOpenPortfolioHeatUSD(ctx)
 	plannedHeatUSD := 0.0
 	maxNetPct := at.config.MaxNetExposurePct
 	if maxNetPct <= 0 || maxNetPct > 1.0 {
 		maxNetPct = 0.65
 	}
-	netLimitUSD := ctx.Account.TotalEquity * maxNetPct
+	netLimitUSD := decisionEquity * maxNetPct
 
 	for _, d := range fullDecision.Decisions {
 		d.Symbol = strings.ToUpper(strings.TrimSpace(d.Symbol))
@@ -839,9 +842,9 @@ func (at *AutoTrader) applyEquityDecisionOverlay(ctx *decision.Context, fullDeci
 				}
 			}
 
-			maxPerPosition := at.config.MaxPositionPct * ctx.Account.TotalEquity
+			maxPerPosition := at.config.MaxPositionPct * decisionEquity
 			if maxPerPosition <= 0 {
-				maxPerPosition = ctx.Account.TotalEquity * 0.20
+				maxPerPosition = decisionEquity * 0.20
 			}
 			remainingGross := maxGross - (currentExposure + plannedExposure)
 			if remainingGross < 0 {
@@ -1468,13 +1471,14 @@ func (at *AutoTrader) resolveEntryPrice(ctx *decision.Context, symbol string) fl
 }
 
 func (at *AutoTrader) suggestedPositionSizeUSD(ctx *decision.Context, symbol, action string, entryPrice, stopLoss float64) float64 {
-	if entryPrice <= 0 || stopLoss <= 0 || ctx.Account.TotalEquity <= 0 {
+	decisionEquity := ctx.Account.DecisionSizingEquity()
+	if entryPrice <= 0 || stopLoss <= 0 || decisionEquity <= 0 {
 		return 0
 	}
 
-	maxPositionValue := at.config.MaxPositionPct * ctx.Account.TotalEquity
+	maxPositionValue := at.config.MaxPositionPct * decisionEquity
 	if maxPositionValue <= 0 {
-		maxPositionValue = ctx.Account.TotalEquity * 0.20
+		maxPositionValue = decisionEquity * 0.20
 	}
 
 	if !at.config.DynamicPositionSizing {
@@ -1482,7 +1486,7 @@ func (at *AutoTrader) suggestedPositionSizeUSD(ctx *decision.Context, symbol, ac
 		if basePct <= 0 {
 			basePct = 0.10
 		}
-		notional := ctx.Account.TotalEquity * basePct
+		notional := decisionEquity * basePct
 		notional = minFloat(notional, maxPositionValue)
 		notional = minFloat(notional, ctx.Account.AvailableBalance*0.95)
 		if notional < 100 {
@@ -1493,7 +1497,7 @@ func (at *AutoTrader) suggestedPositionSizeUSD(ctx *decision.Context, symbol, ac
 
 	riskPct := at.config.RiskPerTradePct
 	riskPct = at.effectiveRiskPerTradePct(ctx, action)
-	riskUSD := ctx.Account.TotalEquity * riskPct
+	riskUSD := decisionEquity * riskPct
 	riskPerShare := math.Abs(entryPrice - stopLoss)
 	if riskPerShare <= 0 {
 		return 0
@@ -1596,8 +1600,8 @@ func (at *AutoTrader) effectiveRiskPerTradePct(ctx *decision.Context, action str
 		scale *= stressScale
 	}
 
-	if at.peakEquitySeen > 0 && ctx != nil && ctx.Account.TotalEquity > 0 {
-		drawdown := (at.peakEquitySeen - ctx.Account.TotalEquity) / at.peakEquitySeen
+	if at.peakEquitySeen > 0 && ctx != nil && ctx.Account.StrategyEquity > 0 {
+		drawdown := (at.peakEquitySeen - ctx.Account.StrategyEquity) / at.peakEquitySeen
 		start := at.config.DrawdownThrottleStartPct
 		if start <= 0 {
 			start = 0.03

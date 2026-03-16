@@ -1,6 +1,6 @@
 ---
 name: Feature Request
-about: Suggest a new feature for AegisTrade
+about: Suggest a new feature for Northstar
 title: '[FEATURE] '
 labels: enhancement
 assignees: ''

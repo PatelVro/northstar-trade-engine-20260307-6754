@@ -2,11 +2,13 @@ package decision
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
-	"aegistrade/market"
-	"aegistrade/mcp"
-	"aegistrade/pool"
+	dataquality "northstar/data"
+	"northstar/market"
+	"northstar/mcp"
+	"northstar/pool"
 	"strings"
 	"time"
 )
@@ -28,13 +30,30 @@ type PositionInfo struct {
 
 // AccountInfo holds account information
 type AccountInfo struct {
-	TotalEquity      float64 `json:"total_equity"`      // Total account equity
-	AvailableBalance float64 `json:"available_balance"` // Available balance
-	TotalPnL         float64 `json:"total_pnl"`         // Total P&L
-	TotalPnLPct      float64 `json:"total_pnl_pct"`     // Total P&L percentage
-	MarginUsed       float64 `json:"margin_used"`       // Margin already used
-	MarginUsedPct    float64 `json:"margin_used_pct"`   // Margin usage percentage
-	PositionCount    int     `json:"position_count"`    // Number of active positions
+	AccountCash            float64 `json:"account_cash"`
+	AccountEquity          float64 `json:"account_equity"`
+	AvailableBalance       float64 `json:"available_balance"`
+	GrossMarketValue       float64 `json:"gross_market_value"`
+	UnrealizedPnL          float64 `json:"unrealized_pnl"`
+	RealizedPnL            float64 `json:"realized_pnl"`
+	TotalPnL               float64 `json:"total_pnl"`
+	StrategyInitialCapital float64 `json:"strategy_initial_capital"`
+	StrategyEquity         float64 `json:"strategy_equity"`
+	StrategyReturnPct      float64 `json:"strategy_return_pct"`
+	MarginUsed             float64 `json:"margin_used"`
+	MarginUsedPct          float64 `json:"margin_used_pct"`
+	PositionCount          int     `json:"position_count"`
+}
+
+func (a AccountInfo) DecisionSizingEquity() float64 {
+	cap := a.StrategyEquity
+	if a.AccountEquity > 0 && (cap <= 0 || a.AccountEquity < cap) {
+		cap = a.AccountEquity
+	}
+	if cap < 0 {
+		return 0
+	}
+	return cap
 }
 
 // CandidateCoin holds candidate coin data (from coin pool)
@@ -68,10 +87,12 @@ type Context struct {
 	AltcoinLeverage int                     `json:"-"` // Altcoin leverage multiplier
 
 	// Data Provider settings
-	Provider       market.BarsProvider `json:"-"`
-	InstrumentType string              `json:"-"` // "crypto_perp" or "equity"
-	BarsAdjustment string              `json:"-"` // "raw", "split", "dividend", "all"
-	IsReplay       bool                `json:"-"`
+	Provider              market.BarsProvider                                        `json:"-"`
+	InstrumentType        string                                                     `json:"-"` // "crypto_perp" or "equity"
+	BarsAdjustment        string                                                     `json:"-"` // "raw", "split", "dividend", "all"
+	IsReplay              bool                                                       `json:"-"`
+	DataValidationOptions dataquality.Options                                        `json:"-"`
+	DataQualityObserver   func(symbol string, result *dataquality.Result, err error) `json:"-"`
 }
 
 // Decision represents AI trading decision
@@ -103,7 +124,7 @@ func GetFullDecision(ctx *Context, mcpClient *mcp.Client) (*FullDecision, error)
 	}
 
 	// 2. Build System Prompt (fixed rules) and User Prompt (dynamic data)
-	systemPrompt := buildSystemPrompt(ctx.Account.TotalEquity, ctx.BTCETHLeverage, ctx.AltcoinLeverage, ctx.InstrumentType, ctx.IsReplay)
+	systemPrompt := buildSystemPrompt(ctx.Account.DecisionSizingEquity(), ctx.BTCETHLeverage, ctx.AltcoinLeverage, ctx.InstrumentType, ctx.IsReplay)
 	userPrompt := buildUserPrompt(ctx)
 
 	// 3. Call AI API (using system + user prompt)
@@ -113,7 +134,7 @@ func GetFullDecision(ctx *Context, mcpClient *mcp.Client) (*FullDecision, error)
 	}
 
 	// 4. Parse AI response
-	decision, err := parseFullDecisionResponse(aiResponse, ctx.Account.TotalEquity, ctx.BTCETHLeverage, ctx.AltcoinLeverage, ctx.InstrumentType, ctx.IsReplay)
+	decision, err := parseFullDecisionResponse(aiResponse, ctx.Account.DecisionSizingEquity(), ctx.BTCETHLeverage, ctx.AltcoinLeverage, ctx.InstrumentType, ctx.IsReplay)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse AI response: %w", err)
 	}
@@ -157,19 +178,32 @@ func fetchMarketDataForContext(ctx *Context) error {
 	// Fetch market data for selected symbols
 	for symbol := range symbolSet {
 		req := market.GetRequest{
-			Symbol:         symbol,
-			Provider:       ctx.Provider,
-			InstrumentType: ctx.InstrumentType,
-			BarsAdjustment: ctx.BarsAdjustment,
+			Symbol:            symbol,
+			Provider:          ctx.Provider,
+			InstrumentType:    ctx.InstrumentType,
+			BarsAdjustment:    ctx.BarsAdjustment,
+			ValidationOptions: ctx.DataValidationOptions,
 		}
 
 		data, err := market.Get(req)
 		if err != nil {
+			if ctx.DataQualityObserver != nil {
+				var validationErr *dataquality.ValidationError
+				if errors.As(err, &validationErr) && validationErr != nil {
+					result := validationErr.Result
+					ctx.DataQualityObserver(symbol, &result, err)
+				} else {
+					ctx.DataQualityObserver(symbol, nil, err)
+				}
+			}
 			failedFetches++
 			if failedFetches <= 5 {
 				log.Printf(" Market data fetch failed for %s: %v", symbol, err)
 			}
 			continue
+		}
+		if ctx.DataQualityObserver != nil {
+			ctx.DataQualityObserver(symbol, nil, nil)
 		}
 
 		//  Liquidity filtering: skip coins with OI value < 15M USD (both longs and shorts)
@@ -236,7 +270,7 @@ func buildSystemPrompt(accountEquity float64, btcEthLeverage, altcoinLeverage in
 
 	// === Core Mission ===
 	if isReplay {
-		sb.WriteString("You are the replay testing program for the AegisTrade trading system.\n")
+		sb.WriteString("You are the replay testing program for the Northstar trading system.\n")
 		sb.WriteString("#  Replay Demo Mode (CRITICAL)\n\n")
 		sb.WriteString("Currently in demo replay mode, you must **relax all strict opening requirements**, main purpose is **system execution testing**.\n")
 		sb.WriteString("1. **Force Execution Testing**: Please select at least one symbol you consider potential in the current cycle to open a position (long/short both fine). Do not keep waiting. We are testing the order execution system!\n")
@@ -402,11 +436,19 @@ func buildUserPrompt(ctx *Context) string {
 	}
 
 	// Account Data
-	sb.WriteString(fmt.Sprintf("**Account**: Equity %.2f | Available %.2f (%.1f%%) | P&L %+.2f%% | Margin Used %.1f%% | Positions: %d\n\n",
-		ctx.Account.TotalEquity,
+	availablePct := 0.0
+	if ctx.Account.AccountEquity > 0 {
+		availablePct = (ctx.Account.AvailableBalance / ctx.Account.AccountEquity) * 100
+	}
+	sb.WriteString(fmt.Sprintf("**Account**: Broker Equity %.2f | Cash %.2f | Available %.2f (%.1f%%) | Gross MV %.2f | Open P&L %+.2f | Strategy P&L %+.2f (%+.2f%%) | Margin Used %.1f%% | Positions: %d\n\n",
+		ctx.Account.AccountEquity,
+		ctx.Account.AccountCash,
 		ctx.Account.AvailableBalance,
-		(ctx.Account.AvailableBalance/ctx.Account.TotalEquity)*100,
-		ctx.Account.TotalPnLPct,
+		availablePct,
+		ctx.Account.GrossMarketValue,
+		ctx.Account.UnrealizedPnL,
+		ctx.Account.TotalPnL,
+		ctx.Account.StrategyReturnPct,
 		ctx.Account.MarginUsedPct,
 		ctx.Account.PositionCount))
 

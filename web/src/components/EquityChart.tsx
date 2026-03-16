@@ -16,9 +16,16 @@ import { t } from '../i18n/translations';
 
 interface EquityPoint {
   timestamp: string;
-  total_equity: number;
-  pnl: number;
-  pnl_pct: number;
+  account_equity: number;
+  account_cash: number;
+  available_balance: number;
+  gross_market_value: number;
+  unrealized_pnl: number;
+  realized_pnl: number;
+  total_pnl: number;
+  strategy_initial_capital: number;
+  strategy_equity: number;
+  strategy_return_pct: number;
   cycle_number: number;
 }
 
@@ -64,8 +71,7 @@ export function EquityChart({ traderId }: EquityChartProps) {
     );
   }
 
-  // total_equity01API
-  const validHistory = history?.filter(point => point.total_equity > 1) || [];
+  const validHistory = history?.filter(point => point.strategy_equity > 0) || [];
 
   if (!validHistory || validHistory.length === 0) {
     return (
@@ -87,30 +93,28 @@ export function EquityChart({ traderId }: EquityChartProps) {
     ? validHistory.slice(-MAX_DISPLAY_POINTS)
     : validHistory;
 
-  // account
-  const initialBalance = validHistory[0]?.total_equity
-    || account?.total_equity
-    || 100;  // 100
+  const initialBalance = validHistory[0]?.strategy_initial_capital
+    || account?.strategy_initial_capital
+    || 100;
 
   // 
   const chartData = displayHistory.map((point) => {
-    const pnl = point.total_equity - initialBalance;
-    const pnlPct = ((pnl / initialBalance) * 100).toFixed(2);
     return {
       time: new Date(point.timestamp).toLocaleTimeString('en-CA', {
         hour: '2-digit',
         minute: '2-digit',
       }),
-      value: displayMode === 'dollar' ? point.total_equity : parseFloat(pnlPct),
+      value: displayMode === 'dollar' ? point.strategy_equity : point.strategy_return_pct,
       cycle: point.cycle_number,
-      raw_equity: point.total_equity,
-      raw_pnl: pnl,
-      raw_pnl_pct: parseFloat(pnlPct),
+      raw_strategy_equity: point.strategy_equity,
+      raw_account_equity: point.account_equity,
+      raw_total_pnl: point.total_pnl,
+      raw_strategy_return_pct: point.strategy_return_pct,
     };
   });
 
   const currentValue = chartData[chartData.length - 1];
-  const isProfit = currentValue.raw_pnl >= 0;
+  const isProfit = currentValue.raw_total_pnl >= 0;
 
   // Y
   const calculateYDomain = () => {
@@ -144,15 +148,18 @@ export function EquityChart({ traderId }: EquityChartProps) {
         <div className="rounded p-3 shadow-xl" style={{ background: '#1E2329', border: '1px solid #2B3139' }}>
           <div className="text-xs mb-1" style={{ color: '#848E9C' }}>Cycle #{data.cycle}</div>
           <div className="font-bold mono" style={{ color: '#EAECEF' }}>
-            {data.raw_equity.toFixed(2)} USDT
+            Strategy Equity {data.raw_strategy_equity.toFixed(2)} USDT
+          </div>
+          <div className="text-xs mono" style={{ color: '#848E9C' }}>
+            Broker Equity {data.raw_account_equity.toFixed(2)} USDT
           </div>
           <div
             className="text-sm mono font-bold"
-            style={{ color: data.raw_pnl >= 0 ? '#0ECB81' : '#F6465D' }}
+            style={{ color: data.raw_total_pnl >= 0 ? '#0ECB81' : '#F6465D' }}
           >
-            {data.raw_pnl >= 0 ? '+' : ''}
-            {data.raw_pnl.toFixed(2)} USDT ({data.raw_pnl_pct >= 0 ? '+' : ''}
-            {data.raw_pnl_pct}%)
+            {data.raw_total_pnl >= 0 ? '+' : ''}
+            {data.raw_total_pnl.toFixed(2)} USDT ({data.raw_strategy_return_pct >= 0 ? '+' : ''}
+            {data.raw_strategy_return_pct.toFixed(2)}%)
           </div>
         </div>
       );
@@ -168,7 +175,7 @@ export function EquityChart({ traderId }: EquityChartProps) {
           <h3 className="text-base sm:text-lg font-bold mb-2" style={{ color: '#EAECEF' }}>{t('accountEquityCurve', language)}</h3>
           <div className="flex flex-col sm:flex-row sm:items-baseline gap-2 sm:gap-4">
             <span className="text-2xl sm:text-3xl font-bold mono" style={{ color: '#EAECEF' }}>
-              {account?.total_equity.toFixed(2) || '0.00'}
+              {account?.strategy_equity.toFixed(2) || '0.00'}
               <span className="text-base sm:text-lg ml-1" style={{ color: '#848E9C' }}>USDT</span>
             </span>
             <div className="flex items-center gap-2 flex-wrap">
@@ -181,10 +188,10 @@ export function EquityChart({ traderId }: EquityChartProps) {
                 }}
               >
                 {isProfit ? 'UP' : 'DOWN'} {isProfit ? '+' : ''}
-                {currentValue.raw_pnl_pct}%
+                {currentValue.raw_strategy_return_pct.toFixed(2)}%
               </span>
               <span className="text-xs sm:text-sm mono" style={{ color: '#848E9C' }}>
-                ({isProfit ? '+' : ''}{currentValue.raw_pnl.toFixed(2)} USDT)
+                ({isProfit ? '+' : ''}{currentValue.raw_total_pnl.toFixed(2)} USDT)
               </span>
             </div>
           </div>
@@ -280,7 +287,7 @@ export function EquityChart({ traderId }: EquityChartProps) {
         <div className="p-2 rounded transition-all hover:bg-opacity-50" style={{ background: 'rgba(240, 185, 11, 0.05)' }}>
           <div className="text-xs mb-1 uppercase tracking-wider" style={{ color: '#848E9C' }}>{t('currentEquity', language)}</div>
           <div className="text-xs sm:text-sm font-bold mono" style={{ color: '#EAECEF' }}>
-            {currentValue.raw_equity.toFixed(2)} USDT
+            {currentValue.raw_strategy_equity.toFixed(2)} USDT
           </div>
         </div>
         <div className="p-2 rounded transition-all hover:bg-opacity-50" style={{ background: 'rgba(240, 185, 11, 0.05)' }}>

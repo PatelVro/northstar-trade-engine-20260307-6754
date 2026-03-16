@@ -1,6 +1,6 @@
 #  Docker 
 
- Docker  AegisTrade AI 
+ Docker  Northstar AI 
 
 ##  
 
@@ -169,11 +169,11 @@ docker compose up -d --build
 
 ```yaml
 services:
-  backend:
+  northstar-backend:
     ports:
       - "8080:8080"  #  ":8080"
 
-  frontend:
+  northstar-frontend:
     ports:
       - "3000:80"    #  ":80"
 ```
@@ -184,7 +184,7 @@ services:
 
 ```yaml
 services:
-  backend:
+  northstar-backend:
     deploy:
       resources:
         limits:
@@ -201,18 +201,18 @@ services:
 
 ```bash
 # .env
-TZ=Asia/Shanghai
-BACKEND_PORT=8080
-FRONTEND_PORT=3000
+NORTHSTAR_TIMEZONE=America/Toronto
+NORTHSTAR_BACKEND_PORT=8080
+NORTHSTAR_FRONTEND_PORT=3000
 ```
 
  `docker-compose.yml` 
 
 ```yaml
 services:
-  backend:
+  northstar-backend:
     ports:
-      - "${BACKEND_PORT}:8080"
+      - "${NORTHSTAR_BACKEND_PORT}:8080"
 ```
 
 ##  
@@ -242,8 +242,8 @@ tar -xzf backup_20241029.tar.gz
 
 ```bash
 # 
-docker compose logs backend
-docker compose logs frontend
+docker compose logs northstar-backend
+docker compose logs northstar-frontend
 
 # 
 docker compose ps -a
@@ -277,8 +277,8 @@ cp config.json.example config.json
 
 ```bash
 # 
-docker inspect AegisTrade-backend | jq '.[0].State.Health'
-docker inspect AegisTrade-frontend | jq '.[0].State.Health'
+docker inspect northstar-backend | jq '.[0].State.Health'
+docker inspect northstar-frontend | jq '.[0].State.Health'
 
 # 
 curl http://localhost:8080/health
@@ -289,10 +289,10 @@ curl http://localhost:3000/health
 
 ```bash
 # 
-docker compose exec frontend ping backend
+docker compose exec northstar-frontend ping northstar-backend
 
 # 
-docker compose exec frontend wget -O- http://backend:8080/health
+docker compose exec northstar-frontend wget -O- http://northstar-backend:8080/health
 ```
 
 ###  Docker 
@@ -320,7 +320,7 @@ docker system prune -a --volumes
    ```yaml
    # docker-compose.yml
    services:
-     backend:
+     northstar-backend:
        environment:
          - BINANCE_API_KEY=${BINANCE_API_KEY}
          - BINANCE_SECRET_KEY=${BINANCE_SECRET_KEY}
@@ -330,7 +330,7 @@ docker system prune -a --volumes
    ```yaml
    # 
    services:
-     backend:
+     northstar-backend:
        ports:
          - "127.0.0.1:8080:8080"
    ```
@@ -346,7 +346,7 @@ docker system prune -a --volumes
 ###  Nginx 
 
 ```nginx
-# /etc/nginx/sites-available/AegisTrade
+# /etc/nginx/sites-available/northstar
 server {
     listen 80;
     server_name your-domain.com;
@@ -385,13 +385,13 @@ sudo certbot renew --dry-run
 docker swarm init
 
 # 
-docker stack deploy -c docker-compose.yml AegisTrade
+docker stack deploy -c docker-compose.yml northstar
 
 # 
-docker stack services AegisTrade
+docker stack services northstar
 
 # 
-docker service scale AegisTrade_backend=3
+docker service scale northstar_northstar-backend=3
 ```
 
 ##  
@@ -432,7 +432,7 @@ services:
 
 ##  
 
-- **GitHub Issues**: [](https://github.com/yourusername/open-AegisTrade/issues)
+- **GitHub Issues**: [](https://github.com/yourusername/northstar/issues)
 - ****:  [README.md](README.md)
 - ****:  Discord/Telegram 
 
@@ -467,6 +467,6 @@ docker system prune -a             #  Docker
 
 ---
 
-  AegisTrade AI 
+  Northstar AI 
 
 [](#-) Issue

@@ -15,15 +15,20 @@ export interface SystemStatus {
 
 // 
 export interface AccountInfo {
-  total_equity: number;
+  accounting_version: number;
+  account_cash: number;
+  account_equity: number;
   available_balance: number;
+  gross_market_value: number;
+  unrealized_pnl: number;
+  realized_pnl: number;
   total_pnl: number;
-  total_pnl_pct: number;
-  total_unrealized_pnl: number;
+  strategy_initial_capital: number;
+  strategy_equity: number;
+  strategy_return_pct: number;
   margin_used: number;
   margin_used_pct: number;
   position_count: number;
-  initial_balance: number;
   daily_pnl: number;
 }
 
@@ -48,6 +53,8 @@ export interface DecisionAction {
   quantity: number;
   leverage: number;
   price: number;
+  fees_usd: number;
+  realized_pnl: number;
   order_id: number;
   timestamp: string;
   success: boolean;
@@ -62,11 +69,23 @@ export interface DecisionRecord {
   cot_trace: string;
   decision_json: string;
   account_state: {
-    total_balance: number;
+    accounting_version: number;
+    account_cash: number;
+    account_equity: number;
     available_balance: number;
-    total_unrealized_profit: number;
+    gross_market_value: number;
+    unrealized_pnl: number;
+    realized_pnl: number;
+    total_pnl: number;
+    strategy_initial_capital: number;
+    strategy_equity: number;
+    strategy_return_pct: number;
+    daily_pnl: number;
     position_count: number;
+    margin_used: number;
     margin_used_pct: number;
+    total_balance?: number;
+    total_unrealized_profit?: number;
   };
   positions: Array<{
     symbol: string;

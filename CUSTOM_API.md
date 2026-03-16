@@ -2,7 +2,7 @@
 
 ## 
 
- AegisTrade  OpenAI  API
+ Northstar  OpenAI  API
 - OpenAI  API (gpt-4o, gpt-4-turbo )
 - OpenRouter ()
 -  (Ollama, LM Studio )

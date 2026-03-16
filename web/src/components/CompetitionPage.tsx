@@ -43,7 +43,7 @@ export function CompetitionPage() {
 
   // 
   const sortedTraders = [...competition.traders].sort(
-    (a, b) => b.total_pnl_pct - a.total_pnl_pct
+    (a, b) => b.strategy_return_pct - a.strategy_return_pct
   );
 
   // 
@@ -76,7 +76,7 @@ export function CompetitionPage() {
           <div className="text-xs mb-1" style={{ color: '#848E9C' }}>{t('leader', language)}</div>
           <div className="text-lg font-bold" style={{ color: '#F0B90B' }}>{leader?.trader_name}</div>
           <div className="text-sm font-semibold" style={{ color: (leader?.total_pnl ?? 0) >= 0 ? '#0ECB81' : '#F6465D' }}>
-            {(leader?.total_pnl ?? 0) >= 0 ? '+' : ''}{leader?.total_pnl_pct?.toFixed(2) || '0.00'}%
+            {(leader?.total_pnl ?? 0) >= 0 ? '+' : ''}{leader?.strategy_return_pct?.toFixed(2) || '0.00'}%
           </div>
         </div>
       </div>
@@ -141,7 +141,10 @@ export function CompetitionPage() {
                       <div className="text-right">
                         <div className="text-xs" style={{ color: '#848E9C' }}>{t('equity', language)}</div>
                         <div className="text-sm font-bold mono" style={{ color: '#EAECEF' }}>
-                          {trader.total_equity?.toFixed(2) || '0.00'}
+                          {trader.strategy_equity?.toFixed(2) || '0.00'}
+                        </div>
+                        <div className="text-xs mono" style={{ color: '#848E9C' }}>
+                          broker {trader.account_equity?.toFixed(2) || '0.00'}
                         </div>
                       </div>
 
@@ -153,7 +156,7 @@ export function CompetitionPage() {
                           style={{ color: (trader.total_pnl ?? 0) >= 0 ? '#0ECB81' : '#F6465D' }}
                         >
                           {(trader.total_pnl ?? 0) >= 0 ? '+' : ''}
-                          {trader.total_pnl_pct?.toFixed(2) || '0.00'}%
+                          {trader.strategy_return_pct?.toFixed(2) || '0.00'}%
                         </div>
                         <div className="text-xs mono" style={{ color: '#848E9C' }}>
                           {(trader.total_pnl ?? 0) >= 0 ? '+' : ''}{trader.total_pnl?.toFixed(2) || '0.00'}
@@ -202,7 +205,7 @@ export function CompetitionPage() {
             {sortedTraders.map((trader, index) => {
               const isWinning = index === 0;
               const opponent = sortedTraders[1 - index];
-              const gap = trader.total_pnl_pct - opponent.total_pnl_pct;
+              const gap = trader.strategy_return_pct - opponent.strategy_return_pct;
 
               return (
                 <div
@@ -229,7 +232,7 @@ export function CompetitionPage() {
                       {trader.trader_name}
                     </div>
                     <div className="text-2xl font-bold mono mb-1" style={{ color: (trader.total_pnl ?? 0) >= 0 ? '#0ECB81' : '#F6465D' }}>
-                      {(trader.total_pnl ?? 0) >= 0 ? '+' : ''}{trader.total_pnl_pct?.toFixed(2) || '0.00'}%
+                      {(trader.total_pnl ?? 0) >= 0 ? '+' : ''}{trader.strategy_return_pct?.toFixed(2) || '0.00'}%
                     </div>
                     {isWinning && gap > 0 && (
                       <div className="text-xs font-semibold" style={{ color: '#0ECB81' }}>

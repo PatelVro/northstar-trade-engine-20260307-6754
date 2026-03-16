@@ -6,7 +6,7 @@
 
 1. ** Issues **
    ```
-   https://github.com/hillpatel/aegistrade/issues
+   https://github.com/hillpatel/northstar/issues
    ```
 
 2. ** "New Issue" **
@@ -114,7 +114,7 @@ gh issue create \
 ```
  $500 Bounty! 
 
-Looking for devs to integrate Hyperliquid exchange into AegisTrade AI Trading System
+Looking for devs to integrate Hyperliquid exchange into Northstar trading platform
 
  Add perpetual contracts support
  Unified API interface
@@ -127,7 +127,7 @@ Details: []
 ```
 
 **Telegram:**
--  AegisTrade https://t.me/AegisTrade_dev_community
+-  Northstar https://t.me/northstar_dev_community
 - 
 
 ### 2. 
@@ -215,8 +215,8 @@ Details: []
 
 ##  
 
-- **GitHub Issues**: https://github.com/hillpatel/aegistrade/issues
-- **Telegram**: https://t.me/AegisTrade_dev_community
+- **GitHub Issues**: https://github.com/hillpatel/northstar/issues
+- **Telegram**: https://t.me/northstar_dev_community
 - **Twitter/X**: [@Web3Tinkle](https://x.com/Web3Tinkle)
 
 ---

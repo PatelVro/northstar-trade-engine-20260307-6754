@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -95,24 +96,24 @@ func TestAlpacaReplayConfig(t *testing.T) {
 	cfg := Config{
 		Traders: []TraderConfig{
 			{
-				ID: "replay_1",
-				Name: "Replay Test",
-				Enabled: true,
-				AIModel: "qwen",
-				QwenKey: "test",
-				Exchange: "alpaca",
-				AlpacaAPIKey: "key",
+				ID:              "replay_1",
+				Name:            "Replay Test",
+				Enabled:         true,
+				AIModel:         "qwen",
+				QwenKey:         "test",
+				Exchange:        "alpaca",
+				AlpacaAPIKey:    "key",
 				AlpacaSecretKey: "secret",
-				Mode: "replay",
-				CSVDataDir: "./data/csv",
-				InitialBalance: 1000,
+				Mode:            "replay",
+				CSVDataDir:      "./data/csv",
+				InitialBalance:  1000,
 			},
 		},
 	}
 
 	// Marshall and unmarshal to trigger Validate logic easily
 	jsonData, _ := json.Marshal(cfg)
-	
+
 	tmpFile, _ := os.CreateTemp("", "config_test_replay_*.json")
 	defer os.Remove(tmpFile.Name())
 	tmpFile.Write(jsonData)
@@ -129,5 +130,166 @@ func TestAlpacaReplayConfig(t *testing.T) {
 	}
 	if trader.Broker != "sim" {
 		t.Errorf("Expected Broker 'sim', got '%s'", trader.Broker)
+	}
+}
+
+func TestLoadConfigResolvesEnvPlaceholders(t *testing.T) {
+	t.Setenv("NORTHSTAR_DEEPSEEK_API_KEY", "deepseek-from-env")
+	t.Setenv("NORTHSTAR_IBKR_ACCOUNT_ID", "DU1234567")
+	t.Setenv("NORTHSTAR_IBKR_BASE_URL", "https://127.0.0.1:5002/v1/api")
+
+	mockConfig := `{
+		"traders": [
+			{
+				"id": "ibkr_env",
+				"name": "IBKR Env",
+				"enabled": true,
+				"ai_model": "deepseek",
+				"exchange": "ibkr",
+				"mode": "paper",
+				"data_provider": "ibkr",
+				"broker": "ibkr",
+				"ibkr_gateway_url": "${NORTHSTAR_IBKR_BASE_URL}",
+				"ibkr_account_id": "${NORTHSTAR_IBKR_ACCOUNT_ID}",
+				"deepseek_key": "${NORTHSTAR_DEEPSEEK_API_KEY}",
+				"initial_balance": 1000.0,
+				"scan_interval_minutes": 5
+			}
+		]
+	}`
+
+	tmpFile, err := os.CreateTemp("", "config_env_test_*.json")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	if _, err := tmpFile.Write([]byte(mockConfig)); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	tmpFile.Close()
+
+	cfg, err := LoadConfig(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	trader := cfg.Traders[0]
+	if trader.DeepSeekKey != "deepseek-from-env" {
+		t.Fatalf("expected deepseek env value, got %q", trader.DeepSeekKey)
+	}
+	if trader.IBKRAccountID != "DU1234567" {
+		t.Fatalf("expected IBKR account env value, got %q", trader.IBKRAccountID)
+	}
+	if trader.IBKRGatewayURL != "https://127.0.0.1:5002/v1/api" {
+		t.Fatalf("expected IBKR gateway env value, got %q", trader.IBKRGatewayURL)
+	}
+}
+
+func TestLoadConfigAppliesLocalOverride(t *testing.T) {
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "config_ibkr.json")
+	overridePath := filepath.Join(dir, "config_ibkr.local.json")
+
+	baseConfig := `{
+		"traders": [
+			{
+				"id": "ibkr_local",
+				"name": "Base Name",
+				"enabled": true,
+				"ai_model": "deepseek",
+				"exchange": "ibkr",
+				"mode": "paper",
+				"data_provider": "ibkr",
+				"broker": "ibkr",
+				"ibkr_gateway_url": "https://127.0.0.1:5002/v1/api",
+				"ibkr_account_id": "${NORTHSTAR_IBKR_ACCOUNT_ID}",
+				"deepseek_key": "${NORTHSTAR_DEEPSEEK_API_KEY}",
+				"initial_balance": 1000.0,
+				"scan_interval_minutes": 5
+			}
+		]
+	}`
+	overrideConfig := `{
+		"traders": [
+			{
+				"id": "ibkr_local",
+				"name": "Override Name",
+				"enabled": true,
+				"ai_model": "deepseek",
+				"exchange": "ibkr",
+				"mode": "paper",
+				"data_provider": "ibkr",
+				"broker": "ibkr",
+				"ibkr_gateway_url": "https://127.0.0.1:5002/v1/api",
+				"ibkr_account_id": "DU7654321",
+				"deepseek_key": "local-file-key",
+				"initial_balance": 1000.0,
+				"scan_interval_minutes": 5
+			}
+		]
+	}`
+
+	if err := os.WriteFile(basePath, []byte(baseConfig), 0644); err != nil {
+		t.Fatalf("write base config: %v", err)
+	}
+	if err := os.WriteFile(overridePath, []byte(overrideConfig), 0644); err != nil {
+		t.Fatalf("write override config: %v", err)
+	}
+
+	cfg, err := LoadConfig(basePath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	trader := cfg.Traders[0]
+	if trader.Name != "Override Name" {
+		t.Fatalf("expected override trader name, got %q", trader.Name)
+	}
+	if trader.DeepSeekKey != "local-file-key" {
+		t.Fatalf("expected override deepseek key, got %q", trader.DeepSeekKey)
+	}
+	if trader.IBKRAccountID != "DU7654321" {
+		t.Fatalf("expected override account ID, got %q", trader.IBKRAccountID)
+	}
+}
+
+func TestAlpacaReplayWithoutSecretsUsesLocalCSV(t *testing.T) {
+	cfg := Config{
+		Traders: []TraderConfig{
+			{
+				ID:                  "replay_local",
+				Name:                "Replay Local CSV",
+				Enabled:             true,
+				AIModel:             "deepseek",
+				DeepSeekKey:         "test-key",
+				Exchange:            "alpaca",
+				Mode:                "replay",
+				DataProvider:        "csv",
+				Broker:              "sim",
+				CSVDataDir:          "./data/csv",
+				InstrumentType:      "equity",
+				InitialBalance:      1000,
+				ScanIntervalMinutes: 5,
+			},
+		},
+	}
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+
+	tmpFile, err := os.CreateTemp("", "config_test_replay_local_*.json")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	if _, err := tmpFile.Write(data); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	tmpFile.Close()
+
+	if _, err := LoadConfig(tmpFile.Name()); err != nil {
+		t.Fatalf("expected replay config without Alpaca secrets to load, got error: %v", err)
 	}
 }

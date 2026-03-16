@@ -1,6 +1,10 @@
 @echo off
 setlocal
 
+set "CONFIG_FILE=config_ibkr.json"
+if not exist "%CONFIG_FILE%" set "CONFIG_FILE=config_ibkr.example.json"
+set "NORTHSTAR_BIN=northstar.exe"
+
 echo =========================================================
 echo   Northstar Canadian Equities (Interactive Brokers Paper)
 echo =========================================================
@@ -18,4 +22,11 @@ if not exist data\universe\us_companies.txt (
 echo [2/2] Starting Northstar in Paper Trading mode...
 echo.
 
-go run main.go config_ibkr.json
+echo Using config: %CONFIG_FILE%
+if exist "%NORTHSTAR_BIN%" (
+  echo Using release binary: %NORTHSTAR_BIN%
+  "%NORTHSTAR_BIN%" "%CONFIG_FILE%"
+) else (
+  echo Release binary not found, falling back to go run.
+  go run main.go "%CONFIG_FILE%"
+)

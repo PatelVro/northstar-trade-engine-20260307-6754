@@ -2,22 +2,28 @@ version: '3.8'
 
 services:
   # Backend service (API and core logic)
-  AegisTrade:
+  northstar-backend:
     build:
       context: .
       dockerfile: ./docker/Dockerfile.backend
-    container_name: AegisTrade-trading
+      args:
+        NORTHSTAR_VERSION: ${NORTHSTAR_VERSION:-dev}
+        NORTHSTAR_COMMIT: ${NORTHSTAR_COMMIT:-unknown}
+        NORTHSTAR_BUILD_TIME: ${NORTHSTAR_BUILD_TIME:-unknown}
+        NORTHSTAR_BUILD_CHANNEL: ${NORTHSTAR_BUILD_CHANNEL:-docker}
+        NORTHSTAR_BUILD_DIRTY: ${NORTHSTAR_BUILD_DIRTY:-unknown}
+    container_name: northstar-backend
     restart: unless-stopped
     ports:
-      - "${AegisTrade_BACKEND_PORT:-8080}:8080"
+      - "${NORTHSTAR_BACKEND_PORT:-8080}:8080"
     volumes:
       - ./config.json:/app/config.json:ro
       - ./decision_logs:/app/decision_logs
       - /etc/localtime:/etc/localtime:ro  # Sync host time
     environment:
-      - TZ=${AegisTrade_TIMEZONE:-Asia/Shanghai}  # Set timezone
+      - TZ=${NORTHSTAR_TIMEZONE:-America/Toronto}  # Set timezone
     networks:
-      - AegisTrade-network
+      - northstar-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
@@ -26,18 +32,18 @@ services:
       start_period: 60s
 
   # Frontend service (static serving and proxy)
-  AegisTrade-frontend:
+  northstar-frontend:
     build:
       context: .
       dockerfile: ./docker/Dockerfile.frontend
-    container_name: AegisTrade-frontend
+    container_name: northstar-frontend
     restart: unless-stopped
     ports:
-      - "${AegisTrade_FRONTEND_PORT:-3000}:80"
+      - "${NORTHSTAR_FRONTEND_PORT:-3000}:80"
     networks:
-      - AegisTrade-network
+      - northstar-network
     depends_on:
-      - AegisTrade
+      - northstar-backend
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
       interval: 30s
@@ -46,5 +52,5 @@ services:
       start_period: 5s
 
 networks:
-  AegisTrade-network:
+  northstar-network:
     driver: bridge

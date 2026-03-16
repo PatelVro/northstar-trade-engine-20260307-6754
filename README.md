@@ -23,8 +23,11 @@ It supports multiple brokers/exchanges and both paper-style and live execution m
 ## Safety controls
 
 - Live mode hard gate: `CONFIRM_LIVE_TRADING=true` is required for live traders
+- Live promotion gate: live traders must also pass the local promotion checklist before trading is allowed
+- Dedicated execution manager: trader actions now flow through an execution intent layer with bounded duplicate suppression, final-gate enforcement, and stale execution tracking before broker submission
 - Config-level limits for daily loss and drawdown
 - Runtime stop windows after risk triggers
+- Deployment validation command: `northstar validate-live` checks release build identity, working tree cleanliness, live config validity, promotion status, readiness, and risk-limit presence before deployment
 
 ## Requirements
 
@@ -50,13 +53,15 @@ npm install
 cd ..
 ```
 
-3. Create your runtime config from `config.json.example` and fill your own keys/secrets.
+3. Pick a tracked config template such as `config_ibkr.example.json`, `config_paper.example.json`, or `config.json.example`. Keep the tracked file safe and provide credentials through environment variables or an ignored local override file.
 
 4. Start backend:
 
 ```bash
 go run main.go config.json
 ```
+
+If a stamped `northstar.exe` release binary already exists, the Windows launcher scripts prefer that binary automatically and only fall back to `go run` for local development.
 
 5. Start web dashboard (new terminal):
 
@@ -68,6 +73,53 @@ npm run dev
 Backend default port: `8080`
 Frontend default dev port: `3000`
 
+## Local credential setup
+
+Tracked config files in this repo are examples and safe defaults only. Do not commit real API keys, broker account IDs, session cookies, or private keys.
+
+Preferred setup:
+
+1. Export the required environment variables for your mode:
+
+```powershell
+$env:NORTHSTAR_DEEPSEEK_API_KEY = "..."
+$env:NORTHSTAR_IBKR_ACCOUNT_ID = "DU1234567"
+$env:NORTHSTAR_IBKR_SESSION_COOKIE = "x-sess-uuid=..."
+```
+
+2. Run Northstar with a tracked config:
+
+```bash
+go run main.go config_ibkr.example.json
+```
+
+Optional local override file:
+
+- `config.local.json`
+- `<base-config>.local.json` such as `config_ibkr.example.local.json` or `config_ibkr.local.json`
+
+These files are gitignored. They use the same JSON shape as the base config, and the local file overrides the tracked file at startup.
+
+Common environment variables:
+
+- `NORTHSTAR_DEEPSEEK_API_KEY`
+- `NORTHSTAR_QWEN_API_KEY`
+- `NORTHSTAR_CUSTOM_API_URL`
+- `NORTHSTAR_CUSTOM_API_KEY`
+- `NORTHSTAR_CUSTOM_MODEL_NAME`
+- `NORTHSTAR_IBKR_BASE_URL`
+- `NORTHSTAR_IBKR_ACCOUNT_ID`
+- `NORTHSTAR_IBKR_SESSION_COOKIE`
+- `NORTHSTAR_ALPACA_API_KEY`
+- `NORTHSTAR_ALPACA_SECRET_KEY`
+- `NORTHSTAR_BINANCE_API_KEY`
+- `NORTHSTAR_BINANCE_SECRET_KEY`
+- `NORTHSTAR_HYPERLIQUID_PRIVATE_KEY`
+- `NORTHSTAR_HYPERLIQUID_WALLET_ADDR`
+- `NORTHSTAR_ASTER_USER`
+- `NORTHSTAR_ASTER_SIGNER`
+- `NORTHSTAR_ASTER_PRIVATE_KEY`
+
 ## Common run scripts (Windows)
 
 - Alpaca paper: `run_paper.cmd`
@@ -78,6 +130,110 @@ Frontend default dev port: `3000`
 - IBKR automated backtest matrix: `run_ibkr_backtest.cmd`
 - Live dashboard demo (paper synthetic feed): `run_dashboard_demo.cmd`
 - Live dashboard demo full startup (backend + frontend): `run_dashboard_demo_full.cmd`
+
+## Live promotion checklist
+
+Live mode now has two separate gates:
+
+- readiness: can the system run safely right now?
+- promotion: has this trader/config been explicitly approved for live use?
+
+Live trading stays blocked unless both pass.
+
+Recommended local-only promotion fields for live traders:
+
+- `live_promotion_approved`: explicit operator approval; keep this in an ignored local override unless you have a deliberate release process
+- `promotion_source_trader_id`: optional paper trader ID whose session reports should be used as evidence
+- `min_paper_session_reports`: minimum recent parseable paper session reports required for promotion
+- `require_backtest_summary`: optionally require a local `study_summary.json`
+- `require_release_build_for_live`: require stamped release build metadata instead of `go run` / dev builds
+- `promotion_max_evidence_age_days`: max age for paper/backtest evidence
+
+Evidence sources checked locally:
+
+- paper session reports under `output/session_reports/<trader_id>/`
+- backtest study summaries under `output/**/study_summary.json`
+
+Passing promotion does not claim profitability. It only means:
+
+- live config sanity passed
+- explicit live approval is present
+- startup readiness passed
+- broker runtime is healthy
+- bounded local paper evidence exists
+- required build/backtest gates passed
+
+Example local live override:
+
+```json
+{
+  "traders": [
+    {
+      "id": "ibkr_live_trader",
+      "live_promotion_approved": true,
+      "promotion_source_trader_id": "ibkr_paper_trader",
+      "min_paper_session_reports": 3,
+      "require_backtest_summary": true,
+      "require_release_build_for_live": true,
+      "promotion_max_evidence_age_days": 30
+    }
+  ]
+}
+```
+
+Operator status for live traders now includes a `promotion` section in `GET /api/status`.
+
+## Deployment validation
+
+Before promoting a config to live deployment, run:
+
+```bash
+northstar validate-live -config config_ibkr_live.json
+```
+
+You can also pass the config path positionally:
+
+```bash
+northstar validate-live config_ibkr_live.json
+```
+
+This command fail-closes if any enabled live trader is not deployment-ready. It verifies:
+
+- release build identity is present
+- git working tree is clean
+- config parses successfully and contains enabled live traders
+- live-trader risk limits are defined
+- trader startup readiness passes
+- trader promotion approval passes
+
+Typical deployment flow:
+
+1. Build a stamped release binary.
+2. Ensure the repo working tree is clean.
+3. Run `northstar validate-live ...`.
+4. Only deploy/start live trading if the command exits with code `0`.
+
+## Execution management
+
+Northstar now uses a dedicated execution-management layer between approved decisions and broker submission:
+
+```text
+strategy -> pre-trade risk -> supervisor/final gate -> execution manager -> broker -> lifecycle/reconciliation
+```
+
+What this adds:
+
+- explicit execution intents for trader actions
+- bounded duplicate suppression so equivalent in-flight or very recent intents are not blindly resubmitted
+- conservative final-gate checks at submit time
+- honest immediate execution statuses such as `blocked`, `duplicate_suppressed`, `submitted`, `filled`, `rejected`, and `stale`
+- bounded execution summaries in `GET /api/status` and paper session reports
+
+Important scope notes:
+
+- this is not a full OMS/EMS or smart-routing system
+- ambiguous broker-submit outcomes are not auto-retried
+- broker truth for later fills and terminal states still comes from order lifecycle tracking and reconciliation
 
 ## Equity strategy modes
 
@@ -187,25 +343,25 @@ run_ibkr_backtest.cmd
 Direct command:
 
 ```bash
-go run ./cmd/ibkr-backtest -account-id DUP200062
+go run ./cmd/ibkr-backtest
 ```
 
 Auto parameter grid search:
 
 ```bash
-go run ./cmd/ibkr-backtest -account-id DUP200062 -auto-grid -strategy-grid multi_factor,momentum_only,momentum_fallback -score-grid 0.30,0.35,0.45,1.25 -position-grid 0.06,0.08,0.10
+go run ./cmd/ibkr-backtest -auto-grid -strategy-grid multi_factor,momentum_only,momentum_fallback -score-grid 0.30,0.35,0.45,1.25 -position-grid 0.06,0.08,0.10
 ```
 
 Auto-grid with best-profile output:
 
 ```bash
-go run ./cmd/ibkr-backtest -account-id DUP200062 -auto-grid -write-best-profile best_profile.json
+go run ./cmd/ibkr-backtest -auto-grid -write-best-profile best_profile.json
 ```
 
 90-cycle local multi-factor sweep example:
 
 ```bash
-go run ./cmd/ibkr-backtest -account-id DUP200062 -profiles multi_factor:0.35:0.08,multi_factor:0.45:0.10,momentum_only:1.25:0.10 -max-cycles 90
+go run ./cmd/ibkr-backtest -profiles multi_factor:0.35:0.08,multi_factor:0.45:0.10,momentum_only:1.25:0.10 -max-cycles 90
 ```
 
 Artifacts are written under:
@@ -229,6 +385,59 @@ Frontend:
 cd web
 npm run build
 ```
+
+## Release baseline
+
+For paper/live operator trust, treat release builds as explicit artifacts rather than whatever happens to be in the working tree.
+
+Recommended baseline:
+
+1. Confirm the workspace state you intend to deploy:
+
+```bash
+git status --short
+```
+
+2. Run backend validation:
+
+```bash
+go test ./...
+```
+
+3. If you are deploying the dashboard too, build the frontend:
+
+```bash
+cd web
+npm run build
+cd ..
+```
+
+4. Build a stamped binary:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/build_release.ps1 -Version v0.1.0 -OutFile northstar.exe
+```
+
+Equivalent manual build:
+
+```bash
+go build -trimpath -ldflags="-X northstar/buildinfo.Version=v0.1.0 -X northstar/buildinfo.Commit=<git-commit> -X northstar/buildinfo.BuildTime=<utc-rfc3339> -X northstar/buildinfo.Channel=release -X northstar/buildinfo.Dirty=clean" -o northstar
+```
+
+5. Verify the binary identity before launch:
+
+```bash
+./northstar --version
+```
+
+6. After startup, confirm the running instance identity:
+
+```bash
+curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/api/status?trader_id=<trader_id>
+```
+
+Both endpoints now include build metadata so operators can verify `version`, `commit`, `build_time`, `channel`, and `dirty` state.
 
 ## API endpoints
 

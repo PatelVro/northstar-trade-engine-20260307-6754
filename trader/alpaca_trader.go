@@ -3,6 +3,7 @@ package trader
 import (
 	"fmt"
 	"log"
+	"math"
 	"strings"
 
 	"github.com/alpacahq/alpaca-trade-api-go/v3/alpaca"
@@ -52,16 +53,20 @@ func (a *AlpacaTrader) GetBalance() (map[string]interface{}, error) {
 	}
 
 	equity := account.Equity.InexactFloat64()
+	cash := account.Cash.InexactFloat64()
 	buyingPower := account.BuyingPower.InexactFloat64()
+	longMarketValue := account.LongMarketValue.InexactFloat64()
+	shortMarketValue := account.ShortMarketValue.InexactFloat64()
 
-	// Alpaca does not directly provide UnrealizedProfit as a single top-level field on Account
-	// Often it requires summing up positions, or subtracting initial balance
-	// We'll estimate based on positions in GetPositions, but for now:
-	
 	return map[string]interface{}{
-		"totalWalletBalance":    equity, // Assuming equity = wallet + unrealized
-		"totalUnrealizedProfit": float64(0), // Would need position sum to be exact
+		"accountCash":           cash,
+		"accountEquity":         equity,
 		"availableBalance":      buyingPower,
+		"grossMarketValue":      math.Abs(longMarketValue) + math.Abs(shortMarketValue),
+		"unrealizedPnL":         0.0,
+		"realizedPnL":           0.0,
+		"totalWalletBalance":    cash,
+		"totalUnrealizedProfit": 0.0,
 		"totalEquity":           equity,
 	}, nil
 }
@@ -124,9 +129,9 @@ func (a *AlpacaTrader) OpenLong(symbol string, quantity float64, leverage int) (
 	}
 
 	cleanSymbol := strings.TrimSuffix(strings.ToUpper(symbol), "USDT")
-	
+
 	qty := decimal.NewFromFloat(quantity)
-	
+
 	req := alpaca.PlaceOrderRequest{
 		Symbol:      cleanSymbol,
 		Side:        alpaca.Buy,
@@ -167,13 +172,13 @@ func (a *AlpacaTrader) OpenShort(symbol string, quantity float64, leverage int) 
 	}
 
 	cleanSymbol := strings.TrimSuffix(strings.ToUpper(symbol), "USDT")
-	
+
 	// Double check the asset is shortable
 	asset, err := a.client.GetAsset(cleanSymbol)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	if !asset.Shortable {
 		return nil, fmt.Errorf("asset %s is not shortable", cleanSymbol)
 	}
@@ -208,7 +213,7 @@ func (a *AlpacaTrader) CloseLong(symbol string, quantity float64) (map[string]in
 	}
 
 	cleanSymbol := strings.TrimSuffix(strings.ToUpper(symbol), "USDT")
-	
+
 	var order *alpaca.Order
 	var err error
 
@@ -281,26 +286,26 @@ func (a *AlpacaTrader) SetLeverage(symbol string, leverage int) error {
 // GetMarketPrice retrieves the latest price
 func (a *AlpacaTrader) GetMarketPrice(symbol string) (float64, error) {
 	cleanSymbol := strings.TrimSuffix(strings.ToUpper(symbol), "USDT")
-	
+
 	quote, err := a.mdClient.GetLatestQuote(cleanSymbol, marketdata.GetLatestQuoteRequest{})
 	if err != nil {
 		return 0, fmt.Errorf("failed to fetch latest quote for %s: %w", symbol, err)
 	}
-	
+
 	return quote.AskPrice, nil // Returning ask as a conservative market price estimate
 }
 
-// SetStopLoss sets a stop loss order. 
+// SetStopLoss sets a stop loss order.
 // Note: In Alpaca, brackets are usually sent WITH the open order.
 // Doing it post-fill requires fetching the position and creating an independent stop order.
 func (a *AlpacaTrader) SetStopLoss(symbol string, positionSide string, quantity, stopPrice float64) error {
 	cleanSymbol := strings.TrimSuffix(strings.ToUpper(symbol), "USDT")
-	
+
 	side := alpaca.Sell
 	if positionSide == "SHORT" {
 		side = alpaca.Buy
 	}
-	
+
 	qty := decimal.NewFromFloat(quantity)
 	sp := decimal.NewFromFloat(stopPrice)
 
@@ -325,12 +330,12 @@ func (a *AlpacaTrader) SetStopLoss(symbol string, positionSide string, quantity,
 // SetTakeProfit sets a take profit order
 func (a *AlpacaTrader) SetTakeProfit(symbol string, positionSide string, quantity, takeProfitPrice float64) error {
 	cleanSymbol := strings.TrimSuffix(strings.ToUpper(symbol), "USDT")
-	
+
 	side := alpaca.Sell
 	if positionSide == "SHORT" {
 		side = alpaca.Buy
 	}
-	
+
 	qty := decimal.NewFromFloat(quantity)
 	tp := decimal.NewFromFloat(takeProfitPrice)
 
@@ -355,22 +360,22 @@ func (a *AlpacaTrader) SetTakeProfit(symbol string, positionSide string, quantit
 // CancelAllOrders cancels all open orders for a symbol
 func (a *AlpacaTrader) CancelAllOrders(symbol string) error {
 	cleanSymbol := strings.TrimSuffix(strings.ToUpper(symbol), "USDT")
-	
+
 	orders, err := a.client.GetOrders(alpaca.GetOrdersRequest{
-		Status: "open",
+		Status:  "open",
 		Symbols: []string{cleanSymbol},
 	})
-	
+
 	if err != nil {
 		return err
 	}
-	
+
 	for _, order := range orders {
 		if err := a.client.CancelOrder(order.ID); err != nil {
 			log.Printf("Failed to cancel order %s: %v", order.ID, err)
 		}
 	}
-	
+
 	return nil
 }
 

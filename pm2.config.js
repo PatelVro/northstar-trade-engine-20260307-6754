@@ -3,8 +3,8 @@ const path = require('path');
 module.exports = {
   apps: [
     {
-      name: 'AegisTrade-backend',
-      script: './AegisTrade',
+      name: 'northstar-backend',
+      script: './northstar',
       cwd: __dirname, // 
       interpreter: 'none', // 
       instances: 1,
@@ -20,7 +20,7 @@ module.exports = {
       merge_logs: true
     },
     {
-      name: 'AegisTrade-frontend',
+      name: 'northstar-frontend',
       script: 'npm',
       args: 'run dev',
       cwd: path.join(__dirname, 'web'), //  web 

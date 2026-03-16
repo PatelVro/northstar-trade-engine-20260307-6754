@@ -1,0 +1,34 @@
+{
+  "traders": [
+    {
+      "id": "alpaca_paper_trader",
+      "name": "Northstar Alpaca Paper",
+      "enabled": true,
+      "ai_model": "deepseek",
+      "exchange": "alpaca",
+      "alpaca_api_key": "${NORTHSTAR_ALPACA_API_KEY}",
+      "alpaca_secret_key": "${NORTHSTAR_ALPACA_SECRET_KEY}",
+      "alpaca_paper_trading": true,
+      "mode": "paper",
+      "data_provider": "alpaca",
+      "broker": "alpaca",
+      "instrument_type": "equity",
+      "deepseek_key": "${NORTHSTAR_DEEPSEEK_API_KEY}",
+      "initial_balance": 1000.0,
+      "scan_interval_minutes": 15
+    }
+  ],
+  "leverage": {
+    "btc_eth_leverage": 20,
+    "altcoin_leverage": 20
+  },
+  "use_default_coins": false,
+  "default_coins": [
+    "AAPL",
+    "MSFT",
+    "NVDA"
+  ],
+  "coin_pool_api_url": "",
+  "oi_top_api_url": "",
+  "api_server_port": 8080
+}

@@ -1,6 +1,6 @@
 #  Docker One-Click Deployment Guide
 
-This guide will help you quickly deploy the AegisTrade AI Trading Competition System using Docker.
+This guide will help you quickly deploy Northstar using Docker.
 
 ##  Prerequisites
 
@@ -164,11 +164,11 @@ Edit `docker-compose.yml` to modify port mappings:
 
 ```yaml
 services:
-  backend:
+  northstar-backend:
     ports:
       - "8080:8080"  # Change to "your_port:8080"
 
-  frontend:
+  northstar-frontend:
     ports:
       - "3000:80"    # Change to "your_port:80"
 ```
@@ -179,7 +179,7 @@ Add resource limits in `docker-compose.yml`:
 
 ```yaml
 services:
-  backend:
+  northstar-backend:
     deploy:
       resources:
         limits:
@@ -196,18 +196,18 @@ Create `.env` file to manage environment variables:
 
 ```bash
 # .env
-TZ=Asia/Shanghai
-BACKEND_PORT=8080
-FRONTEND_PORT=3000
+NORTHSTAR_TIMEZONE=America/Toronto
+NORTHSTAR_BACKEND_PORT=8080
+NORTHSTAR_FRONTEND_PORT=3000
 ```
 
 Then use in `docker-compose.yml`:
 
 ```yaml
 services:
-  backend:
+  northstar-backend:
     ports:
-      - "${BACKEND_PORT}:8080"
+      - "${NORTHSTAR_BACKEND_PORT}:8080"
 ```
 
 ##  Data Persistence
@@ -237,8 +237,8 @@ tar -xzf backup_20241029.tar.gz
 
 ```bash
 # View detailed error messages
-docker compose logs backend
-docker compose logs frontend
+docker compose logs northstar-backend
+docker compose logs northstar-frontend
 
 # Check container status
 docker compose ps -a
@@ -272,8 +272,8 @@ cp config.json.example config.json
 
 ```bash
 # Check health status
-docker inspect AegisTrade-backend | jq '.[0].State.Health'
-docker inspect AegisTrade-frontend | jq '.[0].State.Health'
+docker inspect northstar-backend | jq '.[0].State.Health'
+docker inspect northstar-frontend | jq '.[0].State.Health'
 
 # Manually test health endpoints
 curl http://localhost:8080/health
@@ -284,10 +284,10 @@ curl http://localhost:3000/health
 
 ```bash
 # Check network connectivity
-docker compose exec frontend ping backend
+docker compose exec northstar-frontend ping northstar-backend
 
 # Check if backend service is running
-docker compose exec frontend wget -O- http://backend:8080/health
+docker compose exec northstar-frontend wget -O- http://northstar-backend:8080/health
 ```
 
 ### Clean Docker Resources
@@ -315,7 +315,7 @@ docker system prune -a --volumes
    ```yaml
    # docker-compose.yml
    services:
-     backend:
+     northstar-backend:
        environment:
          - BINANCE_API_KEY=${BINANCE_API_KEY}
          - BINANCE_SECRET_KEY=${BINANCE_SECRET_KEY}
@@ -325,7 +325,7 @@ docker system prune -a --volumes
    ```yaml
    # Only allow local access
    services:
-     backend:
+     northstar-backend:
        ports:
          - "127.0.0.1:8080:8080"
    ```
@@ -341,7 +341,7 @@ docker system prune -a --volumes
 ### Using Nginx Reverse Proxy
 
 ```nginx
-# /etc/nginx/sites-available/AegisTrade
+# /etc/nginx/sites-available/northstar
 server {
     listen 80;
     server_name your-domain.com;
@@ -380,13 +380,13 @@ sudo certbot renew --dry-run
 docker swarm init
 
 # Deploy stack
-docker stack deploy -c docker-compose.yml AegisTrade
+docker stack deploy -c docker-compose.yml northstar
 
 # View service status
-docker stack services AegisTrade
+docker stack services northstar
 
 # Scale services
-docker service scale AegisTrade_backend=3
+docker service scale northstar_northstar-backend=3
 ```
 
 ##  Monitoring & Logging
@@ -427,7 +427,7 @@ services:
 
 ##  Get Help
 
-- **GitHub Issues**: [Submit an issue](https://github.com/yourusername/open-AegisTrade/issues)
+- **GitHub Issues**: [Submit an issue](https://github.com/yourusername/northstar/issues)
 - **Documentation**: Check [README.md](README.md)
 - **Community**: Join our Discord/Telegram group
 
@@ -462,6 +462,6 @@ docker system prune -a             # Clean Docker resources
 
 ---
 
- Congratulations! You've successfully deployed the AegisTrade AI Trading Competition System!
+ Congratulations! You've successfully deployed Northstar!
 
 If you encounter any issues, please check the [Troubleshooting](#-troubleshooting) section or submit an issue.

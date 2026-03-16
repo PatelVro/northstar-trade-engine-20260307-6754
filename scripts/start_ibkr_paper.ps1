@@ -8,6 +8,13 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
 
+if (-not (Test-Path $ConfigFile)) {
+    $exampleConfig = "config_ibkr.example.json"
+    if (Test-Path $exampleConfig) {
+        $ConfigFile = $exampleConfig
+    }
+}
+
 $runtimeDir = Join-Path $repoRoot "runtime"
 if (-not (Test-Path $runtimeDir)) {
     New-Item -ItemType Directory -Path $runtimeDir | Out-Null

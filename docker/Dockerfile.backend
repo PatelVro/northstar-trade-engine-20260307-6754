@@ -1,7 +1,7 @@
 # docker/backend/Dockerfile
 
 # 
-# AegisTrade Backend Dockerfile (Go + TA-Lib)
+# Northstar Backend Dockerfile (Go + TA-Lib)
 # Multi-stage build with shared TA-Lib compilation stage
 # Versions extracted as ARGs for maintainability
 # 
@@ -37,6 +37,11 @@ RUN wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-${TA_LIB_VERSION}-src.
 # Backend Build Stage (Go Application)
 # 
 FROM golang:${GO_VERSION} AS backend-builder
+ARG NORTHSTAR_VERSION=dev
+ARG NORTHSTAR_COMMIT=unknown
+ARG NORTHSTAR_BUILD_TIME=unknown
+ARG NORTHSTAR_BUILD_CHANNEL=docker
+ARG NORTHSTAR_BUILD_DIRTY=unknown
 
 RUN apk update && apk add --no-cache git make gcc g++ musl-dev
 
@@ -47,22 +52,34 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -o AegisTrade .
+RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w -X northstar/buildinfo.Version=${NORTHSTAR_VERSION} -X northstar/buildinfo.Commit=${NORTHSTAR_COMMIT} -X northstar/buildinfo.BuildTime=${NORTHSTAR_BUILD_TIME} -X northstar/buildinfo.Channel=${NORTHSTAR_BUILD_CHANNEL} -X northstar/buildinfo.Dirty=${NORTHSTAR_BUILD_DIRTY}" -o northstar .
 
 # 
 # Runtime Stage (Minimal Executable Environment)
 # 
 FROM alpine:${ALPINE_VERSION}
+ARG NORTHSTAR_VERSION=dev
+ARG NORTHSTAR_COMMIT=unknown
+ARG NORTHSTAR_BUILD_TIME=unknown
+ARG NORTHSTAR_BUILD_CHANNEL=docker
+ARG NORTHSTAR_BUILD_DIRTY=unknown
 
 RUN apk update && apk add --no-cache ca-certificates tzdata
 
 COPY --from=ta-lib-builder /usr/local /usr/local
 WORKDIR /app
-COPY --from=backend-builder /app/AegisTrade .
+COPY --from=backend-builder /app/northstar .
+
+LABEL org.opencontainers.image.title="Northstar" \
+      org.opencontainers.image.version="${NORTHSTAR_VERSION}" \
+      org.opencontainers.image.revision="${NORTHSTAR_COMMIT}" \
+      org.opencontainers.image.created="${NORTHSTAR_BUILD_TIME}" \
+      org.opencontainers.image.description="Northstar trading backend" \
+      org.opencontainers.image.vendor="Northstar"
 
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
 
-CMD ["./AegisTrade"]
+CMD ["./northstar"]

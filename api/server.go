@@ -1,10 +1,11 @@
 package api
 
 import (
-	"aegistrade/manager"
 	"fmt"
 	"log"
 	"net/http"
+	"northstar/buildinfo"
+	"northstar/manager"
 	"sync"
 	"time"
 
@@ -17,6 +18,7 @@ type Server struct {
 	router        *gin.Engine
 	traderManager *manager.TraderManager
 	port          int
+	startedAt     time.Time
 
 	// WebSocket Hub
 	wsClients map[*websocket.Conn]bool
@@ -44,6 +46,7 @@ func NewServer(traderManager *manager.TraderManager, port int) *Server {
 		router:        router,
 		traderManager: traderManager,
 		port:          port,
+		startedAt:     time.Now().UTC(),
 		wsClients:     make(map[*websocket.Conn]bool),
 		Broadcast:     make(chan interface{}, 256),
 	}
@@ -174,6 +177,7 @@ func (s *Server) setupRoutes() {
 		api.GET("/positions", s.handlePositions)
 		api.GET("/decisions", s.handleDecisions)
 		api.GET("/decisions/latest", s.handleLatestDecisions)
+		api.GET("/audit/trades/recent", s.handleRecentTradeAudit)
 		api.GET("/statistics", s.handleStatistics)
 		api.GET("/equity-history", s.handleEquityHistory)
 		api.GET("/performance", s.handlePerformance)
@@ -181,12 +185,9 @@ func (s *Server) setupRoutes() {
 	}
 }
 
-// handleHealth checks API health
+// handleHealth reports shallow service liveness and build diagnostics only.
 func (s *Server) handleHealth(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"status": "ok",
-		"time":   c.Request.Context().Value("time"),
-	})
+	c.JSON(http.StatusOK, s.buildHealthResponse(time.Now()))
 }
 
 // getTraderFromQuery extracts trader from query parameter
@@ -245,8 +246,7 @@ func (s *Server) handleStatus(c *gin.Context) {
 		return
 	}
 
-	status := trader.GetStatus()
-	c.JSON(http.StatusOK, status)
+	c.JSON(http.StatusOK, buildOperatorStatusResponse(trader.GetOperatorStatus(), time.Now()))
 }
 
 // handleCandles serves historical candlestick data for the Symbol Chart
@@ -315,12 +315,12 @@ func (s *Server) handleAccount(c *gin.Context) {
 		return
 	}
 
-	log.Printf(" Returning account info [%s]: equity=%.2f, available=%.2f, P&L=%.2f (%.2f%%)",
+	log.Printf(" Returning account info [%s]: broker_equity=%.2f, strategy_equity=%.2f, total_pnl=%.2f (%.2f%%)",
 		trader.GetName(),
-		account["total_equity"],
-		account["available_balance"],
-		account["total_pnl"],
-		account["total_pnl_pct"])
+		account.AccountEquity,
+		account.StrategyEquity,
+		account.TotalPnL,
+		account.StrategyReturnPct)
 	c.JSON(http.StatusOK, account)
 }
 
@@ -406,6 +406,39 @@ func (s *Server) handleLatestDecisions(c *gin.Context) {
 	c.JSON(http.StatusOK, records)
 }
 
+func (s *Server) handleRecentTradeAudit(c *gin.Context) {
+	_, traderID, err := s.getTraderFromQuery(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	limit := 20
+	if rawLimit := c.Query("limit"); rawLimit != "" {
+		if _, err := fmt.Sscanf(rawLimit, "%d", &limit); err != nil || limit <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be a positive integer"})
+			return
+		}
+		if limit > 100 {
+			limit = 100
+		}
+	}
+
+	trader, err := s.traderManager.GetTrader(traderID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	records, err := trader.GetRecentTradeAudits(limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get trade audit records: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, records)
+}
+
 // handleStatistics handles analytics statistics
 func (s *Server) handleStatistics(c *gin.Context) {
 	_, traderID, err := s.getTraderFromQuery(c)
@@ -455,62 +488,47 @@ func (s *Server) handleEquityHistory(c *gin.Context) {
 		return
 	}
 
-	// Build equity return history points
+	// Build strategy performance history from canonical accounting snapshots only.
 	type EquityPoint struct {
-		Timestamp        string  `json:"timestamp"`
-		TotalEquity      float64 `json:"total_equity"`      // Account equity (wallet + unrealized)
-		AvailableBalance float64 `json:"available_balance"` // Available balance
-		TotalPnL         float64 `json:"total_pnl"`         // Total P&L (relative to Initial balance)
-		TotalPnLPct      float64 `json:"total_pnl_pct"`     // Total P&L percentage
-		PositionCount    int     `json:"position_count"`    // Position quantity
-		MarginUsedPct    float64 `json:"margin_used_pct"`   // Margin used percentage
-		CycleNumber      int     `json:"cycle_number"`
-	}
-
-	// Fetch initial balance from AutoTrader (for P&L calculations)
-	initialBalance := 0.0
-	if status := trader.GetStatus(); status != nil {
-		if ib, ok := status["initial_balance"].(float64); ok && ib > 0 {
-			initialBalance = ib
-		}
-	}
-
-	// If unable to get from status and records exist, use the first record
-	if initialBalance == 0 && len(records) > 0 {
-		// Assume the first record's equity is the initial balance
-		initialBalance = records[0].AccountState.TotalBalance
-	}
-
-	// If still unable to fetch, return error
-	if initialBalance == 0 {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Unable to get initial balance",
-		})
-		return
+		Timestamp              string  `json:"timestamp"`
+		AccountEquity          float64 `json:"account_equity"`
+		AccountCash            float64 `json:"account_cash"`
+		AvailableBalance       float64 `json:"available_balance"`
+		GrossMarketValue       float64 `json:"gross_market_value"`
+		UnrealizedPnL          float64 `json:"unrealized_pnl"`
+		RealizedPnL            float64 `json:"realized_pnl"`
+		TotalPnL               float64 `json:"total_pnl"`
+		StrategyInitialCapital float64 `json:"strategy_initial_capital"`
+		StrategyEquity         float64 `json:"strategy_equity"`
+		StrategyReturnPct      float64 `json:"strategy_return_pct"`
+		PositionCount          int     `json:"position_count"`
+		MarginUsedPct          float64 `json:"margin_used_pct"`
+		CycleNumber            int     `json:"cycle_number"`
 	}
 
 	var history []EquityPoint
 	for _, record := range records {
-		// TotalBalance field actually stores TotalEquity
-		totalEquity := record.AccountState.TotalBalance
-		// TotalUnrealizedProfit field actually stores TotalPnL (relative to initial)
-		totalPnL := record.AccountState.TotalUnrealizedProfit
-
-		// Calculate P&L percentage
-		totalPnLPct := 0.0
-		if initialBalance > 0 {
-			totalPnLPct = (totalPnL / initialBalance) * 100
+		if !record.AccountState.HasCanonicalAccounting() {
+			// Pre-fix records mixed broker equity and strategy P&L, so they are excluded
+			// from strategy-return charts instead of showing nonsensical percentages.
+			continue
 		}
 
 		history = append(history, EquityPoint{
-			Timestamp:        record.Timestamp.Format("2006-01-02 15:04:05"),
-			TotalEquity:      totalEquity,
-			AvailableBalance: record.AccountState.AvailableBalance,
-			TotalPnL:         totalPnL,
-			TotalPnLPct:      totalPnLPct,
-			PositionCount:    record.AccountState.PositionCount,
-			MarginUsedPct:    record.AccountState.MarginUsedPct,
-			CycleNumber:      record.CycleNumber,
+			Timestamp:              record.Timestamp.Format("2006-01-02 15:04:05"),
+			AccountEquity:          record.AccountState.AccountEquity,
+			AccountCash:            record.AccountState.AccountCash,
+			AvailableBalance:       record.AccountState.AvailableBalance,
+			GrossMarketValue:       record.AccountState.GrossMarketValue,
+			UnrealizedPnL:          record.AccountState.UnrealizedPnL,
+			RealizedPnL:            record.AccountState.RealizedPnL,
+			TotalPnL:               record.AccountState.TotalPnL,
+			StrategyInitialCapital: record.AccountState.StrategyInitialCapital,
+			StrategyEquity:         record.AccountState.StrategyEquity,
+			StrategyReturnPct:      record.AccountState.StrategyReturnPct,
+			PositionCount:          record.AccountState.PositionCount,
+			MarginUsedPct:          record.AccountState.MarginUsedPct,
+			CycleNumber:            record.CycleNumber,
 		})
 	}
 
@@ -547,20 +565,36 @@ func (s *Server) handlePerformance(c *gin.Context) {
 // Start runs the API server
 func (s *Server) Start() error {
 	addr := fmt.Sprintf("127.0.0.1:%d", s.port)
+	log.Printf(" Northstar API build: %s", buildinfo.Current().Summary())
 	log.Printf(" API server started at http://%s", addr)
 	log.Printf(" API documentation:")
 	log.Printf("   GET  /api/competition      - Competition overview (comparing all traders)")
 	log.Printf("   GET  /api/traders          - Trader list")
-	log.Printf("   GET  /api/status?trader_id=xxx     - specified trader's system status")
+	log.Printf("   GET  /api/status?trader_id=xxx     - operator trading status summary")
 	log.Printf("   GET  /api/account?trader_id=xxx    - specified trader's account info")
 	log.Printf("   GET  /api/positions?trader_id=xxx  - specified trader's position list")
 	log.Printf("   GET  /api/decisions?trader_id=xxx  - specified trader's decision logs")
 	log.Printf("   GET  /api/decisions/latest?trader_id=xxx - specified trader's latest decision")
+	log.Printf("   GET  /api/audit/trades/recent?trader_id=xxx&limit=20 - specified trader's recent trade audit records")
 	log.Printf("   GET  /api/statistics?trader_id=xxx - specified trader's statistics")
 	log.Printf("   GET  /api/equity-history?trader_id=xxx - specified trader's equity history")
 	log.Printf("   GET  /api/performance?trader_id=xxx - specified trader's AI learning performance analysis")
-	log.Printf("   GET  /health               - health check")
+	log.Printf("   GET  /health               - liveness and build diagnostics only (not a trading-ready signal)")
 	log.Println()
 
 	return s.router.Run(addr)
+}
+
+func (s *Server) uptimeSeconds(now time.Time) int64 {
+	if s.startedAt.IsZero() {
+		return 0
+	}
+	uptime := int64(now.UTC().Sub(s.startedAt).Seconds())
+	if uptime < 0 {
+		uptime = int64(time.Since(s.startedAt).Seconds())
+		if uptime < 0 {
+			return 0
+		}
+	}
+	return uptime
 }

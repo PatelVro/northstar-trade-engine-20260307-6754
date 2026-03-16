@@ -1,44 +1,65 @@
-# IDE files
+# IDE and editor files
 .idea/
+.vscode/
 *.iml
-*.xml
 
-# Build artifacts
-aegistrade-auto
-*.exe
-aegistrade
-aegistrade_test
-
-# Go artifacts
-*.test
-*.out
-
-# OS files
+# OS noise
 .DS_Store
 Thumbs.db
 
 # Temporary files
-*.log
-*.tmp
 *.bak
 *.backup
+*.err
+*.log
+*.out
+*.pid
+*.seed
+*.stderr
+*.stdout
+*.tmp
+*.trace
 
-# Environment/config
+# Local environment and operator overrides
 .env
-config.json
+.env.local
+.env.*.local
+.env.release.local
 .env.ibkr
-config_*.json
+config.json
 config.demo.json
 config-working.json
+config.local.json
+config_*.json
+!config_*.example.json
+*.local.json
 cook*.txt
 cookies*.txt
+*.cookies.txt
+*.cookiejar
 
-# Runtime data
+# Build artifacts
+northstar
+northstar.exe
+northstar-auto
+northstar_test
+nofx.exe
+nofx_bin.exe
+test_build.exe
+*.test
+bin/
+build/
+dist/
+release/
+
+# Runtime data and generated outputs
 decision_logs/
 coin_pool_cache/
-aegistrade_test
 runtime/
 output/
+logs/
+tmp/
+temp/
 ibeam_outputs/
 screenshots/
 run_paper_session.*
@@ -48,15 +69,11 @@ getbars.txt
 out.txt
 test_jar_output.txt
 
-# Local certs
+# Generated local data
+data/csv/
+
+# Local certs and vendor/workspace copies
 nginx_certs/
-
-# Local executables
-nofx.exe
-nofx_bin.exe
-test_build.exe
-
-# External workspace/vendor copies
 walmart-dashboard/
 ibeam/
 

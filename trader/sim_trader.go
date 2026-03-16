@@ -1,12 +1,12 @@
 package trader
 
 import (
-	"aegistrade/market"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"log"
 	"math"
+	"northstar/market"
 	"os"
 	"path/filepath"
 	"time"
@@ -152,9 +152,14 @@ func (s *SimTrader) GetBalance() (map[string]interface{}, error) {
 	}
 
 	return map[string]interface{}{
+		"accountCash":           s.balance,
+		"accountEquity":         totalEquity,
+		"availableBalance":      s.balance,
+		"grossMarketValue":      lockedPrincipal,
+		"unrealizedPnL":         unrealizedPnL,
+		"realizedPnL":           s.realizedPnL,
 		"totalWalletBalance":    totalWalletBalance,
 		"totalUnrealizedProfit": unrealizedPnL,
-		"availableBalance":      s.balance,
 		"totalEquity":           totalEquity,
 	}, nil
 }

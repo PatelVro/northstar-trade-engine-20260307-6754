@@ -4,7 +4,7 @@
 **To be discussed** - Open to proposals from contributors
 
 ##  Overview
-We're looking for contributors to add Hyperliquid exchange support to AegisTrade AI Trading System. Currently supports Binance Futures, seeking to expand to Hyperliquid perpetual contracts.
+We're looking for contributors to add Hyperliquid exchange support to Northstar trading platform. Currently supports Binance Futures, seeking to expand to Hyperliquid perpetual contracts.
 
 ##  Task Requirements
 
@@ -58,7 +58,7 @@ We're looking for contributors to add Hyperliquid exchange support to AegisTrade
 - API Documentation: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api
 - SDK Examples: https://github.com/hyperliquid-dex
 
-**AegisTrade Architecture:**
+**Northstar Architecture:**
 - See `trader/binance_futures.go` as reference implementation
 - Main trading logic: `trader/auto_trader.go`
 - Configuration: `config.json` structure
@@ -128,7 +128,7 @@ type ExchangeClient interface {
 ##  Support & Questions
 
 - Ask questions in this issue's comments
-- Join our Telegram: [AegisTrade Developer Community](https://t.me/AegisTrade_dev_community)
+- Join our Telegram: [Northstar Developer Community](https://t.me/northstar_dev_community)
 - Reference existing code: `trader/binance_futures.go`
 
 ##  Important Notes

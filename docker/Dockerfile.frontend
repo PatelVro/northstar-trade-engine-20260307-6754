@@ -1,7 +1,7 @@
 # docker/frontend/Dockerfile
 
 # 
-# AegisTrade Frontend Dockerfile (Node Build  Nginx Runtime)
+# Northstar Frontend Dockerfile (Node Build  Nginx Runtime)
 # Versions extracted as ARGs for consistency
 # 
 

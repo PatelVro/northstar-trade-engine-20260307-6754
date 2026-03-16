@@ -1,4 +1,4 @@
-# AegisTrade Trading Bot - PM2 
+# Northstar Trading Bot - PM2
 
  PM2 
 
@@ -95,14 +95,14 @@ const path = require('path');
 module.exports = {
   apps: [
     {
-      name: 'AegisTrade-backend',
-      script: './AegisTrade',           // Go 
+      name: 'northstar-backend',
+      script: './northstar',           // Go 
       cwd: __dirname,             // 
       autorestart: true,
       max_memory_restart: '500M'
     },
     {
-      name: 'AegisTrade-frontend',
+      name: 'northstar-frontend',
       script: 'npm',
       args: 'run dev',            // Vite 
       cwd: path.join(__dirname, 'web'), // 
@@ -174,8 +174,8 @@ pm2 unstartup
 ### 
 
 ```bash
-pm2 info AegisTrade-backend   # 
-pm2 info AegisTrade-frontend  # 
+pm2 info northstar-backend   # 
+pm2 info northstar-frontend  # 
 ```
 
 ### 
@@ -199,8 +199,8 @@ lsof -i :8080  #
 lsof -i :3000  # 
 
 # 3. 
-go build -o AegisTrade
-./AegisTrade
+go build -o northstar
+./northstar
 ```
 
 ### 
@@ -210,10 +210,10 @@ go build -o AegisTrade
 ls -l config.json
 
 # 
-chmod +x AegisTrade
+chmod +x northstar
 
 # 
-./AegisTrade
+./northstar
 ```
 
 ### 
@@ -236,7 +236,7 @@ npm run dev
 
 ```javascript
 {
-  name: 'AegisTrade-frontend',
+  name: 'northstar-frontend',
   script: 'npm',
   args: 'run preview',  //  preview npm run build
   env: {
@@ -249,8 +249,8 @@ npm run dev
 
 ```javascript
 {
-  name: 'AegisTrade-backend',
-  script: './AegisTrade',
+  name: 'northstar-backend',
+  script: './northstar',
   instances: 2,  //  2 
   exec_mode: 'cluster'
 }

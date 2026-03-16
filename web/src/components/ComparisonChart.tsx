@@ -86,8 +86,8 @@ export function ComparisonChart({ traders }: ComparisonChartProps) {
         }
 
         timestampMap.get(ts)!.traders.set(trader.trader_id, {
-          pnl_pct: point.total_pnl_pct,
-          equity: point.total_equity
+          pnl_pct: point.strategy_return_pct,
+          equity: point.strategy_equity
         });
       });
     });

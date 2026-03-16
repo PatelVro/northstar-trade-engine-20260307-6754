@@ -2,60 +2,53 @@
   "traders": [
     {
       "id": "hyperliquid_deepseek",
-      "name": "Hyperliquid DeepSeek Trader",
+      "name": "Northstar Hyperliquid",
       "enabled": true,
       "ai_model": "deepseek",
       "exchange": "hyperliquid",
-      "hyperliquid_private_key": "your_ethereum_private_key_without_0x_prefix",
-      "hyperliquid_wallet_addr": "your_ethereum_address",
+      "hyperliquid_private_key": "${NORTHSTAR_HYPERLIQUID_PRIVATE_KEY}",
+      "hyperliquid_wallet_addr": "${NORTHSTAR_HYPERLIQUID_WALLET_ADDR}",
       "hyperliquid_testnet": false,
-      "deepseek_key": "your_deepseek_api_key",
+      "deepseek_key": "${NORTHSTAR_DEEPSEEK_API_KEY}",
       "initial_balance": 1000,
       "scan_interval_minutes": 3
     },
     {
       "id": "binance_qwen",
-      "name": "Binance Qwen Trader",
+      "name": "Northstar Binance Qwen",
       "enabled": true,
       "ai_model": "qwen",
       "exchange": "binance",
-      "binance_api_key": "your_binance_api_key",
-      "binance_secret_key": "your_binance_secret_key",
-      "qwen_key": "your_qwen_api_key",
+      "binance_api_key": "${NORTHSTAR_BINANCE_API_KEY}",
+      "binance_secret_key": "${NORTHSTAR_BINANCE_SECRET_KEY}",
+      "qwen_key": "${NORTHSTAR_QWEN_API_KEY}",
       "initial_balance": 1000,
       "scan_interval_minutes": 3
     },
     {
       "id": "binance_custom",
-      "name": "Binance Custom API Trader",
+      "name": "Northstar Custom API",
       "enabled": false,
       "ai_model": "custom",
       "exchange": "binance",
-      "binance_api_key": "your_binance_api_key",
-      "binance_secret_key": "your_binance_secret_key",
-      "custom_api_url": "https://api.openai.com/v1",
-      "custom_api_key": "sk-your-api-key",
-      "custom_model_name": "gpt-4o",
+      "binance_api_key": "${NORTHSTAR_BINANCE_API_KEY}",
+      "binance_secret_key": "${NORTHSTAR_BINANCE_SECRET_KEY}",
+      "custom_api_url": "${NORTHSTAR_CUSTOM_API_URL}",
+      "custom_api_key": "${NORTHSTAR_CUSTOM_API_KEY}",
+      "custom_model_name": "${NORTHSTAR_CUSTOM_MODEL_NAME}",
       "initial_balance": 1000,
       "scan_interval_minutes": 3
     },
     {
       "id": "aster_deepseek",
-      "name": "Aster DeepSeek Trader",
+      "name": "Northstar Aster",
       "enabled": true,
       "ai_model": "deepseek",
       "exchange": "aster",
-
-      //  https://www.asterdex.com/en/api-wallet -> api -> api
-      // user:  (/aster)
-      // signer: API ()
-      // privateKey: API ()
-
-      "aster_user": "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
-      "aster_signer": "0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
-      "aster_private_key": "your_aster_api_wallet_private_key_without_0x_prefix",
-
-      "deepseek_key": "your_deepseek_api_key",
+      "aster_user": "${NORTHSTAR_ASTER_USER}",
+      "aster_signer": "${NORTHSTAR_ASTER_SIGNER}",
+      "aster_private_key": "${NORTHSTAR_ASTER_PRIVATE_KEY}",
+      "deepseek_key": "${NORTHSTAR_DEEPSEEK_API_KEY}",
       "initial_balance": 1000.0,
       "scan_interval_minutes": 3
     }

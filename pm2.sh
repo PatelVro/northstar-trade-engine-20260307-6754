@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# AegisTrade Trading Bot - PM2 
+# Northstar Trading Bot - PM2 
 # : ./pm2.sh [start|stop|restart|status|logs|build]
 
 set -e
@@ -37,7 +37,7 @@ print_error() {
 
 print_header() {
     echo -e "${PURPLE}${NC}"
-    echo -e "${PURPLE}   AegisTrade Trading Bot - PM2 Manager${NC}"
+    echo -e "${PURPLE}   Northstar Trading Bot - PM2 Manager${NC}"
     echo -e "${PURPLE}${NC}"
     echo ""
 }
@@ -59,8 +59,36 @@ ensure_log_dirs() {
 
 # 
 build_backend() {
+    local version="${NORTHSTAR_VERSION:-dev}"
+    local commit="${NORTHSTAR_COMMIT:-unknown}"
+    local build_time="${NORTHSTAR_BUILD_TIME:-unknown}"
+    local channel="${NORTHSTAR_BUILD_CHANNEL:-pm2}"
+    local dirty="${NORTHSTAR_BUILD_DIRTY:-unknown}"
+
+    if command -v git &> /dev/null && git rev-parse --is-inside-work-tree &> /dev/null; then
+        if [ "$version" = "dev" ]; then
+            version="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+        fi
+        if [ "$commit" = "unknown" ]; then
+            commit="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+        fi
+        if [ "$build_time" = "unknown" ]; then
+            build_time="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+        fi
+        if [ "$dirty" = "unknown" ]; then
+            if [ -n "$(git status --porcelain --untracked-files=normal 2>/dev/null)" ]; then
+                dirty="dirty"
+            else
+                dirty="clean"
+            fi
+        fi
+    fi
+
+    local ldflags="-s -w -X northstar/buildinfo.Version=${version} -X northstar/buildinfo.Commit=${commit} -X northstar/buildinfo.BuildTime=${build_time} -X northstar/buildinfo.Channel=${channel} -X northstar/buildinfo.Dirty=${dirty}"
+
     print_info "..."
-    go build -o AegisTrade
+    print_info " build=${version} commit=${commit} dirty=${dirty}"
+    go build -trimpath -ldflags "$ldflags" -o northstar
     if [ $? -eq 0 ]; then
         print_success ""
     else
@@ -89,7 +117,7 @@ start_services() {
     ensure_log_dirs
 
     # 
-    if [ ! -f "./AegisTrade" ]; then
+    if [ ! -f "./northstar" ]; then
         print_warning "..."
         build_backend
     fi
@@ -146,9 +174,9 @@ show_status() {
     pm2 status
     echo ""
     print_info ":"
-    pm2 info AegisTrade-backend
+    pm2 info northstar-backend
     echo ""
-    pm2 info AegisTrade-frontend
+    pm2 info northstar-frontend
 }
 
 # 
@@ -157,9 +185,9 @@ show_logs() {
         # 
         pm2 logs
     elif [ "$2" = "backend" ]; then
-        pm2 logs AegisTrade-backend
+        pm2 logs northstar-backend
     elif [ "$2" = "frontend" ]; then
-        pm2 logs AegisTrade-frontend
+        pm2 logs northstar-frontend
     else
         print_error ": $2"
         print_info ": ./pm2.sh logs [backend|frontend]"
@@ -181,7 +209,7 @@ rebuild_and_restart() {
     build_backend
 
     print_info "..."
-    pm2 restart AegisTrade-backend
+    pm2 restart northstar-backend
 
     sleep 2
     pm2 status

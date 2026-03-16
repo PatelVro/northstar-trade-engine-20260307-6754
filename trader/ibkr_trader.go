@@ -7,8 +7,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
-	"aegistrade/market"
+	"northstar/broker"
+	"northstar/market"
+	"northstar/orders"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,10 +23,18 @@ type IBKRTrader struct {
 	AccountID     string
 	HTTPClient    *http.Client
 	Provider      *market.IBKRProvider
-	TrackedOrders map[string]string // Tracks orderId -> status
+	orderStore    *orders.Store
 	orderMu       sync.Mutex
 	balanceMu     sync.RWMutex
 	fallbackCash  float64
+	protectMu     sync.Mutex
+	protectiveOCA map[string]string
+}
+
+type IBKRBrokerSnapshot struct {
+	Balance    map[string]interface{}
+	Positions  []map[string]interface{}
+	OpenOrders []map[string]interface{}
 }
 
 func NewIBKRTrader(baseURL, accountID, sessionCookie string, provider *market.IBKRProvider, initialBalance float64) *IBKRTrader {
@@ -45,8 +57,9 @@ func NewIBKRTrader(baseURL, accountID, sessionCookie string, provider *market.IB
 			Timeout:   10 * time.Second,
 		},
 		Provider:      provider,
-		TrackedOrders: make(map[string]string),
+		orderStore:    orders.NewStore(),
 		fallbackCash:  initialBalance,
+		protectiveOCA: make(map[string]string),
 	}
 
 	go trader.reconcilerLoop()
@@ -58,56 +71,31 @@ func NewIBKRTrader(baseURL, accountID, sessionCookie string, provider *market.IB
 func (t *IBKRTrader) reconcilerLoop() {
 	ticker := time.NewTicker(3 * time.Second)
 	for range ticker.C {
-		orders, err := t.GetLiveOrders()
-		if err != nil {
+		if err := t.reconcileOrderLifecycle(); err != nil {
 			continue
 		}
-
-		t.orderMu.Lock()
-
-		// 1. Mark current fetch
-		currentOpen := make(map[string]string)
-		for _, o := range orders {
-			// Extract orderId (sometimes 'orderId', sometimes 'id')
-			idFloat, ok := o["orderId"].(float64)
-			if !ok {
-				continue
-			}
-			idStr := fmt.Sprintf("%.0f", idFloat)
-
-			status, _ := o["status"].(string)
-			if status == "" {
-				status = "Submitted"
-			}
-
-			currentOpen[idStr] = status
-
-			// Check for transition
-			if oldStatus, exists := t.TrackedOrders[idStr]; exists {
-				if oldStatus != status {
-					log.Printf(" IBKR: Order %s transitioned %s -> %s", idStr, oldStatus, status)
-					t.TrackedOrders[idStr] = status
-				}
-			} else {
-				// New order discovered!
-				log.Printf(" IBKR: Order %s transitioned Created -> %s", idStr, status)
-				t.TrackedOrders[idStr] = status
-			}
-		}
-
-		// 2. Identify Filled/Closed orders that evaporated
-		for trackId, trackStatus := range t.TrackedOrders {
-			// If it was tracked but is no longer in the live order list, it's either filled or cancelled
-			if _, exists := currentOpen[trackId]; !exists {
-				if trackStatus != "Filled" && trackStatus != "Closed" && trackStatus != "Cancelled" {
-					log.Printf(" IBKR: Order %s evaporated from active list, assuming Filled/Closed.", trackId)
-					t.TrackedOrders[trackId] = "Closed"
-				}
-			}
-		}
-
-		t.orderMu.Unlock()
 	}
+}
+
+func (t *IBKRTrader) GetOrderReconciliationSummary() orders.Summary {
+	if t.orderStore == nil {
+		return orders.Summary{}
+	}
+	return t.orderStore.SnapshotSummary()
+}
+
+func (t *IBKRTrader) SetOrderObserver(observer orders.Observer) {
+	if t.orderStore == nil {
+		t.orderStore = orders.NewStore()
+	}
+	t.orderStore.SetObserver(observer)
+}
+
+func (t *IBKRTrader) LookupOrderRecord(localID, brokerOrderID string) *orders.Record {
+	if t.orderStore == nil {
+		return nil
+	}
+	return t.orderStore.Lookup(localID, brokerOrderID)
 }
 
 func (t *IBKRTrader) setFallbackCash(v float64) {
@@ -132,8 +120,13 @@ func (t *IBKRTrader) fallbackBalance(reason error) map[string]interface{} {
 	cash := t.getFallbackCash()
 	log.Printf(" IBKR: using fallback account balance due to summary endpoint issue: %v", reason)
 	return map[string]interface{}{
-		"totalWalletBalance":    cash,
+		"accountCash":           cash,
+		"accountEquity":         cash,
 		"availableBalance":      cash,
+		"grossMarketValue":      0.0,
+		"unrealizedPnL":         0.0,
+		"realizedPnL":           0.0,
+		"totalWalletBalance":    cash,
 		"totalUnrealizedProfit": 0.0,
 	}
 }
@@ -147,15 +140,15 @@ func (t *IBKRTrader) GetBalance() (map[string]interface{}, error) {
 
 	resp, err := t.Provider.Client.Do(req)
 	if err != nil {
-		return t.fallbackBalance(err), nil
+		return nil, fmt.Errorf("failed to fetch IBKR account summary: %w", err)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
-	log.Printf(" DEBUG IBKR SUMMARY RESPONSE: Status %d | Body: %s", resp.StatusCode, string(bodyBytes))
+	log.Printf(" IBKR summary response status=%d bytes=%d", resp.StatusCode, len(bodyBytes))
 
 	if resp.StatusCode != http.StatusOK {
-		return t.fallbackBalance(fmt.Errorf("status %d: %s", resp.StatusCode, string(bodyBytes))), nil
+		return nil, broker.NewIBKRHTTPError("GET", req.URL.Path, resp.StatusCode, string(bodyBytes))
 	}
 
 	var summary map[string]struct {
@@ -163,29 +156,54 @@ func (t *IBKRTrader) GetBalance() (map[string]interface{}, error) {
 	}
 
 	if err := json.Unmarshal(bodyBytes, &summary); err != nil {
-		return t.fallbackBalance(fmt.Errorf("failed to parse IBKR summary: %w", err)), nil
+		return nil, fmt.Errorf("failed to parse IBKR summary: %w", err)
 	}
 
 	result := make(map[string]interface{})
 
+	accountEquity := t.getFallbackCash()
 	if val, ok := summary["netliquidation"]; ok {
-		result["totalWalletBalance"] = val.Amount
-		t.setFallbackCash(val.Amount)
-	} else {
-		result["totalWalletBalance"] = t.getFallbackCash()
+		accountEquity = val.Amount
 	}
+	result["accountEquity"] = accountEquity
+
+	accountCash := t.getFallbackCash()
+	if val, ok := summary["totalcashvalue"]; ok {
+		accountCash = val.Amount
+	} else if val, ok := summary["settledcash"]; ok {
+		accountCash = val.Amount
+	}
+	result["accountCash"] = accountCash
+	t.setFallbackCash(accountCash)
 
 	if val, ok := summary["availablefunds"]; ok {
 		result["availableBalance"] = val.Amount
 	} else {
-		result["availableBalance"] = t.getFallbackCash()
+		result["availableBalance"] = accountCash
+	}
+
+	if val, ok := summary["grosspositionvalue"]; ok {
+		result["grossMarketValue"] = math.Abs(val.Amount)
+	} else {
+		result["grossMarketValue"] = 0.0
 	}
 
 	if val, ok := summary["unrealizedpnl"]; ok {
-		result["totalUnrealizedProfit"] = val.Amount
+		result["unrealizedPnL"] = val.Amount
 	} else {
-		result["totalUnrealizedProfit"] = 0.0
+		result["unrealizedPnL"] = 0.0
 	}
+
+	if val, ok := summary["realizedpnl"]; ok {
+		result["realizedPnL"] = val.Amount
+	} else {
+		result["realizedPnL"] = 0.0
+	}
+
+	// Legacy keys are kept for older broker adapters, but the explicit fields above are canonical.
+	result["totalWalletBalance"] = accountCash
+	result["totalUnrealizedProfit"] = result["unrealizedPnL"]
+	result["totalEquity"] = accountEquity
 
 	return result, nil
 }
@@ -199,49 +217,45 @@ func (t *IBKRTrader) GetPositions() ([]map[string]interface{}, error) {
 
 	resp, err := t.Provider.Client.Do(req)
 	if err != nil {
-		log.Printf(" IBKR: positions endpoint unavailable, returning empty set: %v", err)
-		return []map[string]interface{}{}, nil
+		return nil, fmt.Errorf("failed to fetch IBKR positions: %w", err)
 	}
 	defer resp.Body.Close()
 
 	b, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf(" IBKR: positions HTTP %d, returning empty set. Body: %s", resp.StatusCode, string(b))
-		return []map[string]interface{}{}, nil
+		return nil, broker.NewIBKRHTTPError("GET", req.URL.Path, resp.StatusCode, string(b))
 	}
 
-	var posResp []struct {
-		Ticker        string  `json:"ticker"`
-		Position      float64 `json:"position"`
-		MktPrice      float64 `json:"mktPrice"`
-		AvgCost       float64 `json:"avgCost"`
-		UnrealizedPnl float64 `json:"unrealizedPnl"`
-	}
-
-	if err := json.Unmarshal(b, &posResp); err != nil {
-		log.Printf(" IBKR: failed to parse positions payload, returning empty set: %v", err)
-		return []map[string]interface{}{}, nil
+	var rawPositions []map[string]interface{}
+	if err := json.Unmarshal(b, &rawPositions); err != nil {
+		return nil, fmt.Errorf("failed to parse IBKR positions payload: %w", err)
 	}
 
 	var positions []map[string]interface{}
-	for _, p := range posResp {
-		if p.Position == 0 {
+	for _, p := range rawPositions {
+		positionAmt := toFloat(firstPresent(p["position"], p["positionAmt"], p["qty"]))
+		if positionAmt == 0 {
 			continue
 		}
 
+		symbol := strings.TrimSpace(toString(firstPresent(p["ticker"], p["symbol"], p["contractDesc"], p["description1"])))
+		if symbol == "" {
+			symbol = strings.TrimSpace(toString(p["conid"]))
+		}
+
 		side := "long"
-		if p.Position < 0 {
+		if positionAmt < 0 {
 			side = "short"
 		}
 
 		positions = append(positions, map[string]interface{}{
-			"symbol":           p.Ticker,
+			"symbol":           symbol,
 			"side":             side,
-			"positionAmt":      p.Position,
-			"entryPrice":       p.AvgCost,
-			"markPrice":        p.MktPrice,
-			"unRealizedProfit": p.UnrealizedPnl,
+			"positionAmt":      positionAmt,
+			"entryPrice":       toFloat(firstPresent(p["avgCost"], p["avgPrice"], p["entryPrice"])),
+			"markPrice":        toFloat(firstPresent(p["mktPrice"], p["markPrice"], p["price"])),
+			"unRealizedProfit": toFloat(firstPresent(p["unrealizedPnl"], p["unRealizedProfit"], p["unrealizedProfit"])),
 			"leverage":         1.0, // Equities generally map base leverage
 			"liquidationPrice": 0.0,
 		})
@@ -250,35 +264,42 @@ func (t *IBKRTrader) GetPositions() ([]map[string]interface{}, error) {
 	return positions, nil
 }
 
-func (t *IBKRTrader) CreateOrder(symbol string, side string, price float64, quantity float64, leverage int, takeProfit string, stopLoss string) (string, error) {
+func (t *IBKRTrader) CreateOrder(symbol string, side string, intent orders.Intent, positionSide string, price float64, quantity float64, leverage int, takeProfit string, stopLoss string) (map[string]interface{}, error) {
 	// First resolve ConID using our central IBKRClient cache
 	cID, err := t.Provider.Client.ResolveContract(symbol)
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve ConID for %s: %w", symbol, err)
+		return nil, fmt.Errorf("failed to resolve ConID for %s: %w", symbol, err)
 	}
 
-	// Format AegisTrade long/short to IBKR BUY/SELL
+	// Format Northstar long/short to IBKR BUY/SELL
 	ibkrSide := "BUY"
 	oppositeSide := "SELL"
-	if side == "short" {
+	if strings.EqualFold(strings.TrimSpace(side), "short") {
 		ibkrSide = "SELL"
 		oppositeSide = "BUY"
 	}
 
 	// Pre-submission Risk Validation
 	if quantity <= 0 {
-		return "", fmt.Errorf("invalid quantity: %f", quantity)
+		return nil, fmt.Errorf("invalid quantity: %f", quantity)
 	}
+	// Stocks are submitted as whole-share quantities for safer IBKR compatibility.
+	wholeQty := math.Floor(quantity)
+	if wholeQty < 1 {
+		return nil, fmt.Errorf("quantity too small after whole-share normalization: %.4f", quantity)
+	}
+	qtyValue := int64(wholeQty)
 
 	// Phase 1 - Submit Entry Order
 	entryOrder := map[string]interface{}{
+		"acctId":     t.AccountID,
 		"conid":      cID,
 		"secType":    "STK",
 		"orderType":  "MKT", // Market entry
-		"tif":        "GTC",
-		"quantity":   fmt.Sprintf("%f", quantity),
+		"tif":        "DAY",
+		"quantity":   qtyValue,
 		"side":       ibkrSide,
-		"outsideRTH": true, // Phase 4 configuration
+		"outsideRTH": false, // prioritize regular session routing for paper reliability
 	}
 
 	if price > 0 {
@@ -286,10 +307,20 @@ func (t *IBKRTrader) CreateOrder(symbol string, side string, price float64, quan
 		entryOrder["price"] = price
 	}
 
-	log.Printf("IBKR: Placing entry order for %f %s %s...", quantity, symbol, ibkrSide)
+	log.Printf("IBKR: Placing entry order for %d %s %s...", qtyValue, symbol, ibkrSide)
 
+	entryLocalID := t.registerLocalOrder(intent, symbol, ibkrSide, positionSide, float64(qtyValue), time.Now())
 	if err := t.submitIBKROrders([]interface{}{entryOrder}); err != nil {
-		return "", fmt.Errorf("entry order failed: %w", err)
+		t.recordLocalOrderReject(entryLocalID, err)
+		return nil, fmt.Errorf("entry order failed: %w", err)
+	}
+	_ = t.reconcileOrderLifecycle()
+	result := map[string]interface{}{
+		"status":       "submitted",
+		"symbol":       symbol,
+		"quantity":     float64(qtyValue),
+		"leverage":     leverage,
+		"localOrderId": entryLocalID,
 	}
 
 	// Phase 2 - Await Fill Confirmation
@@ -299,81 +330,115 @@ func (t *IBKRTrader) CreateOrder(symbol string, side string, price float64, quan
 	for i := 0; i < 5; i++ {
 		time.Sleep(2 * time.Second)
 		orders, err := t.GetLiveOrders()
-		if err == nil {
-			// We check if the entry order evaporated from live open orders
-			// In IBKR, completely filled orders often drop from the active /orders list quickly
-			// This is a naive heuristic for the REST API (Phase 6 Reconciliation engine will harden this globally)
-			if len(orders) == 0 {
-				filled = true
+		if err != nil {
+			return nil, fmt.Errorf("failed to confirm entry fill for %s: %w", symbol, err)
+		}
+
+		// We check if the entry order evaporated from live open orders
+		// In IBKR, completely filled orders often drop from the active /orders list quickly
+		// This is a naive heuristic for the REST API (Phase 6 Reconciliation engine will harden this globally)
+		if len(orders) == 0 {
+			filled = true
+			break
+		}
+
+		// If there's an active order for this conid matching our side, it's still pending
+		stillPending := false
+		for _, o := range orders {
+			rawSide := strings.ToUpper(strings.TrimSpace(toString(o["side"])))
+			rawConid := toInt(o["conid"])
+			rawStatus := strings.ToUpper(strings.TrimSpace(toString(o["status"])))
+			if rawConid == cID && rawSide == ibkrSide &&
+				rawStatus != "FILLED" && rawStatus != "CANCELLED" && rawStatus != "CLOSED" {
+				stillPending = true
 				break
-			} else {
-				// If there's an active order for this conid matching our side, it's still pending
-				stillPending := false
-				for _, o := range orders {
-					rawSide, _ := o["side"].(string)
-					rawConid, _ := o["conid"].(float64)
-					if int(rawConid) == cID && rawSide == ibkrSide {
-						stillPending = true
-						break
-					}
-				}
-				if !stillPending {
-					filled = true
-					break
-				}
 			}
+		}
+		if !stillPending {
+			filled = true
+			break
 		}
 	}
 
 	if !filled {
 		log.Printf(" IBKR: Entry order on %s not filled within timeout. Brackets will not be placed to prevent orphan exposure.", symbol)
-		return "ibkr_entry_pending", nil
+		result["status"] = "pending"
+		return result, nil
 	}
 
 	log.Printf(" IBKR: Entry order for %s confirmed filled.", symbol)
+	result["status"] = "filled"
 
 	// Phase 3 & 4 - Submit OCA Brackets
 	if takeProfit != "" || stopLoss != "" {
 		var bracketOrders []interface{}
-		ocaGroup := fmt.Sprintf("AegisTrade_OCA_%d", time.Now().UnixNano())
+		ocaGroup := fmt.Sprintf("Northstar_OCA_%d", time.Now().UnixNano())
 
 		if takeProfit != "" {
+			tpVal, err := strconv.ParseFloat(strings.TrimSpace(takeProfit), 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid takeProfit %q: %w", takeProfit, err)
+			}
 			bracketOrders = append(bracketOrders, map[string]interface{}{
+				"acctId":     t.AccountID,
 				"conid":      cID,
 				"secType":    "STK",
 				"orderType":  "LMT",
-				"price":      takeProfit,
+				"price":      tpVal,
 				"tif":        "GTC",
-				"quantity":   fmt.Sprintf("%f", quantity),
+				"quantity":   qtyValue,
 				"side":       oppositeSide,
-				"outsideRTH": true,
+				"outsideRTH": false,
 				"ocaGroup":   ocaGroup,
 			})
 		}
 
 		if stopLoss != "" {
+			slVal, err := strconv.ParseFloat(strings.TrimSpace(stopLoss), 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid stopLoss %q: %w", stopLoss, err)
+			}
 			bracketOrders = append(bracketOrders, map[string]interface{}{
+				"acctId":     t.AccountID,
 				"conid":      cID,
 				"secType":    "STK",
 				"orderType":  "STP",
-				"auxPrice":   stopLoss, // Stop Loss uses auxPrice in IBKR REST API
+				"auxPrice":   slVal, // Stop Loss uses auxPrice in IBKR REST API
 				"tif":        "GTC",
-				"quantity":   fmt.Sprintf("%f", quantity),
+				"quantity":   qtyValue,
 				"side":       oppositeSide,
-				"outsideRTH": true,
+				"outsideRTH": false,
 				"ocaGroup":   ocaGroup,
 			})
 		}
 
 		log.Printf("IBKR: Submitting OCA safety brackets (SL/TP) for %s...", symbol)
-		if err := t.submitIBKROrders(bracketOrders); err != nil {
-			log.Printf(" IBKR: Failed to submit brackets for %s: %v", symbol, err)
-			return "ibkr_entry_filled_bracket_failed", err
+		bracketLocalIDs := make([]string, 0, 2)
+		for _, orderType := range []struct {
+			active bool
+			intent orders.Intent
+		}{
+			{active: strings.TrimSpace(takeProfit) != "", intent: protectiveIntent(positionSide, "target")},
+			{active: strings.TrimSpace(stopLoss) != "", intent: protectiveIntent(positionSide, "stop")},
+		} {
+			if !orderType.active {
+				continue
+			}
+			bracketLocalIDs = append(bracketLocalIDs, t.registerLocalOrder(orderType.intent, symbol, oppositeSide, positionSide, float64(qtyValue), time.Now()))
 		}
+		if err := t.submitIBKROrders(bracketOrders); err != nil {
+			for _, localID := range bracketLocalIDs {
+				t.recordLocalOrderReject(localID, err)
+			}
+			log.Printf(" IBKR: Failed to submit brackets for %s: %v", symbol, err)
+			result["status"] = "filled_bracket_failed"
+			return result, err
+		}
+		_ = t.reconcileOrderLifecycle()
 		log.Printf(" IBKR: Safe Brackets secured.")
 	}
 
-	return "ibkr_order_placed", nil
+	return result, nil
 }
 
 // submitIBKROrders is a helper to transmit the REST payload and handle reply confirmation loops
@@ -381,7 +446,10 @@ func (t *IBKRTrader) submitIBKROrders(orders []interface{}) error {
 	payload := map[string]interface{}{
 		"orders": orders,
 	}
-	jsonData, _ := json.Marshal(payload)
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to encode order payload: %w", err)
+	}
 	url := fmt.Sprintf("%s/iserver/account/%s/orders", t.BaseURL, t.AccountID)
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
@@ -398,23 +466,44 @@ func (t *IBKRTrader) submitIBKROrders(orders []interface{}) error {
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("IBKR order HTTP %d: %s", resp.StatusCode, string(body))
+		return broker.NewIBKRHTTPError("POST", req.URL.Path, resp.StatusCode, string(body))
 	}
 
-	var replyResp []struct {
-		Id            string `json:"id"`
-		Message       string `json:"message"`
-		IsSupressable bool   `json:"isSuppressable"`
+	replies, err := parseIBKRReplyMessages(body)
+	if err != nil {
+		// Some successful submissions return non-JSON acks; keep flow moving but preserve visibility.
+		log.Printf("IBKR: order response parse warning: %v", err)
+		return nil
 	}
+	for _, reply := range replies {
+		if strings.TrimSpace(reply.Error) != "" {
+			return fmt.Errorf("ibkr order rejected: %s", reply.Error)
+		}
+		if hasIBKRRejectSignal(reply.Message) {
+			return fmt.Errorf("ibkr order rejected: %s", reply.Message)
+		}
+		if !reply.IsSuppressable || strings.TrimSpace(reply.ID) == "" {
+			continue
+		}
 
-	if err := json.Unmarshal(body, &replyResp); err == nil && len(replyResp) > 0 {
-		for _, reply := range replyResp {
-			if reply.IsSupressable {
-				confirmUrl := fmt.Sprintf("%s/iserver/reply/%s", t.BaseURL, reply.Id)
-				reqConfirm, _ := http.NewRequest("POST", confirmUrl, strings.NewReader(`{"confirmed":true}`))
-				reqConfirm.Header.Set("Content-Type", "application/json")
-				t.Provider.Client.Do(reqConfirm)
-			}
+		confirmURL := fmt.Sprintf("%s/iserver/reply/%s", t.BaseURL, reply.ID)
+		reqConfirm, err := http.NewRequest("POST", confirmURL, strings.NewReader(`{"confirmed":true}`))
+		if err != nil {
+			return fmt.Errorf("failed to build IBKR confirm request: %w", err)
+		}
+		reqConfirm.Header.Set("Content-Type", "application/json")
+
+		confirmResp, err := t.Provider.Client.Do(reqConfirm)
+		if err != nil {
+			return fmt.Errorf("ibkr confirm %s failed: %w", reply.ID, err)
+		}
+		confirmBody, _ := io.ReadAll(confirmResp.Body)
+		confirmResp.Body.Close()
+		if confirmResp.StatusCode != http.StatusOK {
+			return broker.NewIBKRHTTPError("POST", reqConfirm.URL.Path, confirmResp.StatusCode, string(confirmBody))
+		}
+		if hasIBKRRejectSignal(string(confirmBody)) {
+			return fmt.Errorf("ibkr confirm %s rejected: %s", reply.ID, string(confirmBody))
 		}
 	}
 	return nil
@@ -434,20 +523,293 @@ func (t *IBKRTrader) GetLiveOrders() ([]map[string]interface{}, error) {
 	}
 	defer resp.Body.Close()
 
+	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to fetch live orders")
+		return nil, broker.NewIBKRHTTPError("GET", req.URL.Path, resp.StatusCode, string(b))
 	}
 
-	var respData map[string]interface{}
-	b, _ := io.ReadAll(resp.Body)
-	if err := json.Unmarshal(b, &respData); err != nil {
+	liveOrders, err := parseLiveOrdersPayload(b)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse live orders: %w", err)
+	}
+	return liveOrders, nil
+}
+
+type ibkrReplyMessage struct {
+	ID             string
+	Message        string
+	Error          string
+	IsSuppressable bool
+}
+
+func parseIBKRReplyMessages(body []byte) ([]ibkrReplyMessage, error) {
+	var payload interface{}
+	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, err
 	}
+	out := make([]ibkrReplyMessage, 0, 4)
+	collectIBKRReplyMessages(payload, &out)
+	return out, nil
+}
 
-	var liveOrders []map[string]interface{}
-	// For IBKR Portal /iserver/account/orders usually returns an array directly or inside a "orders" key
-	// We'll decode broadly
-	return liveOrders, nil
+func collectIBKRReplyMessages(v interface{}, out *[]ibkrReplyMessage) {
+	switch t := v.(type) {
+	case []interface{}:
+		for _, item := range t {
+			collectIBKRReplyMessages(item, out)
+		}
+	case map[string]interface{}:
+		msg := strings.TrimSpace(toString(t["message"]))
+		errMsg := strings.TrimSpace(toString(t["error"]))
+		id := strings.TrimSpace(toString(firstPresent(t["id"], t["replyid"])))
+		suppress := toBool(firstPresent(t["isSuppressable"], t["is_suppressable"]))
+		if msg != "" || errMsg != "" || id != "" || suppress {
+			*out = append(*out, ibkrReplyMessage{
+				ID:             id,
+				Message:        msg,
+				Error:          errMsg,
+				IsSuppressable: suppress,
+			})
+		}
+
+		for _, key := range []string{"orders", "order", "messages", "replies", "data"} {
+			if child, ok := t[key]; ok {
+				collectIBKRReplyMessages(child, out)
+			}
+		}
+	}
+}
+
+func parseLiveOrdersPayload(body []byte) ([]map[string]interface{}, error) {
+	var payload interface{}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	orders := extractOrderList(payload)
+	return orders, nil
+}
+
+func extractOrderList(v interface{}) []map[string]interface{} {
+	switch t := v.(type) {
+	case []interface{}:
+		return toOrderMaps(t)
+	case map[string]interface{}:
+		for _, key := range []string{"orders", "live_orders", "data"} {
+			if child, ok := t[key]; ok {
+				orders := extractOrderList(child)
+				if len(orders) > 0 {
+					return orders
+				}
+			}
+		}
+		// Sometimes the response itself is a single order object.
+		if orderIDFromMap(t) != "" || toString(t["conid"]) != "" {
+			return []map[string]interface{}{t}
+		}
+	}
+	return []map[string]interface{}{}
+}
+
+func toOrderMaps(items []interface{}) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+func orderIDFromMap(order map[string]interface{}) string {
+	if order == nil {
+		return ""
+	}
+	return strings.TrimSpace(toString(firstPresent(order["orderId"], order["order_id"], order["id"])))
+}
+
+func toBrokerOrders(rawOrders []map[string]interface{}, observedAt time.Time) []orders.BrokerOrder {
+	out := make([]orders.BrokerOrder, 0, len(rawOrders))
+	for _, order := range rawOrders {
+		totalQty := toFloat(firstPresent(order["quantity"], order["qty"], order["totalQuantity"], order["size"]))
+		filledQty := toFloat(firstPresent(order["filledQuantity"], order["filled_qty"], order["filled"], order["cumFillQuantity"], order["cumFill"], order["sizeFilled"]))
+		remainingQty := toFloat(firstPresent(order["remainingQuantity"], order["remaining_qty"], order["remaining"], order["remainingSize"]))
+		if totalQty <= 0 && filledQty > 0 {
+			totalQty = filledQty + remainingQty
+		}
+		side := strings.ToUpper(strings.TrimSpace(toString(firstPresent(order["side"], order["order_side"]))))
+		positionSide := strings.ToLower(strings.TrimSpace(toString(firstPresent(order["positionSide"], order["position_side"]))))
+		rawStatus := strings.TrimSpace(toString(order["status"]))
+		status := orders.NormalizeBrokerStatus(rawStatus, filledQty, totalQty, remainingQty)
+		out = append(out, orders.BrokerOrder{
+			OrderID:      orderIDFromMap(order),
+			Symbol:       strings.ToUpper(strings.TrimSpace(toString(firstPresent(order["ticker"], order["symbol"], order["contractDesc"], order["description1"])))),
+			Side:         side,
+			PositionSide: positionSide,
+			Status:       status,
+			RawStatus:    rawStatus,
+			Quantity:     totalQty,
+			FilledQty:    filledQty,
+			RemainingQty: remainingQty,
+			AvgFillPrice: toFloat(firstPresent(order["avgFillPrice"], order["avgPrice"], order["price"])),
+			ObservedAt:   observedAt,
+		})
+	}
+	return out
+}
+
+func toOrderPositions(rawPositions []map[string]interface{}) []orders.PositionSnapshot {
+	out := make([]orders.PositionSnapshot, 0, len(rawPositions))
+	for _, pos := range rawPositions {
+		qty := toFloat(firstPresent(pos["positionAmt"], pos["position_amt"], pos["qty"], pos["quantity"], pos["position"]))
+		if qty < 0 {
+			qty = -qty
+		}
+		out = append(out, orders.PositionSnapshot{
+			Symbol:   strings.ToUpper(strings.TrimSpace(toString(pos["symbol"]))),
+			Side:     strings.ToLower(strings.TrimSpace(toString(pos["side"]))),
+			Quantity: qty,
+		})
+	}
+	return out
+}
+
+func hasIBKRRejectSignal(message string) bool {
+	lower := strings.ToLower(strings.TrimSpace(message))
+	if lower == "" {
+		return false
+	}
+	for _, token := range []string{
+		"reject",
+		"denied",
+		"insufficient",
+		"invalid",
+		"not allowed",
+		"cannot",
+		"failed",
+		"error",
+	} {
+		if strings.Contains(lower, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func firstPresent(values ...interface{}) interface{} {
+	for _, v := range values {
+		switch t := v.(type) {
+		case nil:
+			continue
+		case string:
+			if strings.TrimSpace(t) == "" {
+				continue
+			}
+			return t
+		default:
+			return v
+		}
+	}
+	return nil
+}
+
+func toString(v interface{}) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return t
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	case float32:
+		return strconv.FormatFloat(float64(t), 'f', -1, 64)
+	case int:
+		return strconv.Itoa(t)
+	case int64:
+		return strconv.FormatInt(t, 10)
+	case int32:
+		return strconv.Itoa(int(t))
+	case json.Number:
+		return t.String()
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+func toBool(v interface{}) bool {
+	switch t := v.(type) {
+	case bool:
+		return t
+	case string:
+		b, err := strconv.ParseBool(strings.TrimSpace(strings.ToLower(t)))
+		return err == nil && b
+	case float64:
+		return t != 0
+	case int:
+		return t != 0
+	default:
+		return false
+	}
+}
+
+func toInt(v interface{}) int {
+	switch t := v.(type) {
+	case int:
+		return t
+	case int64:
+		return int(t)
+	case float64:
+		return int(t)
+	case json.Number:
+		n, err := t.Int64()
+		if err == nil {
+			return int(n)
+		}
+		f, err := t.Float64()
+		if err == nil {
+			return int(f)
+		}
+	case string:
+		s := strings.TrimSpace(t)
+		if s == "" {
+			return 0
+		}
+		if n, err := strconv.Atoi(s); err == nil {
+			return n
+		}
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return int(f)
+		}
+	}
+	return 0
+}
+
+func toFloat(v interface{}) float64 {
+	switch t := v.(type) {
+	case float64:
+		return t
+	case float32:
+		return float64(t)
+	case int:
+		return float64(t)
+	case int64:
+		return float64(t)
+	case json.Number:
+		f, err := t.Float64()
+		if err == nil {
+			return f
+		}
+	case string:
+		s := strings.TrimSpace(t)
+		if s == "" {
+			return 0
+		}
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return f
+		}
+	}
+	return 0
 }
 
 func (t *IBKRTrader) SetLeverage(symbol string, leverage int) error {
@@ -456,24 +818,26 @@ func (t *IBKRTrader) SetLeverage(symbol string, leverage int) error {
 	return nil
 }
 
-func (t *IBKRTrader) ClosePosition(symbol string, side string) error {
+func (t *IBKRTrader) ClosePosition(symbol string, side string) (map[string]interface{}, error) {
 	log.Printf("IBKR: Flattening position for %s", symbol)
 	// Query current position to know how much to sell/buy
 	positions, err := t.GetPositions()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	var qty float64 = 0
+	var qty float64
+	targetSymbol := strings.ToUpper(strings.TrimSpace(symbol))
 	for _, p := range positions {
-		if p["symbol"].(string) == symbol {
-			qty = p["positionAmt"].(float64)
+		posSymbol := strings.ToUpper(strings.TrimSpace(toString(p["symbol"])))
+		if posSymbol == targetSymbol {
+			qty = toFloat(p["positionAmt"])
 			break
 		}
 	}
 
 	if qty == 0 {
-		return fmt.Errorf("no active position found for %s to close", symbol)
+		return nil, fmt.Errorf("no active position found for %s to close", symbol)
 	}
 
 	closeSide := "long"
@@ -483,8 +847,13 @@ func (t *IBKRTrader) ClosePosition(symbol string, side string) error {
 		qty = -qty // absolute value
 	}
 
-	_, err = t.CreateOrder(symbol, closeSide, 0, qty, 1, "", "")
-	return err
+	intent := orders.IntentExitLong
+	positionSide := "long"
+	if closeSide == "long" {
+		intent = orders.IntentExitShort
+		positionSide = "short"
+	}
+	return t.CreateOrder(symbol, closeSide, intent, positionSide, 0, qty, 1, "", "")
 }
 
 func (t *IBKRTrader) CancelAllOrders(symbol string) error {
@@ -503,7 +872,8 @@ func (t *IBKRTrader) CancelAllOrders(symbol string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to cancel all orders on IBKR")
+		body, _ := io.ReadAll(resp.Body)
+		return broker.NewIBKRHTTPError("DELETE", req.URL.Path, resp.StatusCode, string(body))
 	}
 
 	log.Printf("IBKR: Cancelled all open orders for account %s", t.AccountID)
@@ -511,19 +881,11 @@ func (t *IBKRTrader) CancelAllOrders(symbol string) error {
 }
 
 func (t *IBKRTrader) CloseLong(symbol string, quantity float64) (map[string]interface{}, error) {
-	err := t.ClosePosition(symbol, "long")
-	if err != nil {
-		return nil, err
-	}
-	return map[string]interface{}{"status": "closed_long", "symbol": symbol}, nil
+	return t.ClosePosition(symbol, "long")
 }
 
 func (t *IBKRTrader) CloseShort(symbol string, quantity float64) (map[string]interface{}, error) {
-	err := t.ClosePosition(symbol, "short")
-	if err != nil {
-		return nil, err
-	}
-	return map[string]interface{}{"status": "closed_short", "symbol": symbol}, nil
+	return t.ClosePosition(symbol, "short")
 }
 
 func (t *IBKRTrader) FormatQuantity(symbol string, quantity float64) (string, error) {
@@ -548,27 +910,209 @@ func (t *IBKRTrader) GetMarketPrice(symbol string) (float64, error) {
 }
 
 func (t *IBKRTrader) OpenLong(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
-	_, err := t.CreateOrder(symbol, "long", 0, quantity, leverage, "", "")
-	if err != nil {
-		return nil, err
-	}
-	return map[string]interface{}{"status": "opened_long", "symbol": symbol, "quantity": quantity, "leverage": leverage}, nil
+	return t.CreateOrder(symbol, "long", orders.IntentEntryLong, "long", 0, quantity, leverage, "", "")
 }
 
 func (t *IBKRTrader) OpenShort(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
-	_, err := t.CreateOrder(symbol, "short", 0, quantity, leverage, "", "")
-	if err != nil {
-		return nil, err
-	}
-	return map[string]interface{}{"status": "opened_short", "symbol": symbol, "quantity": quantity, "leverage": leverage}, nil
+	return t.CreateOrder(symbol, "short", orders.IntentEntryShort, "short", 0, quantity, leverage, "", "")
 }
 
 func (t *IBKRTrader) SetStopLoss(symbol string, positionSide string, quantity, stopPrice float64) error {
-	log.Printf("IBKR: Cannot natively set floating stop loss via simple REST outside of bracket orders yet. Logging desire for %f SL on %s", stopPrice, symbol)
+	if stopPrice <= 0 || quantity <= 0 {
+		return nil
+	}
+	cID, err := t.Provider.Client.ResolveContract(symbol)
+	if err != nil {
+		return fmt.Errorf("failed to resolve ConID for %s stop-loss: %w", symbol, err)
+	}
+	qtyValue, err := wholeStockQty(quantity)
+	if err != nil {
+		return fmt.Errorf("invalid stop-loss quantity for %s: %w", symbol, err)
+	}
+	exitSide, err := protectiveExitSide(positionSide)
+	if err != nil {
+		return err
+	}
+	ocaGroup := t.protectiveGroup(symbol, positionSide)
+	order := map[string]interface{}{
+		"acctId":     t.AccountID,
+		"conid":      cID,
+		"secType":    "STK",
+		"orderType":  "STP",
+		"auxPrice":   stopPrice,
+		"tif":        "GTC",
+		"quantity":   qtyValue,
+		"side":       exitSide,
+		"outsideRTH": false,
+		"ocaGroup":   ocaGroup,
+	}
+	localID := t.registerLocalOrder(protectiveIntent(strings.ToLower(positionSide), "stop"), symbol, exitSide, strings.ToLower(positionSide), float64(qtyValue), time.Now())
+	if err := t.submitIBKROrders([]interface{}{order}); err != nil {
+		t.recordLocalOrderReject(localID, err)
+		return fmt.Errorf("failed to submit stop-loss for %s: %w", symbol, err)
+	}
+	_ = t.reconcileOrderLifecycle()
+	log.Printf("IBKR: Submitted stop-loss for %s at %.4f (qty=%d side=%s oca=%s)", symbol, stopPrice, qtyValue, exitSide, ocaGroup)
 	return nil
 }
 
 func (t *IBKRTrader) SetTakeProfit(symbol string, positionSide string, quantity, takeProfitPrice float64) error {
-	log.Printf("IBKR: Cannot natively set floating take profit via simple REST outside of bracket orders yet. Logging desire for %f TP on %s", takeProfitPrice, symbol)
+	if takeProfitPrice <= 0 || quantity <= 0 {
+		return nil
+	}
+	cID, err := t.Provider.Client.ResolveContract(symbol)
+	if err != nil {
+		return fmt.Errorf("failed to resolve ConID for %s take-profit: %w", symbol, err)
+	}
+	qtyValue, err := wholeStockQty(quantity)
+	if err != nil {
+		return fmt.Errorf("invalid take-profit quantity for %s: %w", symbol, err)
+	}
+	exitSide, err := protectiveExitSide(positionSide)
+	if err != nil {
+		return err
+	}
+	ocaGroup := t.protectiveGroup(symbol, positionSide)
+	order := map[string]interface{}{
+		"acctId":     t.AccountID,
+		"conid":      cID,
+		"secType":    "STK",
+		"orderType":  "LMT",
+		"price":      takeProfitPrice,
+		"tif":        "GTC",
+		"quantity":   qtyValue,
+		"side":       exitSide,
+		"outsideRTH": false,
+		"ocaGroup":   ocaGroup,
+	}
+	localID := t.registerLocalOrder(protectiveIntent(strings.ToLower(positionSide), "target"), symbol, exitSide, strings.ToLower(positionSide), float64(qtyValue), time.Now())
+	if err := t.submitIBKROrders([]interface{}{order}); err != nil {
+		t.recordLocalOrderReject(localID, err)
+		return fmt.Errorf("failed to submit take-profit for %s: %w", symbol, err)
+	}
+	_ = t.reconcileOrderLifecycle()
+	log.Printf("IBKR: Submitted take-profit for %s at %.4f (qty=%d side=%s oca=%s)", symbol, takeProfitPrice, qtyValue, exitSide, ocaGroup)
 	return nil
+}
+
+func wholeStockQty(quantity float64) (int64, error) {
+	if quantity <= 0 {
+		return 0, fmt.Errorf("quantity %.4f must be positive", quantity)
+	}
+	whole := int64(math.Floor(quantity))
+	if whole < 1 {
+		return 0, fmt.Errorf("quantity %.4f rounded below 1 share", quantity)
+	}
+	return whole, nil
+}
+
+func protectiveExitSide(positionSide string) (string, error) {
+	switch strings.ToUpper(strings.TrimSpace(positionSide)) {
+	case "LONG":
+		return "SELL", nil
+	case "SHORT":
+		return "BUY", nil
+	default:
+		return "", fmt.Errorf("unsupported position side %q for protective order", positionSide)
+	}
+}
+
+func protectiveIntent(positionSide, kind string) orders.Intent {
+	positionSide = strings.ToLower(strings.TrimSpace(positionSide))
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	switch {
+	case positionSide == "short" && kind == "stop":
+		return orders.IntentProtectiveStopShort
+	case positionSide == "short" && kind == "target":
+		return orders.IntentProtectiveTargetShort
+	case kind == "stop":
+		return orders.IntentProtectiveStopLong
+	case kind == "target":
+		return orders.IntentProtectiveTargetLong
+	default:
+		return orders.IntentUnknown
+	}
+}
+
+func (t *IBKRTrader) registerLocalOrder(intent orders.Intent, symbol, side, positionSide string, qty float64, at time.Time) string {
+	if t.orderStore == nil {
+		t.orderStore = orders.NewStore()
+	}
+	return t.orderStore.RegisterSubmitted(intent, symbol, side, positionSide, qty, at)
+}
+
+func (t *IBKRTrader) recordLocalOrderReject(localID string, err error) {
+	if t.orderStore == nil || strings.TrimSpace(localID) == "" || err == nil {
+		return
+	}
+	t.orderStore.MarkRejected(localID, err.Error(), time.Now())
+}
+
+func (t *IBKRTrader) protectiveGroup(symbol, positionSide string) string {
+	key := strings.ToUpper(strings.TrimSpace(symbol)) + ":" + strings.ToUpper(strings.TrimSpace(positionSide))
+	t.protectMu.Lock()
+	defer t.protectMu.Unlock()
+	if g, ok := t.protectiveOCA[key]; ok && strings.TrimSpace(g) != "" {
+		return g
+	}
+	group := fmt.Sprintf("NS_PROTECT_%s_%d", strings.ReplaceAll(key, ":", "_"), time.Now().UnixNano())
+	t.protectiveOCA[key] = group
+	return group
+}
+
+func (t *IBKRTrader) reconcileOrderLifecycle() error {
+	openOrders, err := t.GetLiveOrders()
+	if err != nil {
+		if t.orderStore != nil {
+			t.orderStore.RecordReconciliationError(err, time.Now())
+		}
+		return err
+	}
+	positions, err := t.GetPositions()
+	if err != nil {
+		if t.orderStore != nil {
+			t.orderStore.RecordReconciliationError(err, time.Now())
+		}
+		return err
+	}
+	if t.orderStore == nil {
+		t.orderStore = orders.NewStore()
+	}
+	result := t.orderStore.Reconcile(toBrokerOrders(openOrders, time.Now()), toOrderPositions(positions), time.Now())
+	if result.Mismatches > 0 {
+		log.Printf(" IBKR order reconciliation: %s", result.Summary)
+		for _, issue := range result.Issues {
+			log.Printf(" IBKR order issue [%s]: %s", issue.Type, issue.Message)
+		}
+	}
+	return nil
+}
+
+func (t *IBKRTrader) ReconcileBrokerState() (*IBKRBrokerSnapshot, error) {
+	balance, err := t.GetBalance()
+	if err != nil {
+		return nil, fmt.Errorf("account summary refresh failed: %w", err)
+	}
+
+	positions, err := t.GetPositions()
+	if err != nil {
+		return nil, fmt.Errorf("positions refresh failed: %w", err)
+	}
+
+	openOrders, err := t.GetLiveOrders()
+	if err != nil {
+		return nil, fmt.Errorf("open orders refresh failed: %w", err)
+	}
+
+	if t.orderStore == nil {
+		t.orderStore = orders.NewStore()
+	}
+	t.orderStore.Reconcile(toBrokerOrders(openOrders, time.Now()), toOrderPositions(positions), time.Now())
+	log.Printf(" IBKR reconciliation refreshed account summary, %d positions, %d open orders", len(positions), len(openOrders))
+
+	return &IBKRBrokerSnapshot{
+		Balance:    balance,
+		Positions:  positions,
+		OpenOrders: openOrders,
+	}, nil
 }

@@ -24,9 +24,17 @@ type IBKRClient struct {
 
 	conIDCache map[string]int
 	cacheMutex sync.RWMutex
+	logMu      sync.Mutex
 
 	AuthStatus bool
 	mu         sync.RWMutex // Protect AuthStatus
+	lastLogKey string
+	lastLogAt  time.Time
+}
+
+type ibkrSecdefSection struct {
+	SecType  string `json:"secType"`
+	Exchange string `json:"exchange"`
 }
 
 // NewIBKRClient initializes a new core client.
@@ -68,21 +76,38 @@ func NewIBKRClient(baseURL, accountID, sessionCookie string) *IBKRClient {
 
 // Do executes an HTTP request with basic retry and pacing logic.
 func (c *IBKRClient) Do(req *http.Request) (*http.Response, error) {
-	// Standardize browser fingerprint to bypass Gateway reject blocks
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	req.Header.Set("Accept", "application/json")
-	if cookie := c.getSessionCookie(); cookie != "" && req.Header.Get("Cookie") == "" {
-		req.Header.Set("Cookie", cookie)
+	var bodyBytes []byte
+	var err error
+	if req.Body != nil {
+		bodyBytes, err = io.ReadAll(req.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read request body: %w", err)
+		}
+		_ = req.Body.Close()
 	}
-	// Pacing protection (simple 50ms delay, can be enhanced with token buckets if needed)
-	time.Sleep(50 * time.Millisecond)
 
 	maxRetries := 2
 	var resp *http.Response
-	var err error
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		resp, err = c.HTTPClient.Do(req)
+		attemptReq := req.Clone(req.Context())
+		attemptReq.Header = req.Header.Clone()
+		attemptReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+		attemptReq.Header.Set("Accept", "application/json")
+		if cookie := c.getSessionCookie(); cookie != "" {
+			attemptReq.Header.Set("Cookie", cookie)
+		}
+		if bodyBytes != nil {
+			attemptReq.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+			attemptReq.ContentLength = int64(len(bodyBytes))
+			attemptReq.GetBody = func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(bodyBytes)), nil
+			}
+		}
+
+		// Lightweight pacing protection before every outbound call.
+		time.Sleep(50 * time.Millisecond)
+		resp, err = c.HTTPClient.Do(attemptReq)
 		if err == nil {
 			for _, cookie := range resp.Cookies() {
 				if cookie.Name == "x-sess-uuid" && cookie.Value != "" {
@@ -92,36 +117,65 @@ func (c *IBKRClient) Do(req *http.Request) (*http.Response, error) {
 
 			if resp.StatusCode == http.StatusTooManyRequests {
 				// 429 Pacing violation
-				log.Printf(" IBKR: Rate limit hit. Backing off for 1 second...")
+				c.logRateLimited("ibkr_429:"+req.URL.Path, " IBKR: rate limit hit on %s, backing off", req.URL.Path)
+				if attempt >= maxRetries {
+					body, _ := io.ReadAll(resp.Body)
+					resp.Body.Close()
+					return nil, NewIBKRHTTPError(req.Method, req.URL.Path, resp.StatusCode, string(body))
+				}
 				resp.Body.Close()
 				time.Sleep(1 * time.Second)
 				continue
 			}
 
+			if resp.StatusCode >= http.StatusInternalServerError {
+				if attempt >= maxRetries {
+					body, _ := io.ReadAll(resp.Body)
+					resp.Body.Close()
+					return nil, NewIBKRHTTPError(req.Method, req.URL.Path, resp.StatusCode, string(body))
+				}
+				c.logRateLimited(
+					fmt.Sprintf("ibkr_http_%d:%s", resp.StatusCode, req.URL.Path),
+					" IBKR: gateway HTTP %d on %s, retrying...",
+					resp.StatusCode,
+					req.URL.Path,
+				)
+				resp.Body.Close()
+				time.Sleep(time.Duration(attempt+1) * time.Second)
+				continue
+			}
+
 			if resp.StatusCode == 401 {
-				log.Printf(" IBKR session lost (401 on %s), re-running handshake...", req.URL.Path)
+				c.logRateLimited("ibkr_401:"+req.URL.Path, " IBKR session lost (401 on %s), re-running handshake...", req.URL.Path)
 				resp.Body.Close()
 
 				c.checkAuthStatus()
 
 				if c.IsAuthenticated() && attempt < maxRetries {
-					log.Printf(" IBKR session revived, retrying original request...")
+					c.logRateLimited("ibkr_401_recovered:"+req.URL.Path, " IBKR session revived, retrying %s", req.URL.Path)
 					time.Sleep(1 * time.Second)
 					continue
 				}
 
 				c.setAuthStatus(false)
-				return nil, fmt.Errorf("status 401: unauthorized")
+				return nil, NewIBKRHTTPError(req.Method, req.URL.Path, http.StatusUnauthorized, "unauthorized")
 			}
 
 			return resp, nil
 		}
 
-		log.Printf(" IBKR: Request failed (attempt %d/%d): %v", attempt+1, maxRetries+1, err)
+		c.logRateLimited(
+			fmt.Sprintf("ibkr_transport:%s:%s", req.Method, req.URL.Path),
+			" IBKR: request failed on %s (attempt %d/%d): %v",
+			req.URL.Path,
+			attempt+1,
+			maxRetries+1,
+			err,
+		)
 		time.Sleep(time.Duration(attempt+1) * time.Second)
 	}
 
-	return nil, fmt.Errorf("request failed after retries: %w", err)
+	return nil, NewIBKRTransportError(req.Method, req.URL.Path, fmt.Errorf("request failed after retries: %w", err))
 }
 
 func (c *IBKRClient) doPreflight(method, endpoint string) ([]byte, int, error) {
@@ -137,7 +191,7 @@ func (c *IBKRClient) doPreflight(method, endpoint string) ([]byte, int, error) {
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, NewIBKRTransportError(method, endpoint, err)
 	}
 	defer resp.Body.Close()
 	for _, cookie := range resp.Cookies() {
@@ -147,6 +201,75 @@ func (c *IBKRClient) doPreflight(method, endpoint string) ([]byte, int, error) {
 	}
 	b, _ := io.ReadAll(resp.Body)
 	return b, resp.StatusCode, nil
+}
+
+func (c *IBKRClient) logRateLimited(key, format string, args ...interface{}) {
+	if key == "" {
+		key = format
+	}
+
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+
+	now := time.Now()
+	if c.lastLogKey == key && now.Sub(c.lastLogAt) < 15*time.Second {
+		return
+	}
+	c.lastLogKey = key
+	c.lastLogAt = now
+	log.Printf(format, args...)
+}
+
+func (c *IBKRClient) CheckSessionReadiness(accountID string) error {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		accountID = strings.TrimSpace(c.AccountID)
+	}
+	if accountID == "" {
+		return fmt.Errorf("missing IBKR account ID")
+	}
+
+	bAuth, statusAuth, err := c.doPreflight("GET", "/iserver/auth/status")
+	if err != nil {
+		c.setAuthStatus(false)
+		return fmt.Errorf("auth status request failed: %w", err)
+	}
+	if statusAuth != http.StatusOK {
+		c.setAuthStatus(false)
+		return NewIBKRHTTPError("GET", "/iserver/auth/status", statusAuth, string(bAuth))
+	}
+
+	var authResp struct {
+		Authenticated bool `json:"authenticated"`
+		Connected     bool `json:"connected"`
+	}
+	if err := json.Unmarshal(bAuth, &authResp); err != nil {
+		c.setAuthStatus(false)
+		return fmt.Errorf("auth status decode failed: %w", err)
+	}
+	if !authResp.Authenticated || !authResp.Connected {
+		c.setAuthStatus(false)
+		return NewIBKRHTTPError("GET", "/iserver/auth/status", http.StatusUnauthorized, fmt.Sprintf("auth status not ready (authenticated=%t connected=%t)", authResp.Authenticated, authResp.Connected))
+	}
+
+	if body, statusAccounts, err := c.doPreflight("GET", "/iserver/accounts"); err != nil {
+		c.setAuthStatus(false)
+		return fmt.Errorf("iserver/accounts failed: %w", err)
+	} else if statusAccounts != http.StatusOK {
+		c.setAuthStatus(false)
+		return NewIBKRHTTPError("GET", "/iserver/accounts", statusAccounts, string(body))
+	}
+
+	if body, statusPortfolioAccounts, err := c.doPreflight("GET", "/portfolio/accounts"); err != nil {
+		c.setAuthStatus(false)
+		return fmt.Errorf("portfolio/accounts failed: %w", err)
+	} else if statusPortfolioAccounts != http.StatusOK {
+		c.setAuthStatus(false)
+		return NewIBKRHTTPError("GET", "/portfolio/accounts", statusPortfolioAccounts, string(body))
+	}
+
+	c.setAuthStatus(true)
+	return nil
 }
 
 // CheckLiveReadiness verifies account endpoints required for safe live execution.
@@ -159,58 +282,35 @@ func (c *IBKRClient) CheckLiveReadiness(accountID string) error {
 		return fmt.Errorf("missing IBKR account ID")
 	}
 
-	bAuth, statusAuth, err := c.doPreflight("GET", "/iserver/auth/status")
-	if err != nil {
-		return fmt.Errorf("auth status request failed: %w", err)
-	}
-	if statusAuth != http.StatusOK {
-		return fmt.Errorf("auth status HTTP %d", statusAuth)
-	}
-	var authResp struct {
-		Authenticated bool `json:"authenticated"`
-		Connected     bool `json:"connected"`
-	}
-	if err := json.Unmarshal(bAuth, &authResp); err != nil {
-		return fmt.Errorf("auth status decode failed: %w", err)
-	}
-	if !authResp.Authenticated || !authResp.Connected {
-		return fmt.Errorf("auth status not ready (authenticated=%t connected=%t)", authResp.Authenticated, authResp.Connected)
+	if err := c.CheckSessionReadiness(accountID); err != nil {
+		return err
 	}
 
-	if _, statusAccounts, err := c.doPreflight("GET", "/iserver/accounts"); err != nil {
-		return fmt.Errorf("iserver/accounts failed: %w", err)
-	} else if statusAccounts != http.StatusOK {
-		return fmt.Errorf("iserver/accounts HTTP %d", statusAccounts)
-	}
-
-	if _, statusPortfolioAccounts, err := c.doPreflight("GET", "/portfolio/accounts"); err != nil {
-		return fmt.Errorf("portfolio/accounts failed: %w", err)
-	} else if statusPortfolioAccounts != http.StatusOK {
-		return fmt.Errorf("portfolio/accounts HTTP %d", statusPortfolioAccounts)
-	}
-
-	if _, statusMeta, err := c.doPreflight("GET", fmt.Sprintf("/portfolio/%s/meta", accountID)); err != nil {
-		return fmt.Errorf("portfolio/%s/meta failed: %w", accountID, err)
+	metaEndpoint := fmt.Sprintf("/portfolio/%s/meta", accountID)
+	if body, statusMeta, err := c.doPreflight("GET", metaEndpoint); err != nil {
+		return fmt.Errorf("%s failed: %w", metaEndpoint, err)
 	} else if statusMeta != http.StatusOK {
-		return fmt.Errorf("portfolio/%s/meta HTTP %d", accountID, statusMeta)
+		return NewIBKRHTTPError("GET", metaEndpoint, statusMeta, string(body))
 	}
 
-	if _, statusSummary, err := c.doPreflight("GET", fmt.Sprintf("/portfolio/%s/summary", accountID)); err != nil {
-		return fmt.Errorf("portfolio/%s/summary failed: %w", accountID, err)
+	summaryEndpoint := fmt.Sprintf("/portfolio/%s/summary", accountID)
+	if body, statusSummary, err := c.doPreflight("GET", summaryEndpoint); err != nil {
+		return fmt.Errorf("%s failed: %w", summaryEndpoint, err)
 	} else if statusSummary != http.StatusOK {
-		return fmt.Errorf("portfolio/%s/summary HTTP %d", accountID, statusSummary)
+		return NewIBKRHTTPError("GET", summaryEndpoint, statusSummary, string(body))
 	}
 
-	if _, statusPositions, err := c.doPreflight("GET", fmt.Sprintf("/portfolio/%s/positions", accountID)); err != nil {
-		return fmt.Errorf("portfolio/%s/positions failed: %w", accountID, err)
+	positionsEndpoint := fmt.Sprintf("/portfolio/%s/positions", accountID)
+	if body, statusPositions, err := c.doPreflight("GET", positionsEndpoint); err != nil {
+		return fmt.Errorf("%s failed: %w", positionsEndpoint, err)
 	} else if statusPositions != http.StatusOK {
-		return fmt.Errorf("portfolio/%s/positions HTTP %d", accountID, statusPositions)
+		return NewIBKRHTTPError("GET", positionsEndpoint, statusPositions, string(body))
 	}
 
-	if _, statusOrders, err := c.doPreflight("GET", "/iserver/account/orders"); err != nil {
+	if body, statusOrders, err := c.doPreflight("GET", "/iserver/account/orders"); err != nil {
 		return fmt.Errorf("iserver/account/orders failed: %w", err)
 	} else if statusOrders != http.StatusOK {
-		return fmt.Errorf("iserver/account/orders HTTP %d", statusOrders)
+		return NewIBKRHTTPError("GET", "/iserver/account/orders", statusOrders, string(body))
 	}
 
 	return nil
@@ -371,13 +471,14 @@ func (c *IBKRClient) ResolveContract(symbol string) (int, error) {
 	}
 
 	var searchResults []struct {
-		Conid         interface{} `json:"conid"`
-		Companyname   string      `json:"companyName"`
-		CompanyHeader string      `json:"companyHeader"`
-		Symbol        string      `json:"symbol"`
-		Description   string      `json:"description"`
-		Opt           string      `json:"opt"`
-		Exchange      string      `json:"exchange"` // Should prefer SMART or NYSE/NASDAQ
+		Conid         interface{}         `json:"conid"`
+		Companyname   string              `json:"companyName"`
+		CompanyHeader string              `json:"companyHeader"`
+		Symbol        string              `json:"symbol"`
+		Description   string              `json:"description"`
+		Opt           string              `json:"opt"`
+		Exchange      string              `json:"exchange"`
+		Sections      []ibkrSecdefSection `json:"sections"`
 	}
 
 	if err := json.Unmarshal(bodyBytes, &searchResults); err != nil {
@@ -388,32 +489,41 @@ func (c *IBKRClient) ResolveContract(symbol string) (int, error) {
 		return 0, fmt.Errorf("no contract found for symbol %s", cleanSymbol)
 	}
 
-	// Find best match: SMART routed on US exchange
+	// Find best equity contract. secdef/search can return non-equity instruments sharing the same ticker.
 	var bestConID int
+	bestScore := -1
+	bestHeader := ""
 	for _, res := range searchResults {
 		conid, ok := parseConID(res.Conid)
 		if !ok || conid <= 0 {
 			continue
 		}
-		// Prefer SMART routing for US Equities. If not, fallback to first STK.
-		if res.Description == "STK" && (strings.Contains(res.CompanyHeader, "SMART") || strings.Contains(res.CompanyHeader, "US")) {
+
+		score := scoreSecdefEquityCandidate(cleanSymbol, res.Symbol, res.Description, res.CompanyHeader, res.Exchange, res.Sections)
+		if score > bestScore {
+			bestScore = score
 			bestConID = conid
-			break
-		}
-		if bestConID == 0 {
-			bestConID = conid
+			bestHeader = res.CompanyHeader
 		}
 	}
 
 	if bestConID == 0 {
-		return 0, fmt.Errorf("no valid conid in secdef response for symbol %s", cleanSymbol)
+		// Last-resort fallback: first parsable contract (preserves backward compatibility for edge cases).
+		for _, res := range searchResults {
+			conid, ok := parseConID(res.Conid)
+			if ok && conid > 0 {
+				bestConID = conid
+				bestHeader = res.CompanyHeader
+				break
+			}
+		}
+	}
+	if bestConID == 0 {
+		return 0, fmt.Errorf("no parsable conid in secdef response for symbol %s", cleanSymbol)
 	}
 
-	// Logging fallback case for visibility
-	if len(searchResults) > 0 {
-		if fallbackConID, ok := parseConID(searchResults[0].Conid); ok && fallbackConID == bestConID {
-			log.Printf(" IBKR: Ambiguous contract for %s. Using default conid %d (%s)", cleanSymbol, bestConID, searchResults[0].CompanyHeader)
-		}
+	if len(searchResults) > 1 {
+		log.Printf(" IBKR: selected conid %d for %s (%s)", bestConID, cleanSymbol, bestHeader)
 	}
 
 	// Update cache
@@ -459,4 +569,42 @@ func parseConID(v interface{}) (int, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func scoreSecdefEquityCandidate(cleanSymbol, symbol, description, companyHeader, exchange string, sections []ibkrSecdefSection) int {
+	score := 0
+	if strings.EqualFold(strings.TrimSpace(symbol), cleanSymbol) {
+		score += 15
+	}
+
+	hasSTK := false
+	exchangeText := strings.ToUpper(description + " " + companyHeader + " " + exchange)
+	for _, sec := range sections {
+		secType := strings.ToUpper(strings.TrimSpace(sec.SecType))
+		if secType == "STK" {
+			hasSTK = true
+		}
+		exchangeText += " " + strings.ToUpper(sec.Exchange)
+	}
+	if hasSTK {
+		score += 100
+	} else {
+		// Non-stock instruments using the same ticker (futures, indices, etc.) should lose strongly.
+		score -= 100
+	}
+
+	if strings.Contains(exchangeText, "SMART") {
+		score += 30
+	}
+	if strings.Contains(exchangeText, "NYSE") || strings.Contains(exchangeText, "NASDAQ") {
+		score += 25
+	}
+	if strings.Contains(exchangeText, "TSE") || strings.Contains(exchangeText, "TSX") {
+		score += 20
+	}
+	if strings.Contains(exchangeText, "AMEX") || strings.Contains(exchangeText, "ARCA") || strings.Contains(exchangeText, "BATS") {
+		score += 10
+	}
+
+	return score
 }

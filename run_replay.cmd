@@ -1,6 +1,10 @@
 @echo off
 setlocal
 
+set "CONFIG_FILE=config_replay.json"
+if not exist "%CONFIG_FILE%" set "CONFIG_FILE=config_replay.example.json"
+set "NORTHSTAR_BIN=northstar.exe"
+
 echo =========================================================
 echo   Northstar Synthetic Replay Demo (Zero API Cost)
 echo =========================================================
@@ -24,4 +28,10 @@ echo (The system will run a simulated trading loop using the local CSV data)
 echo (Press Ctrl+C to stop the demo after a few cycles)
 echo.
 
-go run main.go config_replay.json
+if exist "%NORTHSTAR_BIN%" (
+  echo Using release binary: %NORTHSTAR_BIN%
+  "%NORTHSTAR_BIN%" "%CONFIG_FILE%"
+) else (
+  echo Release binary not found, falling back to go run.
+  go run main.go "%CONFIG_FILE%"
+)

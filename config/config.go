@@ -49,10 +49,18 @@ type TraderConfig struct {
 	AlpacaPaperTrading bool   `json:"alpaca_paper_trading,omitempty"`
 
 	// IBKR config
-	IBKRGatewayURL    string `json:"ibkr_gateway_url,omitempty"`
-	IBKRAccountID     string `json:"ibkr_account_id,omitempty"`
-	IBKRSessionCookie string `json:"ibkr_session_cookie,omitempty"`
-	StrictLiveMode    bool   `json:"strict_live_mode,omitempty"` // In live mode, block trading if account endpoints are unhealthy
+	IBKRGatewayURL              string `json:"ibkr_gateway_url,omitempty"`
+	IBKRAccountID               string `json:"ibkr_account_id,omitempty"`
+	IBKRSessionCookie           string `json:"ibkr_session_cookie,omitempty"`
+	StrictLiveMode              bool   `json:"strict_live_mode,omitempty"`                // In live mode, block trading if account endpoints are unhealthy
+	LivePromotionApproved       bool   `json:"live_promotion_approved,omitempty"`         // Explicit operator opt-in for live trading promotion
+	PromotionSourceTraderID     string `json:"promotion_source_trader_id,omitempty"`      // Optional paper trader ID whose evidence should be used for live promotion
+	MinPaperSessionReports      int    `json:"min_paper_session_reports,omitempty"`       // Minimum recent paper session reports required for live promotion
+	RequireBacktestSummary      *bool  `json:"require_backtest_summary,omitempty"`        // Require a parseable backtest study summary for live promotion
+	RequireReleaseBuildForLive  *bool  `json:"require_release_build_for_live,omitempty"`  // Require stamped non-dev build metadata for live trading
+	PromotionMaxEvidenceAgeDays int    `json:"promotion_max_evidence_age_days,omitempty"` // Maximum age for local promotion evidence artifacts
+	EmergencyKillSwitch         bool   `json:"emergency_kill_switch,omitempty"`           // Force-trips the runtime kill switch at startup
+	KillSwitchFile              string `json:"kill_switch_file,omitempty"`                // Optional local kill switch file path
 
 	// Equity config
 	OrderSizingMode       string   `json:"order_sizing_mode,omitempty"`         // "qty" or "notional"
@@ -74,41 +82,47 @@ type TraderConfig struct {
 	BenchmarkSymbols      []string `json:"benchmark_symbols,omitempty"`         // Macro benchmark symbols
 
 	// Equity risk config
-	MaxGrossExposure         float64 `json:"max_gross_exposure,omitempty"`           // e.g., 1.0 = 100% of equity
-	MaxPositionPct           float64 `json:"max_position_pct,omitempty"`             // e.g., 0.20 = 20% of equity per symbol
-	MaxDailyLossPct          float64 `json:"max_daily_loss_pct,omitempty"`           // e.g., 0.02 = 2%
-	MaxPairCorrelation       float64 `json:"max_pair_correlation,omitempty"`         // Max allowed abs correlation among same-direction positions
-	MinLiquidityUSD          float64 `json:"min_liquidity_usd,omitempty"`            // Minimum estimated dollar volume for entries
-	MinDecisionConfidence    int     `json:"min_decision_confidence,omitempty"`      // Drop low-confidence open signals
-	RegimeRiskScaling        *bool   `json:"regime_risk_scaling,omitempty"`          // Default true
-	ExecutionCommissionBps   float64 `json:"execution_commission_bps,omitempty"`     // Simulated commission per side (bps)
-	ExecutionSlippageBps     float64 `json:"execution_slippage_bps,omitempty"`       // Simulated slippage per side (bps)
-	ExecutionImpactBps       float64 `json:"execution_impact_bps,omitempty"`         // Extra slippage component scaled by bar participation
-	MaxParticipationRate     float64 `json:"max_participation_rate,omitempty"`       // Max fill participation per bar in simulator (0-1]
-	DrawdownThrottleStartPct float64 `json:"drawdown_throttle_start,omitempty"`      // Drawdown threshold for risk throttling
-	DrawdownThrottleMinScale float64 `json:"drawdown_throttle_min_scale,omitempty"`  // Min risk scale under drawdown throttling
-	MaxPortfolioHeatPct      float64 `json:"max_portfolio_heat_pct,omitempty"`       // Max estimated stop-risk budget as a fraction of equity
-	MaxNetExposurePct        float64 `json:"max_net_exposure_pct,omitempty"`         // Max absolute net (long-short) exposure as a fraction of equity
-	LossStreakPauseThreshold int     `json:"loss_streak_pause_threshold,omitempty"`  // Consecutive losing closes before pausing new entries
-	LossStreakPauseCycles    int     `json:"loss_streak_pause_cycles,omitempty"`     // Number of cycles to pause new entries after loss streak
-	PerformanceRiskLookback  int     `json:"performance_risk_lookback,omitempty"`    // Closed-trade lookback window for performance-aware risk scaling
-	VolatilityBrakeTargetPct float64 `json:"volatility_brake_target_pct,omitempty"`  // Target equity volatility (fraction) for risk brake
-	VolatilityBrakeLookback  int     `json:"volatility_brake_lookback,omitempty"`    // Lookback cycles for realized equity volatility
-	VolatilityBrakeMinScale  float64 `json:"volatility_brake_min_scale,omitempty"`   // Minimum scale applied by volatility brake
-	KellyFractionCap         float64 `json:"kelly_fraction_cap,omitempty"`           // Fraction of Kelly to apply when sizing risk
-	KellyLookback            int     `json:"kelly_lookback,omitempty"`               // Closed-trade lookback used for Kelly estimate
-	KellyMinTrades           int     `json:"kelly_min_trades,omitempty"`             // Minimum closed trades before Kelly scaling activates
-	MarketStressEntryBlock   float64 `json:"market_stress_entry_block,omitempty"`    // Block new entries above this stress score
-	MarketStressRiskMinScale float64 `json:"market_stress_risk_min_scale,omitempty"` // Minimum risk scale under stress
-	UseNewsRisk              *bool   `json:"use_news_risk,omitempty"`                // Enable headline-driven risk filter
-	EnableNewsInReplay       *bool   `json:"enable_news_in_replay,omitempty"`        // Allow news risk in replay mode (off by default)
-	NewsProvider             string  `json:"news_provider,omitempty"`                // News provider identifier (default: rss)
-	NewsLookbackMinutes      int     `json:"news_lookback_minutes,omitempty"`        // Lookback window for headline aggregation
-	NewsRefreshSeconds       int     `json:"news_refresh_seconds,omitempty"`         // Refresh interval for news fetch/cache
-	NewsMarketImpactThresh   float64 `json:"news_market_impact_thresh,omitempty"`    // Market-wide news threshold for stricter filtering
-	NewsSymbolImpactThresh   float64 `json:"news_symbol_impact_thresh,omitempty"`    // Symbol-level news threshold for blocking entries
-	NewsHardBlockThresh      float64 `json:"news_hard_block_thresh,omitempty"`       // Hard block threshold for adverse directional news
-	NewsMaxRiskReduction     float64 `json:"news_max_risk_reduction,omitempty"`      // Max multiplicative risk reduction from news
+	MaxGrossExposure                    float64 `json:"max_gross_exposure,omitempty"`                      // e.g., 1.0 = 100% of equity
+	MaxPositionPct                      float64 `json:"max_position_pct,omitempty"`                        // e.g., 0.20 = 20% of equity per symbol
+	MaxDailyLossPct                     float64 `json:"max_daily_loss_pct,omitempty"`                      // e.g., 0.02 = 2%
+	MaxPairCorrelation                  float64 `json:"max_pair_correlation,omitempty"`                    // Max allowed abs correlation among same-direction positions
+	MinLiquidityUSD                     float64 `json:"min_liquidity_usd,omitempty"`                       // Minimum estimated dollar volume for entries
+	MinDecisionConfidence               int     `json:"min_decision_confidence,omitempty"`                 // Drop low-confidence open signals
+	RegimeRiskScaling                   *bool   `json:"regime_risk_scaling,omitempty"`                     // Default true
+	ExecutionCommissionBps              float64 `json:"execution_commission_bps,omitempty"`                // Simulated commission per side (bps)
+	ExecutionSlippageBps                float64 `json:"execution_slippage_bps,omitempty"`                  // Simulated slippage per side (bps)
+	ExecutionImpactBps                  float64 `json:"execution_impact_bps,omitempty"`                    // Extra slippage component scaled by bar participation
+	MaxParticipationRate                float64 `json:"max_participation_rate,omitempty"`                  // Max fill participation per bar in simulator (0-1]
+	DrawdownThrottleStartPct            float64 `json:"drawdown_throttle_start,omitempty"`                 // Drawdown threshold for risk throttling
+	DrawdownThrottleMinScale            float64 `json:"drawdown_throttle_min_scale,omitempty"`             // Min risk scale under drawdown throttling
+	MaxPortfolioHeatPct                 float64 `json:"max_portfolio_heat_pct,omitempty"`                  // Max estimated stop-risk budget as a fraction of equity
+	MaxNetExposurePct                   float64 `json:"max_net_exposure_pct,omitempty"`                    // Max absolute net (long-short) exposure as a fraction of equity
+	MaxSectorExposurePct                float64 `json:"max_sector_exposure_pct,omitempty"`                 // Max gross exposure per sector as a fraction of equity
+	MaxCorrelatedPositions              int     `json:"max_correlated_positions,omitempty"`                // Max same-side highly correlated peers allowed for a new entry
+	MaxRuntimeDegradationsPerSession    int     `json:"max_runtime_degradations_per_session,omitempty"`    // Max broker degradations allowed before supervisor restricts trading
+	MaxReconciliationFailuresPerSession int     `json:"max_reconciliation_failures_per_session,omitempty"` // Max reconciliation failures allowed before supervisor restricts trading
+	MaxOrderRejectsPerSession           int     `json:"max_order_rejects_per_session,omitempty"`           // Max rejected orders allowed before supervisor restricts trading
+	SupervisorReduceOnlyOnDrawdown      *bool   `json:"supervisor_reduce_only_on_drawdown,omitempty"`      // Prefer reduce-only over full entry block on drawdown breaches
+	LossStreakPauseThreshold            int     `json:"loss_streak_pause_threshold,omitempty"`             // Consecutive losing closes before pausing new entries
+	LossStreakPauseCycles               int     `json:"loss_streak_pause_cycles,omitempty"`                // Number of cycles to pause new entries after loss streak
+	PerformanceRiskLookback             int     `json:"performance_risk_lookback,omitempty"`               // Closed-trade lookback window for performance-aware risk scaling
+	VolatilityBrakeTargetPct            float64 `json:"volatility_brake_target_pct,omitempty"`             // Target equity volatility (fraction) for risk brake
+	VolatilityBrakeLookback             int     `json:"volatility_brake_lookback,omitempty"`               // Lookback cycles for realized equity volatility
+	VolatilityBrakeMinScale             float64 `json:"volatility_brake_min_scale,omitempty"`              // Minimum scale applied by volatility brake
+	KellyFractionCap                    float64 `json:"kelly_fraction_cap,omitempty"`                      // Fraction of Kelly to apply when sizing risk
+	KellyLookback                       int     `json:"kelly_lookback,omitempty"`                          // Closed-trade lookback used for Kelly estimate
+	KellyMinTrades                      int     `json:"kelly_min_trades,omitempty"`                        // Minimum closed trades before Kelly scaling activates
+	MarketStressEntryBlock              float64 `json:"market_stress_entry_block,omitempty"`               // Block new entries above this stress score
+	MarketStressRiskMinScale            float64 `json:"market_stress_risk_min_scale,omitempty"`            // Minimum risk scale under stress
+	UseNewsRisk                         *bool   `json:"use_news_risk,omitempty"`                           // Enable headline-driven risk filter
+	EnableNewsInReplay                  *bool   `json:"enable_news_in_replay,omitempty"`                   // Allow news risk in replay mode (off by default)
+	NewsProvider                        string  `json:"news_provider,omitempty"`                           // News provider identifier (default: rss)
+	NewsLookbackMinutes                 int     `json:"news_lookback_minutes,omitempty"`                   // Lookback window for headline aggregation
+	NewsRefreshSeconds                  int     `json:"news_refresh_seconds,omitempty"`                    // Refresh interval for news fetch/cache
+	NewsMarketImpactThresh              float64 `json:"news_market_impact_thresh,omitempty"`               // Market-wide news threshold for stricter filtering
+	NewsSymbolImpactThresh              float64 `json:"news_symbol_impact_thresh,omitempty"`               // Symbol-level news threshold for blocking entries
+	NewsHardBlockThresh                 float64 `json:"news_hard_block_thresh,omitempty"`                  // Hard block threshold for adverse directional news
+	NewsMaxRiskReduction                float64 `json:"news_max_risk_reduction,omitempty"`                 // Max multiplicative risk reduction from news
 
 	// AI keys
 	QwenKey     string `json:"qwen_key,omitempty"`
@@ -150,15 +164,16 @@ type Config struct {
 
 // LoadConfig  Load configuration from file
 func LoadConfig(filename string) (*Config, error) {
-	data, err := os.ReadFile(filename)
+	data, err := loadConfigWithLocalOverrides(filename)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
+		return nil, err
 	}
 
 	var config Config
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
+	config.resolveSensitiveValues()
 
 	// Load default symbols from file when configured
 	if strings.TrimSpace(config.DefaultCoinsFile) != "" {
@@ -476,22 +491,19 @@ func (c *Config) Validate() error {
 			}
 		} else if trader.Exchange == "hyperliquid" {
 			if trader.HyperliquidPrivateKey == "" {
-				return fmt.Errorf("trader[%d]: Hyperliquid requires hyperliquid_private_key", i)
+				return fmt.Errorf("trader[%d]: Hyperliquid requires hyperliquid_private_key or NORTHSTAR_HYPERLIQUID_PRIVATE_KEY", i)
 			}
 			if trader.InstrumentType == "" {
 				trader.InstrumentType = "crypto_perp"
 			}
 		} else if trader.Exchange == "aster" {
 			if trader.AsterUser == "" || trader.AsterSigner == "" || trader.AsterPrivateKey == "" {
-				return fmt.Errorf("trader[%d]: Aster requires aster_user, aster_signer, and aster_private_key", i)
+				return fmt.Errorf("trader[%d]: Aster requires aster_user, aster_signer, and aster_private_key (or NORTHSTAR_ASTER_USER / NORTHSTAR_ASTER_SIGNER / NORTHSTAR_ASTER_PRIVATE_KEY)", i)
 			}
 			if trader.InstrumentType == "" {
 				trader.InstrumentType = "crypto_perp"
 			}
 		} else if trader.Exchange == "alpaca" {
-			if trader.AlpacaAPIKey == "" || trader.AlpacaSecretKey == "" {
-				return fmt.Errorf("trader[%d]: Alpaca requires both alpaca_api_key and alpaca_secret_key", i)
-			}
 			if trader.InstrumentType == "" {
 				trader.InstrumentType = "equity"
 			}
@@ -515,6 +527,10 @@ func (c *Config) Validate() error {
 				} else {
 					trader.Broker = "alpaca"
 				}
+			}
+			requiresAlpacaCreds := trader.DataProvider == "alpaca" || trader.Broker == "alpaca"
+			if requiresAlpacaCreds && (trader.AlpacaAPIKey == "" || trader.AlpacaSecretKey == "") {
+				return fmt.Errorf("trader[%d]: Alpaca requires alpaca_api_key and alpaca_secret_key (or NORTHSTAR_ALPACA_API_KEY / NORTHSTAR_ALPACA_SECRET_KEY)", i)
 			}
 
 			// Defaults for equity config
@@ -680,12 +696,6 @@ func (c *Config) Validate() error {
 			}
 
 		} else if trader.Exchange == "ibkr" {
-			if trader.IBKRGatewayURL == "" {
-				trader.IBKRGatewayURL = "https://127.0.0.1:5002/v1/api"
-			}
-			if trader.IBKRAccountID == "" {
-				return fmt.Errorf("trader[%d]: IBKR requires ibkr_account_id", i)
-			}
 			if trader.Mode == "" {
 				trader.Mode = "paper"
 			}
@@ -696,10 +706,25 @@ func (c *Config) Validate() error {
 				trader.InstrumentType = "equity"
 			}
 			if trader.DataProvider == "" {
-				trader.DataProvider = "ibkr"
+				if trader.Mode == "replay" && trader.CSVDataDir != "" {
+					trader.DataProvider = "csv"
+				} else {
+					trader.DataProvider = "ibkr"
+				}
 			}
 			if trader.Broker == "" {
-				trader.Broker = "ibkr"
+				if trader.Mode == "replay" && trader.DataProvider == "csv" {
+					trader.Broker = "sim"
+				} else {
+					trader.Broker = "ibkr"
+				}
+			}
+			requiresIBKRCreds := trader.DataProvider == "ibkr" || trader.Broker == "ibkr"
+			if requiresIBKRCreds && trader.IBKRGatewayURL == "" {
+				trader.IBKRGatewayURL = "https://127.0.0.1:5002/v1/api"
+			}
+			if requiresIBKRCreds && trader.IBKRAccountID == "" {
+				return fmt.Errorf("trader[%d]: IBKR requires ibkr_account_id or NORTHSTAR_IBKR_ACCOUNT_ID", i)
 			}
 
 			// Defaults for equity config
@@ -866,6 +891,22 @@ func (c *Config) Validate() error {
 			if trader.Mode == "live" && !trader.StrictLiveMode {
 				fmt.Printf("  [Trader %s] strict_live_mode is disabled for LIVE mode. This is unsafe.\n", trader.Name)
 			}
+			if trader.Mode == "live" {
+				if trader.MinPaperSessionReports <= 0 {
+					trader.MinPaperSessionReports = 1
+				}
+				if trader.PromotionMaxEvidenceAgeDays <= 0 {
+					trader.PromotionMaxEvidenceAgeDays = 30
+				}
+				if trader.RequireBacktestSummary == nil {
+					v := false
+					trader.RequireBacktestSummary = &v
+				}
+				if trader.RequireReleaseBuildForLive == nil {
+					v := true
+					trader.RequireReleaseBuildForLive = &v
+				}
+			}
 
 			// Validate replay mode
 			if trader.Mode == "replay" && trader.DataProvider == "csv" && trader.CSVDataDir == "" {
@@ -878,20 +919,20 @@ func (c *Config) Validate() error {
 		requiresAIKeys := !trader.DemoMode && !isLocalOnlyEquityStrategy
 		if requiresAIKeys {
 			if trader.AIModel == "qwen" && trader.QwenKey == "" {
-				return fmt.Errorf("trader[%d]: Qwen model requires qwen_key", i)
+				return fmt.Errorf("trader[%d]: Qwen model requires qwen_key or NORTHSTAR_QWEN_API_KEY", i)
 			}
 			if trader.AIModel == "deepseek" && trader.DeepSeekKey == "" {
-				return fmt.Errorf("trader[%d]: DeepSeek model requires deepseek_key", i)
+				return fmt.Errorf("trader[%d]: DeepSeek model requires deepseek_key or NORTHSTAR_DEEPSEEK_API_KEY", i)
 			}
 			if trader.AIModel == "custom" {
 				if trader.CustomAPIURL == "" {
-					return fmt.Errorf("trader[%d]: Custom model requires custom_api_url", i)
+					return fmt.Errorf("trader[%d]: Custom model requires custom_api_url or NORTHSTAR_CUSTOM_API_URL", i)
 				}
 				if trader.CustomAPIKey == "" {
-					return fmt.Errorf("trader[%d]: Custom model requires custom_api_key", i)
+					return fmt.Errorf("trader[%d]: Custom model requires custom_api_key or NORTHSTAR_CUSTOM_API_KEY", i)
 				}
 				if trader.CustomModelName == "" {
-					return fmt.Errorf("trader[%d]: Custom model requires custom_model_name", i)
+					return fmt.Errorf("trader[%d]: Custom model requires custom_model_name or NORTHSTAR_CUSTOM_MODEL_NAME", i)
 				}
 			}
 		}
@@ -959,6 +1000,12 @@ func (c *Config) Validate() error {
 			}
 			if trader.MaxNetExposurePct <= 0 || trader.MaxNetExposurePct > 1 {
 				return fmt.Errorf("trader[%d]: max_net_exposure_pct must be between 0 and 1", i)
+			}
+			if trader.MaxSectorExposurePct < 0 || trader.MaxSectorExposurePct > 1 {
+				return fmt.Errorf("trader[%d]: max_sector_exposure_pct must be between 0 and 1", i)
+			}
+			if trader.MaxCorrelatedPositions < 0 {
+				return fmt.Errorf("trader[%d]: max_correlated_positions cannot be negative", i)
 			}
 			if trader.LossStreakPauseThreshold <= 0 {
 				return fmt.Errorf("trader[%d]: loss_streak_pause_threshold must be > 0", i)

@@ -28,11 +28,25 @@ type DecisionRecord struct {
 
 // AccountSnapshot records account balance state
 type AccountSnapshot struct {
+	AccountingVersion      int     `json:"accounting_version"`
+	AccountCash            float64 `json:"account_cash"`
+	AccountEquity          float64 `json:"account_equity"`
+	AvailableBalance       float64 `json:"available_balance"`
+	GrossMarketValue       float64 `json:"gross_market_value"`
+	UnrealizedPnL          float64 `json:"unrealized_pnl"`
+	RealizedPnL            float64 `json:"realized_pnl"`
+	TotalPnL               float64 `json:"total_pnl"`
+	StrategyInitialCapital float64 `json:"strategy_initial_capital"`
+	StrategyEquity         float64 `json:"strategy_equity"`
+	StrategyReturnPct      float64 `json:"strategy_return_pct"`
+	DailyPnL               float64 `json:"daily_pnl"`
+	PositionCount          int     `json:"position_count"`
+	MarginUsed             float64 `json:"margin_used"`
+	MarginUsedPct          float64 `json:"margin_used_pct"`
+
+	// Legacy fields kept only so pre-fix logs can still be parsed.
 	TotalBalance          float64 `json:"total_balance"`
-	AvailableBalance      float64 `json:"available_balance"`
 	TotalUnrealizedProfit float64 `json:"total_unrealized_profit"`
-	PositionCount         int     `json:"position_count"`
-	MarginUsedPct         float64 `json:"margin_used_pct"`
 }
 
 // PositionSnapshot records individual position state
@@ -47,17 +61,60 @@ type PositionSnapshot struct {
 	LiquidationPrice float64 `json:"liquidation_price"`
 }
 
+func (s AccountSnapshot) HasCanonicalAccounting() bool {
+	return s.AccountingVersion >= 2
+}
+
+func (s AccountSnapshot) EffectiveAccountEquity() float64 {
+	if s.HasCanonicalAccounting() {
+		return s.AccountEquity
+	}
+	return s.TotalBalance
+}
+
+func (s AccountSnapshot) EffectiveStrategyEquity() (float64, bool) {
+	if s.HasCanonicalAccounting() {
+		return s.StrategyEquity, s.StrategyInitialCapital > 0
+	}
+	return 0, false
+}
+
 // DecisionAction documents an individual executed decision
 type DecisionAction struct {
-	Action    string    `json:"action"`    // open_long, open_short, close_long, close_short
-	Symbol    string    `json:"symbol"`    // Asset symbol
-	Quantity  float64   `json:"quantity"`  // Position quantity size
-	Leverage  int       `json:"leverage"`  // Leverage application size
-	Price     float64   `json:"price"`     // Execution price
-	OrderID   int64     `json:"order_id"`  // Exchange Order ID
-	Timestamp time.Time `json:"timestamp"` // Execution timestamp
-	Success   bool      `json:"success"`   // Outcome flag
-	Error     string    `json:"error"`     // Error message
+	Action                string            `json:"action"` // open_long, open_short, close_long, close_short
+	Symbol                string            `json:"symbol"` // Asset symbol
+	DecisionReasoning     string            `json:"decision_reasoning,omitempty"`
+	DecisionConfidence    int               `json:"decision_confidence,omitempty"`
+	DecisionPositionSize  float64           `json:"decision_position_size_usd,omitempty"`
+	DecisionStopLoss      float64           `json:"decision_stop_loss,omitempty"`
+	DecisionTakeProfit    float64           `json:"decision_take_profit,omitempty"`
+	Quantity              float64           `json:"quantity"` // Position quantity size
+	Leverage              int               `json:"leverage"` // Leverage application size
+	Price                 float64           `json:"price"`    // Execution price
+	FeesUSD               float64           `json:"fees_usd"` // Fees paid on this execution when known
+	RealizedPnL           float64           `json:"realized_pnl"`
+	OrderID               int64             `json:"order_id"` // Exchange Order ID
+	BrokerOrderID         string            `json:"broker_order_id,omitempty"`
+	LocalOrderID          string            `json:"local_order_id,omitempty"`
+	OrderStatus           string            `json:"order_status,omitempty"`
+	Timestamp             time.Time         `json:"timestamp"` // Execution timestamp
+	Success               bool              `json:"success"`   // Outcome flag
+	Error                 string            `json:"error"`     // Error message
+	RiskOutcome           string            `json:"risk_outcome,omitempty"`
+	RiskSummary           string            `json:"risk_summary,omitempty"`
+	RiskRequestedQuantity float64           `json:"risk_requested_quantity,omitempty"`
+	RiskRequestedNotional float64           `json:"risk_requested_notional,omitempty"`
+	RiskApprovedQuantity  float64           `json:"risk_approved_quantity,omitempty"`
+	RiskApprovedNotional  float64           `json:"risk_approved_notional,omitempty"`
+	RiskChecks            []RiskCheckResult `json:"risk_checks,omitempty"`
+}
+
+type RiskCheckResult struct {
+	Name             string  `json:"name"`
+	Status           string  `json:"status"`
+	Message          string  `json:"message"`
+	ApprovedQuantity float64 `json:"approved_quantity,omitempty"`
+	ApprovedNotional float64 `json:"approved_notional,omitempty"`
 }
 
 // DecisionLogger records system decision workflows over time
@@ -530,8 +587,11 @@ func (l *DecisionLogger) calculateEquityMetrics(records []*DecisionRecord) (floa
 
 	var equities []float64
 	for _, record := range records {
-		equity := record.AccountState.TotalBalance
-		if equity > 0 {
+		if equity, ok := record.AccountState.EffectiveStrategyEquity(); ok && equity > 0 {
+			equities = append(equities, equity)
+			continue
+		}
+		if equity := record.AccountState.EffectiveAccountEquity(); equity > 0 {
 			equities = append(equities, equity)
 		}
 	}

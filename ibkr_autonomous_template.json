@@ -2,7 +2,7 @@
   "traders": [
     {
       "id": "ibkr_autonomous",
-      "name": "IBKR Autonomous Equity Trader",
+      "name": "Northstar Autonomous Equity Trader",
       "enabled": true,
       "ai_model": "deepseek",
       "exchange": "ibkr",
@@ -10,19 +10,15 @@
       "data_provider": "ibkr",
       "broker": "ibkr",
       "instrument_type": "equity",
-
       "ibkr_gateway_url": "https://127.0.0.1:5002/v1/api",
-      "ibkr_account_id": "YOUR_IBKR_ACCOUNT_ID",
-      "ibkr_session_cookie": "",
+      "ibkr_account_id": "${NORTHSTAR_IBKR_ACCOUNT_ID}",
+      "ibkr_session_cookie": "${NORTHSTAR_IBKR_SESSION_COOKIE}",
       "strict_live_mode": true,
-
       "trusted_symbols_file": "data/universe/us_canada_tradable_core.txt",
       "strategy_mode": "hybrid_ai",
       "candidate_batch_size": 12,
       "scan_interval_minutes": 5,
-
-      "deepseek_key": "YOUR_DEEPSEEK_KEY",
-
+      "deepseek_key": "${NORTHSTAR_DEEPSEEK_API_KEY}",
       "initial_balance": 100000,
       "max_gross_exposure": 1.0,
       "max_position_pct": 0.20,
@@ -60,7 +56,6 @@
       "news_max_risk_reduction": 0.55,
       "max_concurrent_positions": 3,
       "symbol_cooldown_cycles": 6,
-
       "momentum_min_score": 1.25,
       "fallback_position_pct": 0.10,
       "min_factor_score": 0.35,
@@ -68,7 +63,6 @@
       "profit_lock_threshold_pct": 1.25,
       "trailing_stop_atr_mult": 1.6,
       "max_holding_cycles": 180,
-
       "allow_short": true,
       "use_macro_filters": true,
       "regime_risk_scaling": true,

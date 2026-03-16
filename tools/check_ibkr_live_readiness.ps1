@@ -9,7 +9,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 if ([string]::IsNullOrWhiteSpace($AccountId)) {
-    Write-Error "AccountId is required. Example: -AccountId DUP200062"
+    $AccountId = $env:NORTHSTAR_IBKR_ACCOUNT_ID
+}
+
+if ([string]::IsNullOrWhiteSpace($AccountId)) {
+    Write-Error "AccountId is required. Pass -AccountId or set NORTHSTAR_IBKR_ACCOUNT_ID."
     exit 1
 }
 
@@ -41,7 +45,7 @@ function Invoke-CurlJson {
     }
 }
 
-$cookieJar = Join-Path $env:TEMP "AegisTrade_ibkr_live_readiness.cookies.txt"
+$cookieJar = Join-Path $env:TEMP "Northstar_ibkr_live_readiness.cookies.txt"
 if (Test-Path $cookieJar) {
     Remove-Item $cookieJar -Force
 }

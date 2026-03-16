@@ -462,9 +462,8 @@ function TraderDetailsPage({
       {account && (
         <div className="mb-4 p-3 rounded text-xs font-mono" style={{ background: '#1E2329', border: '1px solid #2B3139' }}>
           <div style={{ color: '#848E9C' }}>
-             Last Update: {lastUpdate} | Total Equity: {account.total_equity?.toFixed(2) || '0.00'} |
-            Available: {account.available_balance?.toFixed(2) || '0.00'} | P&L: {account.total_pnl?.toFixed(2) || '0.00'}{' '}
-            ({account.total_pnl_pct?.toFixed(2) || '0.00'}%)
+            Last Update: {lastUpdate} | Broker Equity: {account.account_equity?.toFixed(2) || '0.00'} | Cash: {account.account_cash?.toFixed(2) || '0.00'} |
+            Strategy P&L: {account.total_pnl?.toFixed(2) || '0.00'} ({account.strategy_return_pct?.toFixed(2) || '0.00'}%)
           </div>
         </div>
       )}
@@ -472,26 +471,25 @@ function TraderDetailsPage({
       {/* Account Overview */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
         <StatCard
-          title={t('totalEquity', language)}
-          value={`${account?.total_equity?.toFixed(2) || '0.00'} ${accountCurrency}`}
-          change={account?.total_pnl_pct || 0}
-          positive={(account?.total_pnl ?? 0) > 0}
+          title="Broker Equity"
+          value={`${account?.account_equity?.toFixed(2) || '0.00'} ${accountCurrency}`}
+          subtitle={`Gross MV: ${account?.gross_market_value?.toFixed(2) || '0.00'} ${accountCurrency}`}
         />
         <StatCard
-          title={t('availableBalance', language)}
-          value={`${account?.available_balance?.toFixed(2) || '0.00'} ${accountCurrency}`}
-          subtitle={`${(account?.available_balance && account?.total_equity ? ((account.available_balance / account.total_equity) * 100).toFixed(1) : '0.0')}% ${t('free', language)}`}
+          title="Account Cash"
+          value={`${account?.account_cash?.toFixed(2) || '0.00'} ${accountCurrency}`}
+          subtitle={`Available: ${account?.available_balance?.toFixed(2) || '0.00'} ${accountCurrency}`}
         />
         <StatCard
-          title={t('totalPnL', language)}
+          title="Strategy P&L"
           value={`${account?.total_pnl !== undefined && account.total_pnl >= 0 ? '+' : ''}${account?.total_pnl?.toFixed(2) || '0.00'} ${accountCurrency}`}
-          change={account?.total_pnl_pct || 0}
+          change={account?.strategy_return_pct || 0}
           positive={(account?.total_pnl ?? 0) >= 0}
         />
         <StatCard
           title={t('positions', language)}
           value={`${account?.position_count || 0}`}
-          subtitle={`${t('margin', language)}: ${account?.margin_used_pct?.toFixed(1) || '0.0'}%`}
+          subtitle={`Margin: ${account?.margin_used_pct?.toFixed(1) || '0.0'}%`}
         />
       </div>
 
@@ -698,6 +696,8 @@ function DecisionCard({
 }) {
   const [showInputPrompt, setShowInputPrompt] = useState(false);
   const [showCoT, setShowCoT] = useState(false);
+  const accountEquity = decision.account_state.account_equity ?? decision.account_state.total_balance ?? 0;
+  const strategyPnL = decision.account_state.total_pnl ?? decision.account_state.total_unrealized_profit ?? 0;
 
   return (
     <div className="rounded p-5 transition-all duration-300 hover:translate-y-[-2px]" style={{ border: '1px solid #2B3139', background: '#1E2329', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.3)' }}>
@@ -777,6 +777,16 @@ function DecisionCard({
               {action.price > 0 && (
                 <span className="font-mono text-xs" style={{ color: '#848E9C' }}>@{action.price.toFixed(4)}</span>
               )}
+              {typeof action.realized_pnl === 'number' && action.realized_pnl !== 0 && (
+                <span className="font-mono text-xs" style={{ color: action.realized_pnl >= 0 ? '#0ECB81' : '#F6465D' }}>
+                  pnl {action.realized_pnl >= 0 ? '+' : ''}{action.realized_pnl.toFixed(2)}
+                </span>
+              )}
+              {typeof action.fees_usd === 'number' && action.fees_usd > 0 && (
+                <span className="font-mono text-xs" style={{ color: '#848E9C' }}>
+                  fee {action.fees_usd.toFixed(2)}
+                </span>
+              )}
               <span style={{ color: action.success ? '#0ECB81' : '#F6465D' }}>
                 {action.success ? 'OK' : 'ERR'}
               </span>
@@ -789,8 +799,9 @@ function DecisionCard({
       {/* Account State Summary */}
       {decision.account_state && (
         <div className="flex gap-4 text-xs mb-3 rounded px-3 py-2" style={{ background: '#0B0E11', color: '#848E9C' }}>
-          <span>Equity: {decision.account_state.total_balance.toFixed(2)} {currency}</span>
+          <span>Broker Equity: {accountEquity.toFixed(2)} {currency}</span>
           <span>Available: {decision.account_state.available_balance.toFixed(2)} {currency}</span>
+          <span>Strategy P&L: {strategyPnL >= 0 ? '+' : ''}{strategyPnL.toFixed(2)} {currency}</span>
           <span>Margin Used: {decision.account_state.margin_used_pct.toFixed(1)}%</span>
           <span>Positions: {decision.account_state.position_count}</span>
         </div>
