@@ -21,7 +21,6 @@ import (
 	"northstar/risk"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1496,13 +1495,36 @@ func (at *AutoTrader) runCycle() error {
 }
 
 func (at *AutoTrader) isExpectedMarketDataBlock(err error) bool {
+	_, ok := classifyExpectedMarketDataBlock(err)
+	return ok
+}
+
+func classifyExpectedMarketDataBlock(err error) (string, bool) {
 	if err == nil {
-		return false
+		return "", false
 	}
-	lower := strings.ToLower(strings.TrimSpace(err.Error()))
-	return strings.Contains(lower, "failed to load market data for momentum strategy") ||
-		strings.Contains(lower, "data quality blocked") ||
-		strings.Contains(lower, "stale by")
+	message := strings.TrimSpace(err.Error())
+	lower := strings.ToLower(message)
+
+	switch {
+	case strings.Contains(lower, "market is closed"):
+		return message, true
+	case strings.Contains(lower, "data quality blocked"):
+		return message, true
+	case strings.Contains(lower, "stale by"):
+		return message, true
+	case strings.Contains(lower, "chart data unavailable"):
+		return "IBKR chart history is currently unavailable", true
+	case strings.Contains(lower, "/iserver/marketdata/history"):
+		return "IBKR market-data history request failed", true
+	case strings.Contains(lower, "client.timeout exceeded while awaiting headers"),
+		strings.Contains(lower, "context deadline exceeded"):
+		return "IBKR market-data history request timed out", true
+	case strings.Contains(lower, "failed to load market data for momentum strategy"):
+		return message, true
+	default:
+		return "", false
+	}
 }
 
 func (at *AutoTrader) getDecision(ctx *decision.Context) (*decision.FullDecision, error) {
@@ -1580,7 +1602,6 @@ func (at *AutoTrader) loadMomentumMarketData(ctx *decision.Context) error {
 	for _, coin := range ctx.CandidateCoins {
 		addUnique(&candidates, coin.Symbol)
 	}
-	sort.Strings(candidates)
 
 	loadOrder := make([]string, 0, maxSymbols)
 	for _, symbol := range mandatory {
@@ -1607,10 +1628,17 @@ func (at *AutoTrader) loadMomentumMarketData(ctx *decision.Context) error {
 
 	if len(ctx.MarketDataMap) == 0 {
 		if lastErr != nil {
+			if summary, ok := classifyExpectedMarketDataBlock(lastErr); ok {
+				at.syncMarketDataAvailabilityIncident(true, summary, map[string]string{
+					"error": strings.TrimSpace(lastErr.Error()),
+				})
+			}
 			return lastErr
 		}
+		at.syncMarketDataAvailabilityIncident(true, "market data unavailable for runtime decision cycle", nil)
 		return fmt.Errorf("failed to load market data for momentum strategy")
 	}
+	at.syncMarketDataAvailabilityIncident(false, "market data available", nil)
 	return nil
 }
 
@@ -1705,7 +1733,6 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 	}
 
 	allSymbols := append([]string(nil), mergedPool.AllSymbols...)
-	sort.Strings(allSymbols)
 	if at.config.InstrumentType == "equity" {
 		allSymbols = filterTradableEquitySymbols(allSymbols, at.trustedSymbolSet)
 	}

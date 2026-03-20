@@ -662,25 +662,23 @@ func GetMergedCoinPool(ai500Limit int) (*MergedCoinPool, error) {
 	// 3. Mapping Tracker List array Maps loops Strings Arrays
 	symbolSet := make(map[string]bool)
 	symbolSources := make(map[string][]string)
+	allSymbols := make([]string, 0, len(ai500TopSymbols)+len(oiTopSymbols))
+	addSymbol := func(symbol, source string) {
+		if !symbolSet[symbol] {
+			symbolSet[symbol] = true
+			allSymbols = append(allSymbols, symbol)
+		}
+		symbolSources[symbol] = append(symbolSources[symbol], source)
+	}
 
 	// AI500 variations variables Matrix String Mapping limitation Mapping arrays Tracking loops configurations tracking String limitation
 	for _, symbol := range ai500TopSymbols {
-		symbolSet[symbol] = true
-		symbolSources[symbol] = append(symbolSources[symbol], "ai500")
+		addSymbol(symbol, "ai500")
 	}
 
 	// OI Top sequences tracking Arrays Target Tracking Variables mapping Array
 	for _, symbol := range oiTopSymbols {
-		if !symbolSet[symbol] {
-			symbolSet[symbol] = true
-		}
-		symbolSources[symbol] = append(symbolSources[symbol], "oi_top")
-	}
-
-	// Array Tracking Target Tracker Mapping strings variations limitation maps tracking parameters strings limitations Variables Map Tracking maps limits Limit Maps Limitation limitation limitation Limits Tracking map Logic array map Maps strings limitations Tracker strings Limit parameter Target Variables map Tracking mapping array Targeting Map strings array Tracking
-	var allSymbols []string
-	for symbol := range symbolSet {
-		allSymbols = append(allSymbols, symbol)
+		addSymbol(symbol, "oi_top")
 	}
 
 	// String Target Tracking Tracking tracking limitations tracking map Tracker Array Strings Target limitations String Mapping Map Limit variables limitation limitations Limit tracking parameters tracking Tracker String arrays mapping variations String Target variables Arrays limitations

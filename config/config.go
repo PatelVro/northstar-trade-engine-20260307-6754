@@ -18,7 +18,7 @@ type TraderConfig struct {
 	DemoMode bool   `json:"demo_mode,omitempty"` // Synthetic paper demo mode (no broker/API calls)
 
 	// Execution modes
-	Mode         string `json:"mode,omitempty"`          // "replay", "paper", "live" (default: "live" if not set and using binance, "paper" if alpaca_paper_trading is true)
+	Mode         string `json:"mode,omitempty"`          // "replay", "paper", "shadow", "live" (default: "live" if not set and using binance, "paper" if alpaca_paper_trading is true)
 	DataProvider string `json:"data_provider,omitempty"` // "csv", "alpaca", "binance"
 	Broker       string `json:"broker,omitempty"`        // "sim", "alpaca", "binance"
 	CSVDataDir   string `json:"csv_data_dir,omitempty"`  // Path to local historical data for replay mode
@@ -186,7 +186,7 @@ func LoadConfig(filename string) (*Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to load default_coins_file '%s': %w", coinsFile, err)
 		}
-		config.DefaultCoins = coins
+		config.DefaultCoins = mergeSymbolsPreserveOrder(config.DefaultCoins, coins)
 	}
 	// Default: if use_default_coins is false and no coin_pool_api_url is provided, use default coin list
 	if !config.UseDefaultCoins && config.CoinPoolAPIURL == "" {
@@ -292,6 +292,29 @@ func loadSymbolsFromFile(filename string) ([]string, error) {
 	}
 
 	return symbols, nil
+}
+
+func mergeSymbolsPreserveOrder(base, extra []string) []string {
+	seen := make(map[string]struct{}, len(base)+len(extra))
+	merged := make([]string, 0, len(base)+len(extra))
+	add := func(raw string) {
+		symbol := strings.TrimSpace(strings.ToUpper(strings.Trim(raw, "\"'")))
+		if symbol == "" {
+			return
+		}
+		if _, exists := seen[symbol]; exists {
+			return
+		}
+		seen[symbol] = struct{}{}
+		merged = append(merged, symbol)
+	}
+	for _, symbol := range base {
+		add(symbol)
+	}
+	for _, symbol := range extra {
+		add(symbol)
+	}
+	return merged
 }
 
 // Validate  Validate configuration fields
@@ -699,8 +722,8 @@ func (c *Config) Validate() error {
 			if trader.Mode == "" {
 				trader.Mode = "paper"
 			}
-			if trader.Mode != "paper" && trader.Mode != "live" && trader.Mode != "replay" {
-				return fmt.Errorf("trader[%d]: IBKR mode must be 'paper', 'live', or 'replay'", i)
+			if trader.Mode != "paper" && trader.Mode != "live" && trader.Mode != "replay" && trader.Mode != "shadow" {
+				return fmt.Errorf("trader[%d]: IBKR mode must be 'paper', 'shadow', 'live', or 'replay'", i)
 			}
 			if trader.InstrumentType == "" {
 				trader.InstrumentType = "equity"

@@ -253,6 +253,60 @@ func TestLoadConfigAppliesLocalOverride(t *testing.T) {
 	}
 }
 
+func TestLoadConfigDefaultCoinsFileExtendsInlineDefaults(t *testing.T) {
+	dir := t.TempDir()
+	coinsFile := filepath.Join(dir, "symbols.txt")
+	configFile := filepath.Join(dir, "config.json")
+	t.Setenv("NORTHSTAR_IBKR_ACCOUNT_ID", "DU123456")
+
+	if err := os.WriteFile(coinsFile, []byte("ABBV\nAAPL\nABNB\n"), 0644); err != nil {
+		t.Fatalf("write symbols file: %v", err)
+	}
+
+	configJSON := `{
+		"use_default_coins": true,
+		"default_coins": ["AAPL", "MSFT", "NVDA"],
+		"default_coins_file": "symbols.txt",
+		"traders": [
+			{
+				"id": "ibkr_shadow",
+				"name": "IBKR Shadow",
+				"enabled": true,
+				"ai_model": "custom",
+				"exchange": "ibkr",
+				"mode": "shadow",
+				"data_provider": "ibkr",
+				"broker": "sim",
+				"ibkr_gateway_url": "https://127.0.0.1:5002/v1/api",
+				"ibkr_account_id": "${NORTHSTAR_IBKR_ACCOUNT_ID}",
+				"custom_api_url": "https://example.com/v1",
+				"custom_api_key": "key",
+				"custom_model_name": "model",
+				"initial_balance": 1000.0,
+				"scan_interval_minutes": 5
+			}
+		]
+	}`
+	if err := os.WriteFile(configFile, []byte(configJSON), 0644); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+
+	cfg, err := LoadConfig(configFile)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	wantPrefix := []string{"AAPL", "MSFT", "NVDA", "ABBV", "ABNB"}
+	if len(cfg.DefaultCoins) < len(wantPrefix) {
+		t.Fatalf("expected at least %d default coins, got %d", len(wantPrefix), len(cfg.DefaultCoins))
+	}
+	for i, want := range wantPrefix {
+		if got := cfg.DefaultCoins[i]; got != want {
+			t.Fatalf("expected default coin %d to be %s, got %s", i, want, got)
+		}
+	}
+}
+
 func TestAlpacaReplayWithoutSecretsUsesLocalCSV(t *testing.T) {
 	cfg := Config{
 		Traders: []TraderConfig{

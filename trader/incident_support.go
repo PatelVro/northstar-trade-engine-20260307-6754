@@ -324,6 +324,32 @@ func (at *AutoTrader) syncDataQualityIncident(symbol string, blocked bool, summa
 	at.resolveIncident(signal, "data quality restored")
 }
 
+func (at *AutoTrader) syncMarketDataAvailabilityIncident(blocked bool, summary string, details map[string]string) {
+	signal := incidents.Signal{
+		IncidentType:  incidents.TypeMarketDataValidationFailed,
+		Severity:      incidents.SeverityCritical,
+		Source:        "market_data",
+		Summary:       strings.TrimSpace(summary),
+		CurrentStatus: strings.TrimSpace(summary),
+		ExtraKey:      "runtime_history",
+		OccurredAt:    time.Now().UTC(),
+	}
+	if len(details) > 0 {
+		signal.Details = make(map[string]string, len(details))
+		for key, value := range details {
+			if strings.TrimSpace(key) == "" {
+				continue
+			}
+			signal.Details[key] = strings.TrimSpace(value)
+		}
+	}
+	if blocked {
+		at.observeIncident(signal)
+		return
+	}
+	at.resolveIncident(signal, "market data available")
+}
+
 func reconciliationIncidentType(stage string) incidents.Type {
 	stage = strings.ToLower(strings.TrimSpace(stage))
 	switch {

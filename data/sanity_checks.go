@@ -88,7 +88,7 @@ func ValidateBars(symbol, interval string, bars []Bar, opts Options) Result {
 			currTime := barCloseTime(bars[i])
 			if currTime.After(prevTime) {
 				maxGap := time.Duration(float64(duration) * gapMultiple)
-				if currTime.Sub(prevTime) > maxGap {
+				if currTime.Sub(prevTime) > maxGap && !ignoreExpectedEquitySessionGap(prevTime, currTime, interval, opts) {
 					result.Issues = append(result.Issues, Issue{
 						Type:    IssueMissingBars,
 						Message: fmt.Sprintf("detected missing %s bars for %s (gap %s)", interval, result.Symbol, currTime.Sub(prevTime).Round(time.Second)),
@@ -100,10 +100,17 @@ func ValidateBars(symbol, interval string, bars []Bar, opts Options) Result {
 	}
 
 	if latest.Volume <= 0 {
-		result.Issues = append(result.Issues, Issue{
-			Type:    IssueZeroVolume,
-			Message: fmt.Sprintf("latest %s bar for %s has zero volume", interval, result.Symbol),
-		})
+		if outsideRegularEquitySession(interval, now, opts) {
+			appendIssueIfMissing(&result.Issues, Issue{
+				Type:    IssueMarketClosed,
+				Message: fmt.Sprintf("%s market is closed for %s; latest %s bar has zero volume", equityMarketLabel(opts), result.Symbol, interval),
+			})
+		} else {
+			result.Issues = append(result.Issues, Issue{
+				Type:    IssueZeroVolume,
+				Message: fmt.Sprintf("latest %s bar for %s has zero volume", interval, result.Symbol),
+			})
+		}
 	}
 
 	if opts.CheckStaleness {
@@ -112,10 +119,17 @@ func ValidateBars(symbol, interval string, bars []Bar, opts Options) Result {
 			staleLimit = 3 * time.Minute
 		}
 		if !latestBarTime.IsZero() && now.Sub(latestBarTime) > staleLimit {
-			result.Issues = append(result.Issues, Issue{
-				Type:    IssueStaleData,
-				Message: fmt.Sprintf("%s data for %s is stale by %s", interval, result.Symbol, now.Sub(latestBarTime).Round(time.Second)),
-			})
+			if outsideRegularEquitySession(interval, now, opts) {
+				appendIssueIfMissing(&result.Issues, Issue{
+					Type:    IssueMarketClosed,
+					Message: fmt.Sprintf("%s market is closed for %s; latest %s bar is %s old", equityMarketLabel(opts), result.Symbol, interval, now.Sub(latestBarTime).Round(time.Second)),
+				})
+			} else {
+				result.Issues = append(result.Issues, Issue{
+					Type:    IssueStaleData,
+					Message: fmt.Sprintf("%s data for %s is stale by %s", interval, result.Symbol, now.Sub(latestBarTime).Round(time.Second)),
+				})
+			}
 		}
 	}
 
@@ -169,4 +183,63 @@ func buildSummary(result Result) string {
 		return fmt.Sprintf("data quality passed for %s %s (%d bars)", result.Symbol, result.Interval, result.ActualBars)
 	}
 	return fmt.Sprintf("data quality blocked %s %s: %s", result.Symbol, result.Interval, result.Issues[0].Message)
+}
+
+func outsideRegularEquitySession(interval string, now time.Time, opts Options) bool {
+	if !strings.EqualFold(strings.TrimSpace(opts.InstrumentType), "equity") {
+		return false
+	}
+	if duration := intervalDuration(interval); duration <= 0 || duration >= 24*time.Hour {
+		return false
+	}
+
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		return false
+	}
+	et := now.In(loc)
+	switch et.Weekday() {
+	case time.Saturday, time.Sunday:
+		return true
+	}
+
+	midnight := time.Date(et.Year(), et.Month(), et.Day(), 0, 0, 0, 0, loc)
+	open := midnight.Add(9*time.Hour + 30*time.Minute)
+	close := midnight.Add(16 * time.Hour)
+	return et.Before(open) || !et.Before(close)
+}
+
+func ignoreExpectedEquitySessionGap(prevTime, currTime time.Time, interval string, opts Options) bool {
+	if !strings.EqualFold(strings.TrimSpace(opts.InstrumentType), "equity") {
+		return false
+	}
+	if duration := intervalDuration(interval); duration <= 0 || duration >= 24*time.Hour {
+		return false
+	}
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		return false
+	}
+	prevET := prevTime.In(loc)
+	currET := currTime.In(loc)
+	if prevET.Year() == currET.Year() && prevET.YearDay() == currET.YearDay() {
+		return false
+	}
+	return true
+}
+
+func equityMarketLabel(opts Options) string {
+	if strings.EqualFold(strings.TrimSpace(opts.InstrumentType), "equity") {
+		return "US equity"
+	}
+	return "market"
+}
+
+func appendIssueIfMissing(issues *[]Issue, issue Issue) {
+	for _, existing := range *issues {
+		if existing.Type == issue.Type {
+			return
+		}
+	}
+	*issues = append(*issues, issue)
 }

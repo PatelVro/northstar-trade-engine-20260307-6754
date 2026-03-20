@@ -12,7 +12,7 @@ func TestResolveIBKRInterval(t *testing.T) {
 		wantFetchMult int
 	}{
 		{interval: "1m", limit: 40, wantBar: "1 min", wantPeriod: "1d", wantBucket: 1, wantFetchMult: 1},
-		{interval: "3m", limit: 40, wantBar: "1 min", wantPeriod: "1d", wantBucket: 3, wantFetchMult: 3},
+		{interval: "3m", limit: 40, wantBar: "1 min", wantPeriod: "3d", wantBucket: 3, wantFetchMult: 3},
 		{interval: "4h", limit: 60, wantBar: "1 hour", wantPeriod: "1m", wantBucket: 4, wantFetchMult: 4},
 		{interval: "1d", limit: 20, wantBar: "1 day", wantPeriod: "1y", wantBucket: 1, wantFetchMult: 1},
 	}

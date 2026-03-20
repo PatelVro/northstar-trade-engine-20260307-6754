@@ -89,6 +89,53 @@ func TestValidateBarsFlagsMissingBars(t *testing.T) {
 	}
 }
 
+func TestValidateBarsTreatsClosedEquitySessionDistinctly(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("failed to load market timezone: %v", err)
+	}
+
+	now := time.Date(2026, 3, 20, 8, 0, 0, 0, loc).UTC()
+	start := time.Date(2026, 3, 19, 13, 0, 0, 0, loc).UTC()
+	bars := buildBars(start, 3*time.Minute, 40, 100, 1000)
+	result := ValidateBars("AAPL", "3m", bars, Options{
+		Now:            now,
+		CheckStaleness: true,
+		ExpectedBars:   40,
+		InstrumentType: "equity",
+	})
+	if !result.Failed() {
+		t.Fatalf("expected closed-session validation result")
+	}
+	if result.Issues[0].Type != IssueMarketClosed {
+		t.Fatalf("expected market_closed issue, got %s", result.Issues[0].Type)
+	}
+}
+
+func TestValidateBarsIgnoresExpectedOvernightEquityGap(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("failed to load market timezone: %v", err)
+	}
+
+	now := time.Date(2026, 3, 20, 9, 50, 0, 0, loc).UTC()
+	prevSession := buildBars(time.Date(2026, 3, 19, 14, 0, 0, 0, loc).UTC(), 3*time.Minute, 20, 100, 1000)
+	currSession := buildBars(time.Date(2026, 3, 20, 9, 30, 0, 0, loc).UTC(), 3*time.Minute, 20, 102, 1200)
+	bars := append(prevSession, currSession...)
+
+	result := ValidateBars("AAPL", "3m", bars, Options{
+		Now:            now,
+		CheckStaleness: true,
+		ExpectedBars:   40,
+		InstrumentType: "equity",
+	})
+	for _, issue := range result.Issues {
+		if issue.Type == IssueMissingBars {
+			t.Fatalf("expected overnight equity gap to be ignored, got missing-bars issue: %+v", result.Issues)
+		}
+	}
+}
+
 func buildBars(start time.Time, step time.Duration, count int, startPrice float64, volume float64) []Bar {
 	out := make([]Bar, 0, count)
 	price := startPrice

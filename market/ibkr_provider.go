@@ -150,9 +150,10 @@ func resolveIBKRInterval(interval string, limit int) (ibkrBar string, ibkrPeriod
 	case "3m":
 		aggregateBucket = 3
 		fetchLimit = limit * aggregateBucket
-		if fetchLimit > 300 {
-			ibkrPeriod = "3d"
-		}
+		// IBKR's 1d minute-bar history only includes the current session, which starves
+		// early-session 3m aggregation. Use a multi-day lookback so the 3m feature
+		// engine has enough bars immediately after the open.
+		ibkrPeriod = "3d"
 	case "5m":
 		ibkrBar = "5 min"
 		ibkrPeriod = "5d"
