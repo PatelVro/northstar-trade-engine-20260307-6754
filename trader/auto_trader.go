@@ -1509,6 +1509,10 @@ func classifyExpectedMarketDataBlock(err error) (string, bool) {
 	switch {
 	case strings.Contains(lower, "market is closed"):
 		return message, true
+	case strings.Contains(lower, "market-data feed delayed"),
+		strings.Contains(lower, "market-data feed unavailable"),
+		strings.Contains(lower, "runtime market-data probe failed"):
+		return message, true
 	case strings.Contains(lower, "data quality blocked"):
 		return message, true
 	case strings.Contains(lower, "stale by"):
@@ -1562,6 +1566,9 @@ func (at *AutoTrader) getDecision(ctx *decision.Context) (*decision.FullDecision
 func (at *AutoTrader) loadMomentumMarketData(ctx *decision.Context) error {
 	if ctx == nil {
 		return fmt.Errorf("missing context")
+	}
+	if err := at.preflightRuntimeMarketData(ctx); err != nil {
+		return err
 	}
 
 	ctx.MarketDataMap = make(map[string]*market.Data)

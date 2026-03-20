@@ -115,18 +115,21 @@ func (p *orderedMarketDataProvider) GetBars(symbols []string, interval string, l
 	if len(symbols) == 0 {
 		return nil, nil
 	}
-	symbol := strings.ToUpper(strings.TrimSpace(symbols[0]))
-	p.calls = append(p.calls, symbol+"|"+interval)
-	if err, ok := p.errors[symbol]; ok && err != nil {
-		return nil, err
-	}
-
+	result := make(map[string][]market.Kline, len(symbols))
 	now := time.Now().UTC()
-	bars := buildMarketBars(now.Add(-117*time.Minute), 3*time.Minute, 40, 100, 1000)
-	if interval == "4h" {
-		bars = buildMarketBars(now.Add(-236*time.Hour), 4*time.Hour, 60, 100, 1000)
+	for _, raw := range symbols {
+		symbol := strings.ToUpper(strings.TrimSpace(raw))
+		p.calls = append(p.calls, symbol+"|"+interval)
+		if err, ok := p.errors[symbol]; ok && err != nil {
+			return nil, err
+		}
+		bars := buildMarketBars(now.Add(-117*time.Minute), 3*time.Minute, 40, 100, 1000)
+		if interval == "4h" {
+			bars = buildMarketBars(now.Add(-236*time.Hour), 4*time.Hour, 60, 100, 1000)
+		}
+		result[symbol] = bars
 	}
-	return map[string][]market.Kline{symbol: bars}, nil
+	return result, nil
 }
 
 func TestLoadMomentumMarketDataPreservesCandidateOrderAndResolvesAvailabilityIncident(t *testing.T) {
@@ -160,7 +163,7 @@ func TestLoadMomentumMarketDataPreservesCandidateOrderAndResolvesAvailabilityInc
 	}
 
 	provider := at.provider.(*orderedMarketDataProvider)
-	wantPrefix := []string{"MSFT|3m", "MSFT|4h", "AAPL|3m", "AAPL|4h", "NVDA|3m", "NVDA|4h"}
+	wantPrefix := []string{"AAPL|3m", "MSFT|3m", "NVDA|3m", "SPY|3m", "QQQ|3m", "MSFT|3m", "MSFT|4h", "AAPL|3m", "AAPL|4h", "NVDA|3m", "NVDA|4h"}
 	if len(provider.calls) < len(wantPrefix) {
 		t.Fatalf("expected at least %d provider calls, got %d", len(wantPrefix), len(provider.calls))
 	}

@@ -4,6 +4,7 @@ import (
 	"northstar/alerts"
 	"northstar/execution"
 	"northstar/incidents"
+	"northstar/logger"
 	"northstar/orders"
 	"northstar/positions"
 	"northstar/risk"
@@ -11,7 +12,7 @@ import (
 	"time"
 )
 
-const operatorStatusSchemaVersion = 11
+const operatorStatusSchemaVersion = 12
 
 type OperatorRuntimeSummary struct {
 	IsRunning         bool    `json:"is_running"`
@@ -72,6 +73,24 @@ type OperatorExecutionSummary struct {
 	FilledCount              int              `json:"filled_count"`
 	RejectedCount            int              `json:"rejected_count"`
 	FailedCount              int              `json:"failed_count"`
+}
+
+type OperatorShadowModeSummary struct {
+	Available                 bool                     `json:"available"`
+	Active                    bool                     `json:"active"`
+	LastDecisionAt            string                   `json:"last_decision_at"`
+	LastDecisionSymbol        string                   `json:"last_decision_symbol"`
+	LastDecisionAction        string                   `json:"last_decision_action"`
+	LastDecisionStatus        string                   `json:"last_decision_status"`
+	DecisionCount             int                      `json:"decision_count"`
+	WouldTradeCount           int                      `json:"would_trade_count"`
+	BlockedCount              int                      `json:"blocked_count"`
+	OpenPositions             int                      `json:"open_positions"`
+	ClosedTrades              int                      `json:"closed_trades"`
+	HypotheticalRealizedPnL   float64                  `json:"hypothetical_realized_pnl"`
+	HypotheticalUnrealizedPnL float64                  `json:"hypothetical_unrealized_pnl"`
+	LastBlockReason           string                   `json:"last_block_reason"`
+	RecentDecisions           []logger.ShadowExecution `json:"recent_decisions"`
 }
 
 type OperatorPromotionSummary struct {
@@ -166,6 +185,10 @@ type OperatorDataQualitySummaryView struct {
 	TotalFailures       int                                `json:"total_failures"`
 	BlockedSymbols      []OperatorDataQualityBlockedSymbol `json:"blocked_symbols"`
 	BlockedSymbolsCount int                                `json:"blocked_symbols_count"`
+	FeedDelayed         bool                               `json:"feed_delayed"`
+	FeedSummary         string                             `json:"feed_summary"`
+	FeedDetectedAt      string                             `json:"feed_detected_at"`
+	FeedProbeSymbols    []string                           `json:"feed_probe_symbols"`
 }
 
 type OperatorAlertsSummary struct {
@@ -227,6 +250,7 @@ type OperatorStatusSummary struct {
 	Promotion              OperatorPromotionSummary              `json:"promotion"`
 	RiskSupervisor         OperatorRiskSupervisorSummary         `json:"risk_supervisor"`
 	Execution              OperatorExecutionSummary              `json:"execution"`
+	ShadowMode             OperatorShadowModeSummary             `json:"shadow_mode"`
 	Session                OperatorSessionSummary                `json:"session"`
 	Runtime                OperatorRuntimeSummary                `json:"runtime"`
 	TradingGate            OperatorTradingGateSummary            `json:"trading_gate"`
@@ -284,6 +308,12 @@ type OperatorStatusSummary struct {
 	ExecutionFilledCount            int                `json:"execution_filled_count"`
 	ExecutionRejectedCount          int                `json:"execution_rejected_count"`
 	ExecutionFailedCount            int                `json:"execution_failed_count"`
+	ShadowModeActive                bool               `json:"shadow_mode_active"`
+	ShadowDecisionCount             int                `json:"shadow_decision_count"`
+	ShadowWouldTradeCount           int                `json:"shadow_would_trade_count"`
+	ShadowBlockedCount              int                `json:"shadow_blocked_count"`
+	ShadowRealizedPnL               float64            `json:"shadow_realized_pnl"`
+	ShadowUnrealizedPnL             float64            `json:"shadow_unrealized_pnl"`
 	BrokerState                     BrokerRuntimeState `json:"broker_state"`
 	BrokerStateReason               string             `json:"broker_state_reason"`
 	BrokerLastError                 string             `json:"broker_last_error"`
@@ -315,6 +345,8 @@ type OperatorStatusSummary struct {
 	DataQualityLastCheckedAt        string             `json:"data_quality_last_checked_at"`
 	DataQualityBlockedSymbols       int                `json:"data_quality_blocked_symbols"`
 	DataQualityFailures             int                `json:"data_quality_total_failures"`
+	DataQualityFeedDelayed          bool               `json:"data_quality_feed_delayed"`
+	DataQualityFeedSummary          string             `json:"data_quality_feed_summary"`
 	PortfolioRiskAvailable          bool               `json:"portfolio_risk_available"`
 	PortfolioRiskLastEvaluatedAt    string             `json:"portfolio_risk_last_evaluated_at"`
 	PortfolioRiskOutcome            string             `json:"portfolio_risk_outcome"`
@@ -368,6 +400,7 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 	alertSummary := at.currentAlertsSummary()
 	incidentSummary := at.currentIncidentSummary()
 	executionState := at.currentExecutionSummary()
+	shadowState := at.currentShadowSummary()
 
 	aiProvider := "DeepSeek"
 	if at.demoMode {
@@ -456,6 +489,23 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		RejectedCount:            executionState.RejectedCount,
 		FailedCount:              executionState.FailedCount,
 	}
+	shadowSummary := OperatorShadowModeSummary{
+		Available:                 shadowState.Available,
+		Active:                    shadowState.Active,
+		LastDecisionAt:            formatRFC3339(shadowState.LastDecisionAt),
+		LastDecisionSymbol:        shadowState.LastDecisionSymbol,
+		LastDecisionAction:        shadowState.LastDecisionAction,
+		LastDecisionStatus:        shadowState.LastDecisionStatus,
+		DecisionCount:             shadowState.TotalDecisions,
+		WouldTradeCount:           shadowState.WouldTradeCount,
+		BlockedCount:              shadowState.BlockedCount,
+		OpenPositions:             shadowState.OpenPositions,
+		ClosedTrades:              shadowState.ClosedTrades,
+		HypotheticalRealizedPnL:   shadowState.HypotheticalRealizedPnL,
+		HypotheticalUnrealizedPnL: shadowState.HypotheticalUnrealizedPnL,
+		LastBlockReason:           shadowState.LastBlockReason,
+		RecentDecisions:           append([]logger.ShadowExecution(nil), shadowState.RecentDecisions...),
+	}
 
 	brokerSummary := OperatorBrokerRuntimeSummary{
 		Managed:           brokerManaged,
@@ -532,6 +582,10 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		TotalFailures:       dataQuality.TotalFailures,
 		BlockedSymbols:      append([]OperatorDataQualityBlockedSymbol(nil), dataQuality.BlockedSymbols...),
 		BlockedSymbolsCount: dataQuality.BlockedSymbolsCount,
+		FeedDelayed:         dataQuality.FeedDelayed,
+		FeedSummary:         dataQuality.FeedSummary,
+		FeedDetectedAt:      dataQuality.FeedDetectedAt,
+		FeedProbeSymbols:    append([]string(nil), dataQuality.FeedProbeSymbols...),
 	}
 
 	portfolioRiskSummary := OperatorPortfolioRiskSummary{}
@@ -617,6 +671,7 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		Promotion:                       promotionSummary,
 		RiskSupervisor:                  riskSupervisorSummary,
 		Execution:                       executionSummary,
+		ShadowMode:                      shadowSummary,
 		Session:                         sessionSummary,
 		Runtime:                         runtimeSummary,
 		TradingGate:                     tradingGate,
@@ -672,6 +727,12 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		ExecutionFilledCount:            executionSummary.FilledCount,
 		ExecutionRejectedCount:          executionSummary.RejectedCount,
 		ExecutionFailedCount:            executionSummary.FailedCount,
+		ShadowModeActive:                shadowSummary.Active,
+		ShadowDecisionCount:             shadowSummary.DecisionCount,
+		ShadowWouldTradeCount:           shadowSummary.WouldTradeCount,
+		ShadowBlockedCount:              shadowSummary.BlockedCount,
+		ShadowRealizedPnL:               shadowSummary.HypotheticalRealizedPnL,
+		ShadowUnrealizedPnL:             shadowSummary.HypotheticalUnrealizedPnL,
 		BrokerState:                     brokerSummary.State,
 		BrokerStateReason:               brokerSummary.Reason,
 		BrokerLastError:                 brokerSummary.LastError,
@@ -703,6 +764,8 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		DataQualityLastCheckedAt:        dataQualitySummary.LastCheckedAt,
 		DataQualityBlockedSymbols:       dataQualitySummary.BlockedSymbolsCount,
 		DataQualityFailures:             dataQualitySummary.TotalFailures,
+		DataQualityFeedDelayed:          dataQualitySummary.FeedDelayed,
+		DataQualityFeedSummary:          dataQualitySummary.FeedSummary,
 		PortfolioRiskAvailable:          portfolioRiskSummary.Available,
 		PortfolioRiskLastEvaluatedAt:    portfolioRiskSummary.LastEvaluatedAt,
 		PortfolioRiskOutcome:            string(portfolioRiskSummary.Outcome),

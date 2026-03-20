@@ -126,6 +126,28 @@ func (at *AutoTrader) syncBrokerRuntimeIncident(state BrokerRuntimeState, reason
 	}
 }
 
+func (at *AutoTrader) syncMarketDataFeedDelayIncident(delayed bool, summary string, details map[string]string) {
+	signal := incidents.Signal{
+		IncidentType:  incidents.TypeMarketDataValidationFailed,
+		Severity:      incidents.SeverityCritical,
+		Source:        "market_data_feed",
+		ExtraKey:      "feed_delay",
+		Summary:       strings.TrimSpace(summary),
+		CurrentStatus: strings.TrimSpace(summary),
+		OccurredAt:    time.Now().UTC(),
+		Details:       details,
+	}
+	if delayed {
+		if signal.Summary == "" {
+			signal.Summary = "market-data feed delayed"
+			signal.CurrentStatus = signal.Summary
+		}
+		at.observeIncident(signal)
+		return
+	}
+	at.resolveIncident(signal, firstNonEmpty(strings.TrimSpace(summary), "market-data feed fresh"))
+}
+
 func (at *AutoTrader) syncRiskSupervisorIncidents(state risk.SupervisorState) {
 	hasDailyLoss := false
 	hasDrawdown := false

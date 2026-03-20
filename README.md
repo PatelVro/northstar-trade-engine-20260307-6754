@@ -181,6 +181,8 @@ During active runtime, Northstar also reuses one short-lived canonical broker ac
 
 If IBKR starts returning `Chart data unavailable` or similar history-endpoint failures during a shadow or paper session, Northstar now treats that as a bounded market-data availability block instead of a generic runtime crash. Shadow cycles stay in the safe blocked path, a `market_data_validation_failed` incident is opened with runbook guidance, and the incident clears automatically once fresh history requests succeed again.
 
+Northstar now also runs a small liquid-symbol preflight before the full equity decision pipeline loads IBKR market data. If liquid probes like `AAPL`, `MSFT`, `NVDA`, `SPY`, or `QQQ` are delayed or unusable across the board, the runtime records one clear feed-delay state in `/api/status` and opens a `market_data_validation_failed` incident instead of spamming per-symbol failures for the whole candidate batch. This makes delayed or non-real-time IBKR sessions explicit and fail-safe.
+
 Recommended startup paths:
 
 - safest live-like validation: `run_ibkr_shadow.cmd`
