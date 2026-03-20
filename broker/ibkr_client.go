@@ -2,6 +2,7 @@ package broker
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -17,10 +18,13 @@ import (
 
 // IBKRClient is the low-level HTTP client for interacting with the IBKR Client Portal.
 type IBKRClient struct {
-	BaseURL       string
-	AccountID     string
-	SessionCookie string
-	HTTPClient    *http.Client
+	BaseURL                 string
+	AccountID               string
+	SessionCookie           string
+	HTTPClient              *http.Client
+	PortfolioRequestTimeout time.Duration
+	PortfolioRetryAttempts  int
+	PortfolioWarmTTL        time.Duration
 
 	conIDCache  map[string]int
 	cacheMutex  sync.RWMutex
@@ -40,6 +44,12 @@ type ibkrSecdefSection struct {
 	SecType  string `json:"secType"`
 	Exchange string `json:"exchange"`
 }
+
+const (
+	defaultPortfolioRequestTimeout = 5 * time.Second
+	defaultPortfolioRetryAttempts  = 3
+	defaultPortfolioWarmTTL        = 15 * time.Second
+)
 
 // NewIBKRClient initializes a new core client.
 func NewIBKRClient(baseURL, accountID, sessionCookie string) *IBKRClient {
@@ -61,9 +71,12 @@ func NewIBKRClient(baseURL, accountID, sessionCookie string) *IBKRClient {
 	}
 
 	client := &IBKRClient{
-		BaseURL:       strings.TrimSuffix(baseURL, "/"),
-		AccountID:     accountID,
-		SessionCookie: sessionCookie,
+		BaseURL:                 strings.TrimSuffix(baseURL, "/"),
+		AccountID:               accountID,
+		SessionCookie:           sessionCookie,
+		PortfolioRequestTimeout: defaultPortfolioRequestTimeout,
+		PortfolioRetryAttempts:  defaultPortfolioRetryAttempts,
+		PortfolioWarmTTL:        defaultPortfolioWarmTTL,
 		HTTPClient: &http.Client{
 			Transport: tr,
 			Timeout:   15 * time.Second,
@@ -183,9 +196,18 @@ func (c *IBKRClient) Do(req *http.Request) (*http.Response, error) {
 }
 
 func (c *IBKRClient) doPreflight(method, endpoint string) ([]byte, int, error) {
+	return c.doPreflightWithTimeout(method, endpoint, 0)
+}
+
+func (c *IBKRClient) doPreflightWithTimeout(method, endpoint string, timeout time.Duration) ([]byte, int, error) {
 	req, err := http.NewRequest(method, c.BaseURL+endpoint, nil)
 	if err != nil {
 		return nil, 0, err
+	}
+	if timeout > 0 {
+		ctx, cancel := context.WithTimeout(req.Context(), timeout)
+		defer cancel()
+		req = req.WithContext(ctx)
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 	req.Header.Set("Accept", "application/json")
@@ -294,11 +316,19 @@ func (c *IBKRClient) FetchPortfolioEndpoint(accountID, suffix string) ([]byte, e
 
 	endpoint := fmt.Sprintf("/portfolio/%s/%s", accountID, strings.TrimPrefix(strings.TrimSpace(suffix), "/"))
 	var lastErr error
-	for attempt := 1; attempt <= 4; attempt++ {
+	attempts := c.PortfolioRetryAttempts
+	if attempts <= 0 {
+		attempts = defaultPortfolioRetryAttempts
+	}
+	timeout := c.PortfolioRequestTimeout
+	if timeout <= 0 {
+		timeout = defaultPortfolioRequestTimeout
+	}
+	for attempt := 1; attempt <= attempts; attempt++ {
 		if err := c.ensurePortfolioSession(accountID, attempt > 1); err != nil {
 			lastErr = err
 		} else {
-			body, statusCode, err := c.doPreflight("GET", endpoint)
+			body, statusCode, err := c.doPreflightWithTimeout("GET", endpoint, timeout)
 			if err == nil && statusCode == http.StatusOK {
 				return body, nil
 			}
@@ -312,7 +342,7 @@ func (c *IBKRClient) FetchPortfolioEndpoint(accountID, suffix string) ([]byte, e
 			}
 		}
 
-		if attempt < 4 {
+		if attempt < attempts {
 			delay := time.Duration(attempt) * 400 * time.Millisecond
 			c.logRateLimited(
 				fmt.Sprintf("ibkr_portfolio_retry:%s", endpoint),
@@ -365,10 +395,19 @@ func (c *IBKRClient) ensurePortfolioSession(accountID string, force bool) error 
 	c.portfolioMu.Lock()
 	defer c.portfolioMu.Unlock()
 
+	warmTTL := c.PortfolioWarmTTL
+	if warmTTL <= 0 {
+		warmTTL = defaultPortfolioWarmTTL
+	}
+	timeout := c.PortfolioRequestTimeout
+	if timeout <= 0 {
+		timeout = defaultPortfolioRequestTimeout
+	}
+
 	if !force &&
 		accountID == c.portfolioWarmAccount &&
 		!c.portfolioWarmAt.IsZero() &&
-		time.Since(c.portfolioWarmAt) < 15*time.Second {
+		time.Since(c.portfolioWarmAt) < warmTTL {
 		return nil
 	}
 
@@ -376,7 +415,7 @@ func (c *IBKRClient) ensurePortfolioSession(accountID string, force bool) error 
 		"/portfolio/accounts",
 	}
 	for _, endpoint := range mandatory {
-		body, statusCode, err := c.doPreflight("GET", endpoint)
+		body, statusCode, err := c.doPreflightWithTimeout("GET", endpoint, timeout)
 		if err != nil {
 			return fmt.Errorf("%s failed: %w", endpoint, err)
 		}
@@ -390,7 +429,7 @@ func (c *IBKRClient) ensurePortfolioSession(accountID string, force bool) error 
 		"/portfolio/subaccounts2?page=0",
 	}
 	for _, endpoint := range optionalWarmups {
-		body, statusCode, err := c.doPreflight("GET", endpoint)
+		body, statusCode, err := c.doPreflightWithTimeout("GET", endpoint, timeout)
 		switch {
 		case err != nil:
 			c.logRateLimited(

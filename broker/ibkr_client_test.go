@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestScoreSecdefEquityCandidate_PrefersStockListings(t *testing.T) {
@@ -157,10 +158,13 @@ func TestCheckLiveReadinessWarmsPortfolioEndpointsAndRetries(t *testing.T) {
 	defer server.Close()
 
 	client := &IBKRClient{
-		BaseURL:    server.URL,
-		AccountID:  "DU123456",
-		HTTPClient: server.Client(),
-		conIDCache: make(map[string]int),
+		BaseURL:                 server.URL,
+		AccountID:               "DU123456",
+		HTTPClient:              server.Client(),
+		PortfolioRequestTimeout: time.Second,
+		PortfolioRetryAttempts:  3,
+		PortfolioWarmTTL:        time.Second,
+		conIDCache:              make(map[string]int),
 	}
 
 	if err := client.CheckLiveReadiness("DU123456"); err != nil {
@@ -174,5 +178,46 @@ func TestCheckLiveReadinessWarmsPortfolioEndpointsAndRetries(t *testing.T) {
 	}
 	if atomic.LoadInt32(&positionsCalls) < 2 {
 		t.Fatalf("expected positions endpoint retry, got %d call(s)", atomic.LoadInt32(&positionsCalls))
+	}
+}
+
+func TestFetchPortfolioEndpointFailsFastOnHungAccountEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/portfolio/accounts", "/portfolio/subaccounts", "/portfolio/subaccounts2":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`["DU123456"]`))
+		case "/portfolio/DU123456/summary":
+			time.Sleep(250 * time.Millisecond)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"netliquidation":{"amount":101250}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := &IBKRClient{
+		BaseURL:                 server.URL,
+		AccountID:               "DU123456",
+		HTTPClient:              server.Client(),
+		PortfolioRequestTimeout: 60 * time.Millisecond,
+		PortfolioRetryAttempts:  2,
+		PortfolioWarmTTL:        time.Second,
+		conIDCache:              make(map[string]int),
+	}
+
+	start := time.Now()
+	_, err := client.FetchPortfolioEndpoint("DU123456", "summary")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatalf("expected timeout error for hung portfolio endpoint")
+	}
+	if elapsed > time.Second {
+		t.Fatalf("expected fail-fast behavior, elapsed=%s", elapsed)
+	}
+	if got := ClassifyIBKRError(err); got != IBKRErrorTransient {
+		t.Fatalf("expected transient classification for timeout, got %s", got)
 	}
 }
