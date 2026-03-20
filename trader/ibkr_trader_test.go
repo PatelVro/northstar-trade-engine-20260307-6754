@@ -6,6 +6,7 @@ import (
 	"northstar/broker"
 	"northstar/market"
 	"northstar/orders"
+	"sync/atomic"
 	"testing"
 )
 
@@ -181,5 +182,90 @@ func TestReconcileBrokerStateRefreshesBalancePositionsAndOrders(t *testing.T) {
 	}
 	if summary.ActiveLocalOrders != 1 {
 		t.Fatalf("expected 1 active local order, got %d", summary.ActiveLocalOrders)
+	}
+}
+
+func TestGetBalanceAndPositionsUsePortfolioWarmupPath(t *testing.T) {
+	var sawSubaccounts int32
+	var sawSubaccounts2 int32
+	var summaryCalls int32
+	var positionsCalls int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/portfolio/accounts":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`["DU123456"]`))
+		case r.URL.Path == "/portfolio/subaccounts":
+			atomic.StoreInt32(&sawSubaccounts, 1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":"DU123456"}]`))
+		case r.URL.RequestURI() == "/portfolio/subaccounts2?page=0":
+			atomic.StoreInt32(&sawSubaccounts2, 1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":"DU123456"}]`))
+		case r.URL.Path == "/portfolio/DU123456/summary":
+			if atomic.AddInt32(&summaryCalls, 1) == 1 {
+				http.Error(w, "warming summary", http.StatusServiceUnavailable)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"netliquidation":{"amount":101250},
+				"totalcashvalue":{"amount":90000},
+				"availablefunds":{"amount":85000},
+				"grosspositionvalue":{"amount":11250},
+				"unrealizedpnl":{"amount":1250},
+				"realizedpnl":{"amount":500}
+			}`))
+		case r.URL.Path == "/portfolio/DU123456/positions":
+			if atomic.AddInt32(&positionsCalls, 1) == 1 {
+				http.Error(w, "warming positions", http.StatusServiceUnavailable)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"ticker":"AAPL","position":10,"avgCost":150,"mktPrice":155,"unrealizedPnl":50}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := broker.NewIBKRClient(server.URL, "DU123456", "")
+	client.HTTPClient = server.Client()
+	provider := &market.IBKRProvider{Client: client}
+
+	trader := &IBKRTrader{
+		BaseURL:       server.URL,
+		AccountID:     "DU123456",
+		Provider:      provider,
+		orderStore:    orders.NewStore(),
+		fallbackCash:  100000,
+		protectiveOCA: make(map[string]string),
+	}
+
+	balance, err := trader.GetBalance()
+	if err != nil {
+		t.Fatalf("GetBalance failed: %v", err)
+	}
+	if got := balance["accountEquity"].(float64); got != 101250 {
+		t.Fatalf("unexpected account equity: %v", got)
+	}
+
+	positions, err := trader.GetPositions()
+	if err != nil {
+		t.Fatalf("GetPositions failed: %v", err)
+	}
+	if len(positions) != 1 {
+		t.Fatalf("expected one position, got %d", len(positions))
+	}
+	if atomic.LoadInt32(&sawSubaccounts) == 0 || atomic.LoadInt32(&sawSubaccounts2) == 0 {
+		t.Fatalf("expected portfolio warm-up endpoints to be exercised")
+	}
+	if atomic.LoadInt32(&summaryCalls) < 2 {
+		t.Fatalf("expected summary retry, got %d call(s)", atomic.LoadInt32(&summaryCalls))
+	}
+	if atomic.LoadInt32(&positionsCalls) < 2 {
+		t.Fatalf("expected positions retry, got %d call(s)", atomic.LoadInt32(&positionsCalls))
 	}
 }

@@ -126,10 +126,61 @@ Common environment variables:
 - Alpaca live: `run_live.cmd`
 - Replay demo (synthetic local data): `run_replay.cmd`
 - IBKR paper: `run_ibkr_paper.cmd`
+- IBKR shadow (live-like, no orders): `run_ibkr_shadow.cmd`
+- IBKR paper with live-parity config: `run_ibkr_paper_live.cmd`
 - IBKR live: `run_ibkr_live.cmd`
 - IBKR automated backtest matrix: `run_ibkr_backtest.cmd`
 - Live dashboard demo (paper synthetic feed): `run_dashboard_demo.cmd`
 - Live dashboard demo full startup (backend + frontend): `run_dashboard_demo_full.cmd`
+
+## Live-Like Validation Modes
+
+Northstar now has three different non-live validation lanes for equities. They are not interchangeable:
+
+- `demo`
+  - synthetic prices and synthetic fills
+  - useful for runtime smoke tests only
+  - not suitable for judging live-like execution quality
+- `shadow`
+  - real-time broker-backed market data
+  - same decision, risk, supervisor, selector, allocator, and execution-intent path
+  - no real broker order is sent
+  - best choice when you want live-like behavior with zero order-placement risk
+- `paper`
+  - real-time broker-backed market data
+  - same strategy/execution path
+  - broker orders go to the paper account only
+  - best choice when you want to test real broker paper-order flow without risking capital
+
+If you want paper validation to stay as close to live as possible, keep a live config and a shadow/paper config in parity and let only these fields differ:
+
+- trader `id`
+- trader `name`
+- trader `mode`
+- live-promotion-only fields
+- `api_server_port`
+
+Use the built-in parity checker before startup:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\check_mode_parity.ps1 `
+  -BaselineConfig config_ibkr_live.json `
+  -CandidateConfig config_ibkr_shadow.json
+```
+
+Tracked live-like templates:
+
+- `config_ibkr_shadow.example.json`
+- `config_ibkr_paper_live.example.json`
+
+The IBKR live-like launchers can also auto-resolve the local paper account ID and the current `x-sess-uuid` session cookie from the authenticated local gateway, so you do not need to export those values manually when IBeam is already healthy.
+
+IBKR portfolio readiness now performs a bounded warm-up before checking account-scoped `/portfolio/{accountId}/*` endpoints. This matters because the gateway can report `authenticated=true` while `summary` / `positions` still flap through transient `401` or `503` responses until the portfolio session is primed. Northstar now warms `portfolio/accounts` plus the portfolio account listings and retries those account-scoped checks conservatively before failing closed.
+
+Recommended startup paths:
+
+- safest live-like validation: `run_ibkr_shadow.cmd`
+- broker-paper execution validation: `run_ibkr_paper_live.cmd`
 
 ## Live promotion checklist
 

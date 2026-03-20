@@ -132,24 +132,11 @@ func (t *IBKRTrader) fallbackBalance(reason error) map[string]interface{} {
 }
 
 func (t *IBKRTrader) GetBalance() (map[string]interface{}, error) {
-	url := fmt.Sprintf("%s/portfolio/%s/summary", t.BaseURL, t.AccountID)
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := t.Provider.Client.Do(req)
+	bodyBytes, err := t.Provider.Client.FetchPortfolioEndpoint(t.AccountID, "summary")
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch IBKR account summary: %w", err)
 	}
-	defer resp.Body.Close()
-
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	log.Printf(" IBKR summary response status=%d bytes=%d", resp.StatusCode, len(bodyBytes))
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, broker.NewIBKRHTTPError("GET", req.URL.Path, resp.StatusCode, string(bodyBytes))
-	}
+	log.Printf(" IBKR summary response bytes=%d", len(bodyBytes))
 
 	var summary map[string]struct {
 		Amount float64 `json:"amount"`
@@ -209,22 +196,9 @@ func (t *IBKRTrader) GetBalance() (map[string]interface{}, error) {
 }
 
 func (t *IBKRTrader) GetPositions() ([]map[string]interface{}, error) {
-	url := fmt.Sprintf("%s/portfolio/%s/positions", t.BaseURL, t.AccountID)
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := t.Provider.Client.Do(req)
+	b, err := t.Provider.Client.FetchPortfolioEndpoint(t.AccountID, "positions")
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch IBKR positions: %w", err)
-	}
-	defer resp.Body.Close()
-
-	b, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, broker.NewIBKRHTTPError("GET", req.URL.Path, resp.StatusCode, string(b))
 	}
 
 	var rawPositions []map[string]interface{}
@@ -511,21 +485,13 @@ func (t *IBKRTrader) submitIBKROrders(orders []interface{}) error {
 
 // GetLiveOrders fetches the active pending orders from IBKR
 func (t *IBKRTrader) GetLiveOrders() ([]map[string]interface{}, error) {
-	url := fmt.Sprintf("%s/iserver/account/orders", t.BaseURL) // The endpoint for all live orders
-	req, err := http.NewRequest("GET", url, nil)
+	endpoint := "/iserver/account/orders"
+	b, statusCode, err := t.Provider.Client.DoPreflight("GET", endpoint)
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := t.Provider.Client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	b, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return nil, broker.NewIBKRHTTPError("GET", req.URL.Path, resp.StatusCode, string(b))
+	if statusCode != http.StatusOK {
+		return nil, broker.NewIBKRHTTPError("GET", endpoint, statusCode, string(b))
 	}
 
 	liveOrders, err := parseLiveOrdersPayload(b)

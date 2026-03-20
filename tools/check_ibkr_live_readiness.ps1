@@ -2,7 +2,8 @@ param(
     [string]$GatewayUrl = "https://127.0.0.1:5002/v1/api",
     [string]$AccountId = "",
     [int]$Iterations = 5,
-    [int]$DelaySeconds = 3
+    [int]$DelaySeconds = 3,
+    [int]$RequestTimeoutSeconds = 8
 )
 
 Set-StrictMode -Version Latest
@@ -13,17 +14,82 @@ if ([string]::IsNullOrWhiteSpace($AccountId)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($AccountId)) {
+    try {
+        $resolved = & powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "resolve_ibkr_runtime_context.ps1") -GatewayUrl $GatewayUrl
+        foreach ($line in $resolved) {
+            if ($line -like "ACCOUNT_ID=*") {
+                $AccountId = $line.Split("=", 2)[1]
+                break
+            }
+        }
+    } catch {
+        $AccountId = ""
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($AccountId)) {
     Write-Error "AccountId is required. Pass -AccountId or set NORTHSTAR_IBKR_ACCOUNT_ID."
     exit 1
+}
+
+function Warm-PortfolioSession {
+    param(
+        [string]$GatewayUrl,
+        [string]$CookieJar,
+        [int]$TimeoutSeconds
+    )
+
+    $warmups = @(
+        "$GatewayUrl/portfolio/accounts",
+        "$GatewayUrl/portfolio/subaccounts",
+        "$GatewayUrl/portfolio/subaccounts2?page=0"
+    )
+
+    foreach ($url in $warmups) {
+        $result = Invoke-CurlJson -Url $url -CookieJar $CookieJar -TimeoutSeconds $TimeoutSeconds
+        if ($result.Code -eq 200) {
+            continue
+        }
+        if ($result.Code -eq 0 -or $result.Code -ge 500) {
+            Write-Host "  warmup endpoint returned $($result.Code): $url"
+        }
+    }
+}
+
+function Invoke-AccountEndpointWithRetry {
+    param(
+        [string]$GatewayUrl,
+        [string]$AccountId,
+        [string]$RelativePath,
+        [string]$CookieJar,
+        [int]$TimeoutSeconds,
+        [int]$Attempts = 3
+    )
+
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        Warm-PortfolioSession -GatewayUrl $GatewayUrl -CookieJar $CookieJar -TimeoutSeconds $TimeoutSeconds
+        $result = Invoke-CurlJson -Url "$GatewayUrl/$RelativePath" -CookieJar $CookieJar -TimeoutSeconds $TimeoutSeconds
+        if ($result.Code -eq 200) {
+            return $result
+        }
+        if ($attempt -lt $Attempts -and ($result.Code -eq 401 -or $result.Code -eq 503 -or $result.Code -eq 504)) {
+            Start-Sleep -Milliseconds (400 * $attempt)
+            continue
+        }
+        return $result
+    }
+
+    return Invoke-CurlJson -Url "$GatewayUrl/$RelativePath" -CookieJar $CookieJar -TimeoutSeconds $TimeoutSeconds
 }
 
 function Invoke-CurlJson {
     param(
         [string]$Url,
-        [string]$CookieJar
+        [string]$CookieJar,
+        [int]$TimeoutSeconds
     )
 
-    $raw = & curl.exe -k -s -m 20 -b $CookieJar -c $CookieJar -w "`n%{http_code}" $Url
+    $raw = & curl.exe -k -s -m $TimeoutSeconds -b $CookieJar -c $CookieJar -w "`n%{http_code}" $Url
     if ($LASTEXITCODE -ne 0) {
         return [pscustomobject]@{
             Code = 0
@@ -59,11 +125,12 @@ Write-Host ""
 $allPassed = $true
 
 for ($i = 1; $i -le $Iterations; $i++) {
-    $auth = Invoke-CurlJson -Url "$GatewayUrl/iserver/auth/status" -CookieJar $cookieJar
-    $accounts = Invoke-CurlJson -Url "$GatewayUrl/portfolio/accounts" -CookieJar $cookieJar
-    $summary = Invoke-CurlJson -Url "$GatewayUrl/portfolio/$AccountId/summary" -CookieJar $cookieJar
-    $positions = Invoke-CurlJson -Url "$GatewayUrl/portfolio/$AccountId/positions" -CookieJar $cookieJar
-    $orders = Invoke-CurlJson -Url "$GatewayUrl/iserver/account/orders" -CookieJar $cookieJar
+    $auth = Invoke-CurlJson -Url "$GatewayUrl/iserver/auth/status" -CookieJar $cookieJar -TimeoutSeconds $RequestTimeoutSeconds
+    $accounts = Invoke-CurlJson -Url "$GatewayUrl/portfolio/accounts" -CookieJar $cookieJar -TimeoutSeconds $RequestTimeoutSeconds
+    Warm-PortfolioSession -GatewayUrl $GatewayUrl -CookieJar $cookieJar -TimeoutSeconds $RequestTimeoutSeconds
+    $summary = Invoke-AccountEndpointWithRetry -GatewayUrl $GatewayUrl -AccountId $AccountId -RelativePath "portfolio/$AccountId/summary" -CookieJar $cookieJar -TimeoutSeconds $RequestTimeoutSeconds
+    $positions = Invoke-AccountEndpointWithRetry -GatewayUrl $GatewayUrl -AccountId $AccountId -RelativePath "portfolio/$AccountId/positions" -CookieJar $cookieJar -TimeoutSeconds $RequestTimeoutSeconds
+    $orders = Invoke-CurlJson -Url "$GatewayUrl/iserver/account/orders" -CookieJar $cookieJar -TimeoutSeconds $RequestTimeoutSeconds
 
     $authOk = $false
     if ($auth.Code -eq 200) {

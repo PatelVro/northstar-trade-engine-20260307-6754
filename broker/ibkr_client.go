@@ -22,14 +22,18 @@ type IBKRClient struct {
 	SessionCookie string
 	HTTPClient    *http.Client
 
-	conIDCache map[string]int
-	cacheMutex sync.RWMutex
-	logMu      sync.Mutex
+	conIDCache  map[string]int
+	cacheMutex  sync.RWMutex
+	logMu       sync.Mutex
+	portfolioMu sync.Mutex
 
 	AuthStatus bool
 	mu         sync.RWMutex // Protect AuthStatus
 	lastLogKey string
 	lastLogAt  time.Time
+
+	portfolioWarmAccount string
+	portfolioWarmAt      time.Time
 }
 
 type ibkrSecdefSection struct {
@@ -203,6 +207,13 @@ func (c *IBKRClient) doPreflight(method, endpoint string) ([]byte, int, error) {
 	return b, resp.StatusCode, nil
 }
 
+// DoPreflight exposes the same authenticated preflight request path used by
+// readiness checks so higher-level runtime bootstrap code can reuse the exact
+// same session and cookie handling behavior.
+func (c *IBKRClient) DoPreflight(method, endpoint string) ([]byte, int, error) {
+	return c.doPreflight(method, endpoint)
+}
+
 func (c *IBKRClient) logRateLimited(key, format string, args ...interface{}) {
 	if key == "" {
 		key = format
@@ -272,6 +283,49 @@ func (c *IBKRClient) CheckSessionReadiness(accountID string) error {
 	return nil
 }
 
+func (c *IBKRClient) FetchPortfolioEndpoint(accountID, suffix string) ([]byte, error) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		accountID = strings.TrimSpace(c.AccountID)
+	}
+	if accountID == "" {
+		return nil, fmt.Errorf("missing IBKR account ID")
+	}
+
+	endpoint := fmt.Sprintf("/portfolio/%s/%s", accountID, strings.TrimPrefix(strings.TrimSpace(suffix), "/"))
+	var lastErr error
+	for attempt := 1; attempt <= 4; attempt++ {
+		if err := c.ensurePortfolioSession(accountID, attempt > 1); err != nil {
+			lastErr = err
+		} else {
+			body, statusCode, err := c.doPreflight("GET", endpoint)
+			if err == nil && statusCode == http.StatusOK {
+				return body, nil
+			}
+			if err != nil {
+				lastErr = fmt.Errorf("%s failed: %w", endpoint, err)
+			} else {
+				lastErr = NewIBKRHTTPError("GET", endpoint, statusCode, string(body))
+			}
+			if !IsRetryableIBKRError(lastErr) {
+				return nil, lastErr
+			}
+		}
+
+		if attempt < 4 {
+			delay := time.Duration(attempt) * 400 * time.Millisecond
+			c.logRateLimited(
+				fmt.Sprintf("ibkr_portfolio_retry:%s", endpoint),
+				" IBKR: retrying %s after transient portfolio bootstrap failure (%v)",
+				endpoint,
+				lastErr,
+			)
+			time.Sleep(delay)
+		}
+	}
+	return nil, lastErr
+}
+
 // CheckLiveReadiness verifies account endpoints required for safe live execution.
 func (c *IBKRClient) CheckLiveReadiness(accountID string) error {
 	accountID = strings.TrimSpace(accountID)
@@ -286,25 +340,16 @@ func (c *IBKRClient) CheckLiveReadiness(accountID string) error {
 		return err
 	}
 
-	metaEndpoint := fmt.Sprintf("/portfolio/%s/meta", accountID)
-	if body, statusMeta, err := c.doPreflight("GET", metaEndpoint); err != nil {
-		return fmt.Errorf("%s failed: %w", metaEndpoint, err)
-	} else if statusMeta != http.StatusOK {
-		return NewIBKRHTTPError("GET", metaEndpoint, statusMeta, string(body))
+	if _, err := c.FetchPortfolioEndpoint(accountID, "meta"); err != nil {
+		return err
 	}
 
-	summaryEndpoint := fmt.Sprintf("/portfolio/%s/summary", accountID)
-	if body, statusSummary, err := c.doPreflight("GET", summaryEndpoint); err != nil {
-		return fmt.Errorf("%s failed: %w", summaryEndpoint, err)
-	} else if statusSummary != http.StatusOK {
-		return NewIBKRHTTPError("GET", summaryEndpoint, statusSummary, string(body))
+	if _, err := c.FetchPortfolioEndpoint(accountID, "summary"); err != nil {
+		return err
 	}
 
-	positionsEndpoint := fmt.Sprintf("/portfolio/%s/positions", accountID)
-	if body, statusPositions, err := c.doPreflight("GET", positionsEndpoint); err != nil {
-		return fmt.Errorf("%s failed: %w", positionsEndpoint, err)
-	} else if statusPositions != http.StatusOK {
-		return NewIBKRHTTPError("GET", positionsEndpoint, statusPositions, string(body))
+	if _, err := c.FetchPortfolioEndpoint(accountID, "positions"); err != nil {
+		return err
 	}
 
 	if body, statusOrders, err := c.doPreflight("GET", "/iserver/account/orders"); err != nil {
@@ -313,6 +358,62 @@ func (c *IBKRClient) CheckLiveReadiness(accountID string) error {
 		return NewIBKRHTTPError("GET", "/iserver/account/orders", statusOrders, string(body))
 	}
 
+	return nil
+}
+
+func (c *IBKRClient) ensurePortfolioSession(accountID string, force bool) error {
+	c.portfolioMu.Lock()
+	defer c.portfolioMu.Unlock()
+
+	if !force &&
+		accountID == c.portfolioWarmAccount &&
+		!c.portfolioWarmAt.IsZero() &&
+		time.Since(c.portfolioWarmAt) < 15*time.Second {
+		return nil
+	}
+
+	mandatory := []string{
+		"/portfolio/accounts",
+	}
+	for _, endpoint := range mandatory {
+		body, statusCode, err := c.doPreflight("GET", endpoint)
+		if err != nil {
+			return fmt.Errorf("%s failed: %w", endpoint, err)
+		}
+		if statusCode != http.StatusOK {
+			return NewIBKRHTTPError("GET", endpoint, statusCode, string(body))
+		}
+	}
+
+	optionalWarmups := []string{
+		"/portfolio/subaccounts",
+		"/portfolio/subaccounts2?page=0",
+	}
+	for _, endpoint := range optionalWarmups {
+		body, statusCode, err := c.doPreflight("GET", endpoint)
+		switch {
+		case err != nil:
+			c.logRateLimited(
+				"ibkr_portfolio_warm_optional:"+endpoint,
+				" IBKR: optional portfolio warm-up %s failed: %v",
+				endpoint,
+				err,
+			)
+		case statusCode == http.StatusOK:
+			continue
+		default:
+			c.logRateLimited(
+				fmt.Sprintf("ibkr_portfolio_warm_optional:%s:%d", endpoint, statusCode),
+				" IBKR: optional portfolio warm-up %s returned HTTP %d: %s",
+				endpoint,
+				statusCode,
+				strings.TrimSpace(string(body)),
+			)
+		}
+	}
+
+	c.portfolioWarmAccount = accountID
+	c.portfolioWarmAt = time.Now()
 	return nil
 }
 
