@@ -220,6 +220,10 @@ func (at *AutoTrader) setBrokerRuntimeState(state BrokerRuntimeState, reason str
 	shouldLog := at.shouldLogBrokerStateLocked(logLine, now)
 	at.brokerStateMu.Unlock()
 
+	if state != BrokerRuntimeHealthy {
+		at.invalidateRuntimeAccountSnapshot()
+	}
+
 	if shouldLog {
 		log.Printf(" [%s] %s", at.name, logLine)
 	}
@@ -309,6 +313,15 @@ func (at *AutoTrader) reconcileIBKRRuntime() error {
 
 	if snapshot == nil {
 		return fmt.Errorf("IBKR reconciliation returned no snapshot")
+	}
+
+	if snapshot.Balance != nil {
+		summary := at.buildAccountSummaryFromRaw(snapshot.Balance, snapshot.Positions)
+		normalizedPositions := normalizePositionViews(snapshot.Positions)
+		at.setRuntimeAccountSnapshot(summary, normalizedPositions)
+		at.setLatestAccountSummary(&summary)
+	} else {
+		at.invalidateRuntimeAccountSnapshot()
 	}
 
 	at.refreshPositionState(positionInfoFromBrokerMaps(snapshot.Positions))

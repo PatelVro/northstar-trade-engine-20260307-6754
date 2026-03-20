@@ -177,6 +177,8 @@ The IBKR live-like launchers can also auto-resolve the local paper account ID an
 
 IBKR portfolio readiness now performs a bounded warm-up before checking account-scoped `/portfolio/{accountId}/*` endpoints. This matters because the gateway can report `authenticated=true` while `summary` / `positions` still flap through transient `401` or `503` responses until the portfolio session is primed. Northstar now warms `portfolio/accounts` plus the portfolio account listings, retries those account-scoped checks conservatively, and fails fast on hung account endpoints instead of letting the runtime stall for an extended period.
 
+During active runtime, Northstar also reuses one short-lived canonical broker account snapshot for repeated balance/position reads within the same decision window, then invalidates it immediately after execution submission, broker degradation, or broker reconciliation. This keeps the runtime from hammering fragile IBKR portfolio endpoints multiple times per cycle while still failing closed once the snapshot goes stale.
+
 Recommended startup paths:
 
 - safest live-like validation: `run_ibkr_shadow.cmd`

@@ -242,6 +242,8 @@ type AutoTrader struct {
 	promotionSummary                      PromotionSummary
 	accountSummaryMu                      sync.RWMutex
 	lastAccountSummary                    *AccountSummary
+	accountSnapshotMu                     sync.RWMutex
+	runtimeAccountSnapshot                *runtimeAccountSnapshot
 	riskSupervisorMu                      sync.RWMutex
 	riskSupervisor                        *risk.Supervisor
 	riskSupervisorState                   risk.SupervisorState
@@ -262,6 +264,8 @@ type AutoTrader struct {
 	localPositionSnapshots                map[string]positions.Snapshot
 	portfolioRiskMu                       sync.RWMutex
 	portfolioRiskState                    *portfolioRiskState
+	shadowMu                              sync.RWMutex
+	shadowState                           shadowModeState
 	sessionReportMu                       sync.Mutex
 	sessionReportState                    *paperSessionTracker
 	lastSessionReportPath                 string
@@ -656,12 +660,12 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 	}
 
 	at := &AutoTrader{
-		id:         config.ID,
-		name:       config.Name,
-		aiModel:    config.AIModel,
-		exchange:   config.Exchange,
-		config:     config,
-		riskEngine: risk.NewEngine(buildRiskConfig(config)),
+		id:               config.ID,
+		name:             config.Name,
+		aiModel:          config.AIModel,
+		exchange:         config.Exchange,
+		config:           config,
+		riskEngine:       risk.NewEngine(buildRiskConfig(config)),
 		executionManager: execution.NewManager(execution.Config{}),
 		auditRecorder: audit.NewRecorder(filepath.Join("output", "audit"), audit.Metadata{
 			TraderID:     config.ID,
@@ -726,6 +730,7 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 	at.initializeDataQualityState()
 	at.initializePositionReconciliationState()
 	at.initializeRiskSupervisorState()
+	at.initializeShadowModeState()
 	at.restoreStrategyAccountingState()
 
 	return at, nil
@@ -850,6 +855,10 @@ func (at *AutoTrader) closeAllOpenPositions() {
 		log.Printf(" Failed to fetch positions for forced backtest close: %v", err)
 		return
 	}
+	record := &logger.DecisionRecord{
+		ExecutionLog: []string{"forced backtest closeout"},
+		Success:      true,
+	}
 
 	for _, pos := range positions {
 		symbol, _ := pos["symbol"].(string)
@@ -858,16 +867,34 @@ func (at *AutoTrader) closeAllOpenPositions() {
 			continue
 		}
 
-		var closeErr error
+		actionRecord := logger.DecisionAction{
+			Symbol:    symbol,
+			Timestamp: time.Now(),
+		}
+		var (
+			closeErr error
+			order    map[string]interface{}
+		)
 		switch side {
 		case "long":
-			_, closeErr = at.trader.CloseLong(symbol, 0)
+			actionRecord.Action = "close_long"
+			order, closeErr = at.trader.CloseLong(symbol, 0)
 		case "short":
-			_, closeErr = at.trader.CloseShort(symbol, 0)
+			actionRecord.Action = "close_short"
+			order, closeErr = at.trader.CloseShort(symbol, 0)
 		}
 		if closeErr != nil {
 			log.Printf(" Failed to force-close %s %s at backtest end: %v", symbol, side, closeErr)
+			actionRecord.Error = closeErr.Error()
+			record.Success = false
+		} else {
+			actionRecord.Success = true
+			at.applyActionAccountingMetadata(&actionRecord, order)
 		}
+		record.Decisions = append(record.Decisions, actionRecord)
+	}
+	if len(record.Decisions) > 0 {
+		_ = at.logDecisionAndAudit(record, nil, nil)
 	}
 }
 
@@ -1179,6 +1206,7 @@ func (at *AutoTrader) runCycle() error {
 	record := &logger.DecisionRecord{
 		ExecutionLog: []string{},
 		Success:      true,
+		ShadowMode:   at.shadowModeEnabled(),
 	}
 	defer at.observePaperSessionDecisionRecord(record)
 
@@ -1197,6 +1225,20 @@ func (at *AutoTrader) runCycle() error {
 		record.ErrorMessage = fmt.Sprintf("Failed to construct market trading context: %v", err)
 		_ = at.logDecisionAndAudit(record, nil, nil)
 		return fmt.Errorf("failed to construct market trading context limits configurations array bindings parameter: %w", err)
+	}
+	if err := at.ensureShadowPipelineContext(ctx); err != nil {
+		if at.shadowModeEnabled() && at.isExpectedMarketDataBlock(err) {
+			reason := fmt.Sprintf("Shadow pipeline blocked: %v", err)
+			at.recordPaperSessionBlockedCycle(reason)
+			record.ExecutionLog = append(record.ExecutionLog, reason)
+			log.Printf(" [%s] %s", at.name, reason)
+			_ = at.logDecisionAndAudit(record, ctx, nil)
+			return nil
+		}
+		record.Success = false
+		record.ErrorMessage = fmt.Sprintf("Failed to prepare shadow-mode pipeline context: %v", err)
+		_ = at.logDecisionAndAudit(record, ctx, nil)
+		return err
 	}
 	at.refreshPositionState(ctx.Positions)
 	if ctx.Account.StrategyEquity > at.peakEquitySeen {
@@ -1327,6 +1369,14 @@ func (at *AutoTrader) runCycle() error {
 	}
 
 	if err != nil {
+		if at.isExpectedMarketDataBlock(err) {
+			reason := fmt.Sprintf("Decision generation blocked: %v", err)
+			at.recordPaperSessionBlockedCycle(reason)
+			record.ExecutionLog = append(record.ExecutionLog, reason)
+			log.Printf(" [%s] %s", at.name, reason)
+			_ = at.logDecisionAndAudit(record, ctx, nil)
+			return nil
+		}
 		err = at.handleIBKRRuntimeError("decision_generation", err)
 		record.Success = false
 		record.ErrorMessage = fmt.Sprintf("AI string array targeting Map array MAP maps limitations array configurations constraints limitation: %v", err)
@@ -1346,6 +1396,8 @@ func (at *AutoTrader) runCycle() error {
 
 	at.maybeApplyEquityMomentumFallback(ctx, fullDecision)
 	at.applyEquityDecisionOverlay(ctx, fullDecision)
+	at.applyBacktestResearchPipeline(ctx, fullDecision)
+	record.Pipeline = at.buildPipelineObservations(ctx)
 	if len(fullDecision.Decisions) > 0 {
 		decisionJSON, _ := json.MarshalIndent(fullDecision.Decisions, "", "  ")
 		record.DecisionJSON = string(decisionJSON)
@@ -1407,6 +1459,7 @@ func (at *AutoTrader) runCycle() error {
 			Timestamp:            time.Now(),
 			Success:              false,
 		}
+		actionRecord.Pipeline = at.buildPipelineDecision(ctx, d)
 
 		if err := at.executeDecisionWithRecord(&d, &actionRecord); err != nil {
 			log.Printf(" Decision execution failed (%s %s): %v", d.Symbol, d.Action, err)
@@ -1440,6 +1493,16 @@ func (at *AutoTrader) runCycle() error {
 	}
 
 	return nil
+}
+
+func (at *AutoTrader) isExpectedMarketDataBlock(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(lower, "failed to load market data for momentum strategy") ||
+		strings.Contains(lower, "data quality blocked") ||
+		strings.Contains(lower, "stale by")
 }
 
 func (at *AutoTrader) getDecision(ctx *decision.Context) (*decision.FullDecision, error) {
@@ -1480,6 +1543,7 @@ func (at *AutoTrader) loadMomentumMarketData(ctx *decision.Context) error {
 	}
 
 	ctx.MarketDataMap = make(map[string]*market.Data)
+	var lastErr error
 
 	maxSymbols := 32
 	if at.config.CandidateBatchSize > 0 && at.config.CandidateBatchSize < maxSymbols {
@@ -1535,12 +1599,16 @@ func (at *AutoTrader) loadMomentumMarketData(ctx *decision.Context) error {
 	for _, symbol := range loadOrder {
 		data, err := at.getValidatedMarketData(symbol)
 		if err != nil {
+			lastErr = err
 			continue
 		}
 		ctx.MarketDataMap[symbol] = data
 	}
 
 	if len(ctx.MarketDataMap) == 0 {
+		if lastErr != nil {
+			return lastErr
+		}
 		return fmt.Errorf("failed to load market data for momentum strategy")
 	}
 	return nil
@@ -1610,82 +1678,12 @@ func (at *AutoTrader) buildMomentumOnlyDecision(ctx *decision.Context) *decision
 
 // buildTradingContext Tracking tracking Target limitations limits Variable combinations strings Variables arrays Tracking MAP parameters strings mapping mapping string Maps List mapping Target configurations Mapping Variable lists permutations limit MAP limitations Maps maps Targeting limitations Limit strings
 func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
-	// 1. Load broker state and current positions first so account metrics are derived from one snapshot.
-	balance, err := at.trader.GetBalance()
-	if err != nil {
-		return nil, fmt.Errorf("variables Strings Map tracking string Arrays Arrays Maps String map mapping string Target mapping arrays limits Mapping %w", err)
-	}
-
-	// 2. Logic List Tracking Maps constraints Strings mapping lists Tracking tracker Targeting Matrix Array Map Map MAP MAP Tracking limits limitations Target limit array Target Tracker mapping
-	positions, err := at.trader.GetPositions()
+	// 1. Load the current account snapshot and positions from the canonical runtime view.
+	summary, positions, err := at.snapshotAccountAndPositions()
 	if err != nil {
 		return nil, fmt.Errorf("tracking limits permutations Maps Tracking Limit parameters array parameters: %w", err)
 	}
-	summary := at.buildAccountSummaryFromRaw(balance, positions)
-	at.setLatestAccountSummary(&summary)
-
-	var positionInfos []decision.PositionInfo
-
-	// Tracking Mapping Tracking map Limit combinations Target limit String limitations Maps limitations Maps maps Tracking map Array Tracking mapping Target arrays limitation parameter
-	currentPositionKeys := make(map[string]bool)
-
-	for _, pos := range positions {
-		symbol := pos["symbol"].(string)
-		side := pos["side"].(string)
-		entryPrice := pos["entryPrice"].(float64)
-		markPrice := pos["markPrice"].(float64)
-		quantity := pos["positionAmt"].(float64)
-		if quantity < 0 {
-			quantity = -quantity // LIMIT targeting variables string bounds LIMIT Strings Limit mapping limit Strings Array Strings Maps MAP strings limitations Tracker Map Tracking limit
-		}
-		unrealizedPnl := pos["unRealizedProfit"].(float64)
-		liquidationPrice := pos["liquidationPrice"].(float64)
-
-		// LIMIT limitations constraints tracking arrays Maps Limit Limit Target Target Target limits map String map Limitation arrays
-		leverage := 10 // Target Mapping tracking limitation Array String Mapping bounds Maps map limitations string variables combinations string limits Tracker Mapping limitation string Mapping
-		if lev, ok := pos["leverage"].(float64); ok {
-			leverage = int(lev)
-		}
-		marginUsed := (quantity * markPrice) / float64(leverage)
-
-		// Tracker String combinations target array Maps Variables tracking Strings maps array string string Variables permutations Limit Map Mapping Tracker map String targeting Strings MAP Object limitations map Map Mapping Limits Tracker Array limitations variations targeting variables combinations Strings Targets maps Map limitation map parameters String Variables Maps Strings map limits Limits map Targeting Tracking Limit mapping Tracker Limits mapping Tracker combinations tracking Limit Object limit
-		pnlPct := 0.0
-		if side == "long" {
-			pnlPct = ((markPrice - entryPrice) / entryPrice) * float64(leverage) * 100
-		} else {
-			pnlPct = ((entryPrice - markPrice) / entryPrice) * float64(leverage) * 100
-		}
-
-		// Strings String Tracker Arrays Array limits array combinations Variables Tracking limitation limitation mapping MAP Target MAP Mapper combinations tracking Mapping Limit Targeting MAP Mapping Map Limit Tracking parameters array Tracker Matrix Limit limitations map
-		posKey := symbol + "_" + side
-		currentPositionKeys[posKey] = true
-		if _, exists := at.positionFirstSeenTime[posKey]; !exists {
-			// Limit Variables map arrays Tracking Arrays parameters mapping
-			at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
-		}
-		updateTime := at.positionFirstSeenTime[posKey]
-
-		positionInfos = append(positionInfos, decision.PositionInfo{
-			Symbol:           symbol,
-			Side:             side,
-			EntryPrice:       entryPrice,
-			MarkPrice:        markPrice,
-			Quantity:         quantity,
-			Leverage:         leverage,
-			UnrealizedPnL:    unrealizedPnl,
-			UnrealizedPnLPct: pnlPct,
-			LiquidationPrice: liquidationPrice,
-			MarginUsed:       marginUsed,
-			UpdateTime:       updateTime,
-		})
-	}
-
-	// Map Limits List maps Tracker limit limits Map tracking array map LIMIT variables map constraints Limitation Tracking Arrays Target values maps Target limit Limits arrays parameters Maps Tracker Limits Target Strings Map Array configurations limit Tracking Array Map MAP
-	for key := range at.positionFirstSeenTime {
-		if !currentPositionKeys[key] {
-			delete(at.positionFirstSeenTime, key)
-		}
-	}
+	positionInfos := at.buildDecisionPositionInfos(positions)
 
 	// 3. String Limits Limit Tracker Target arrays parameter Map Tracking map strings Tracking Logic Limit Target limits constraints limitations Mapping Arrays Limitations parameters strings
 	// Targeting Logic tracking tracking variables String Variables array limits MAP mapping Limits Maps tracking
@@ -1756,24 +1754,10 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 		CallCount:       at.callCount,
 		BTCETHLeverage:  at.config.BTCETHLeverage,  // Limit Mapper Parameter arrays Limit
 		AltcoinLeverage: at.config.AltcoinLeverage, // permutations variations strings combinations Arrays
-		Account: decision.AccountInfo{
-			AccountCash:            summary.AccountCash,
-			AccountEquity:          summary.AccountEquity,
-			AvailableBalance:       summary.AvailableBalance,
-			GrossMarketValue:       summary.GrossMarketValue,
-			UnrealizedPnL:          summary.UnrealizedPnL,
-			RealizedPnL:            summary.RealizedPnL,
-			TotalPnL:               summary.TotalPnL,
-			StrategyInitialCapital: summary.StrategyInitialCapital,
-			StrategyEquity:         summary.StrategyEquity,
-			StrategyReturnPct:      summary.StrategyReturnPct,
-			MarginUsed:             summary.MarginUsed,
-			MarginUsedPct:          summary.MarginUsedPct,
-			PositionCount:          len(positionInfos),
-		},
-		Positions:      positionInfos,
-		CandidateCoins: candidateCoins,
-		Performance:    performance, // Lists arrays Target limits strings
+		Account:         decisionAccountInfoFromSummary(summary),
+		Positions:       positionInfos,
+		CandidateCoins:  candidateCoins,
+		Performance:     performance, // Lists arrays Target limits strings
 
 		Provider:              at.provider,
 		InstrumentType:        at.config.InstrumentType,
@@ -1844,15 +1828,10 @@ func (at *AutoTrader) cappedEntryNotional(requested float64) float64 {
 
 	equityCap := at.initialBalance
 	available := 0.0
-	if bal, err := at.trader.GetBalance(); err == nil {
-		if positions, posErr := at.trader.GetPositions(); posErr == nil {
-			summary := at.buildAccountSummaryFromRaw(bal, positions)
-			available = summary.AvailableBalance
-			if sizingEquity := summary.DecisionSizingEquity(); sizingEquity > 0 && (equityCap <= 0 || sizingEquity < equityCap) {
-				equityCap = sizingEquity
-			}
-		} else if v, ok := parseFloat(bal["availableBalance"]); ok {
-			available = v
+	if summary, err := at.GetAccountInfo(); err == nil && summary != nil {
+		available = summary.AvailableBalance
+		if sizingEquity := summary.DecisionSizingEquity(); sizingEquity > 0 && (equityCap <= 0 || sizingEquity < equityCap) {
+			equityCap = sizingEquity
 		}
 	}
 
@@ -1895,7 +1874,7 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *decision.Decision, act
 	if preTrade != nil && len(preTrade.positions) > 0 {
 		positions = preTrade.positions
 	} else {
-		positions, err = at.trader.GetPositions()
+		positions, err = at.GetPositions()
 	}
 	if err == nil {
 		for _, pos := range positions {
@@ -1946,7 +1925,9 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *decision.Decision, act
 
 	log.Printf("   Execution accepted for %s long entry, status=%s, broker_order_id=%s, quantity=%.4f", decision.Symbol, result.Status, result.BrokerOrderID, actionRecord.Quantity)
 
-	if executionStatusHasImmediateFill(actionRecord.OrderStatus) {
+	if at.shadowModeEnabled() {
+		log.Printf("   Shadow mode active for %s: protective broker orders were not placed", decision.Symbol)
+	} else if executionStatusHasImmediateFill(actionRecord.OrderStatus) {
 		posKey := decision.Symbol + "_long"
 		at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
 
@@ -1973,7 +1954,7 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *decision.Decision, ac
 	if preTrade != nil && len(preTrade.positions) > 0 {
 		positions = preTrade.positions
 	} else {
-		positions, err = at.trader.GetPositions()
+		positions, err = at.GetPositions()
 	}
 	if err == nil {
 		for _, pos := range positions {
@@ -2024,7 +2005,9 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *decision.Decision, ac
 
 	log.Printf("   Execution accepted for %s short entry, status=%s, broker_order_id=%s, quantity=%.4f", decision.Symbol, result.Status, result.BrokerOrderID, actionRecord.Quantity)
 
-	if executionStatusHasImmediateFill(actionRecord.OrderStatus) {
+	if at.shadowModeEnabled() {
+		log.Printf("   Shadow mode active for %s: protective broker orders were not placed", decision.Symbol)
+	} else if executionStatusHasImmediateFill(actionRecord.OrderStatus) {
 		posKey := decision.Symbol + "_short"
 		at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
 
@@ -2211,70 +2194,93 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 	if len(alertSummary.Recent) > 0 {
 		recentAlerts = append([]alerts.Alert(nil), alertSummary.Recent...)
 	}
+	shadowSummary := at.currentShadowSummary()
 
 	return map[string]interface{}{
-		"trader_id":                             at.id,
-		"trader_name":                           at.name,
-		"ai_model":                              at.aiModel,
-		"exchange":                              at.exchange,
-		"is_running":                            at.isRunning,
-		"start_time":                            at.startTime.Format(time.RFC3339),
-		"runtime_minutes":                       int(time.Since(at.startTime).Minutes()),
-		"broker_state":                          brokerStatus.State,
-		"broker_state_reason":                   brokerStatus.Reason,
-		"broker_last_error":                     brokerStatus.LastError,
-		"broker_state_since":                    brokerStateSince,
-		"broker_last_healthy_at":                brokerLastHealthyAt,
-		"broker_last_reconciled_at":             brokerLastReconciledAt,
-		"broker_reconnect_attempts":             brokerStatus.ReconnectAttempts,
-		"broker_next_retry_at":                  brokerNextRetryAt,
-		"broker_recovery_active":                brokerStatus.RecoveryActive,
-		"broker_trading_allowed":                brokerTradingAllowed,
-		"readiness_status":                      readiness.Status,
-		"readiness_message":                     readiness.Message,
-		"readiness_checked_at":                  readinessCheckedAt,
-		"readiness_trading_allowed":             readiness.TradingAllowed,
-		"readiness_pass_count":                  readiness.PassCount,
-		"readiness_warn_count":                  readiness.WarnCount,
-		"readiness_fail_count":                  readiness.FailCount,
-		"readiness_checks":                      readiness.Checks,
-		"trading_allowed":                       gate.TradingAllowed,
-		"entries_allowed":                       gate.EntriesAllowed,
-		"exits_allowed":                         gate.ExitsAllowed,
-		"reduce_only":                           gate.ReduceOnly,
-		"trading_block_reason":                  gate.BlockReason,
-		"blocking_reasons":                      gate.BlockingReasons,
-		"risk_supervisor_mode":                  riskSupervisorState.Mode,
-		"risk_supervisor_summary":               riskSupervisorState.Summary,
-		"risk_supervisor_active_incidents":      riskSupervisorState.ActiveIncidentCount,
-		"risk_supervisor_critical_incidents":    riskSupervisorState.CriticalIncidentCount,
-		"risk_supervisor_incidents":             riskSupervisorState.Incidents,
+		"trader_id":                          at.id,
+		"trader_name":                        at.name,
+		"ai_model":                           at.aiModel,
+		"exchange":                           at.exchange,
+		"is_running":                         at.isRunning,
+		"start_time":                         at.startTime.Format(time.RFC3339),
+		"runtime_minutes":                    int(time.Since(at.startTime).Minutes()),
+		"broker_state":                       brokerStatus.State,
+		"broker_state_reason":                brokerStatus.Reason,
+		"broker_last_error":                  brokerStatus.LastError,
+		"broker_state_since":                 brokerStateSince,
+		"broker_last_healthy_at":             brokerLastHealthyAt,
+		"broker_last_reconciled_at":          brokerLastReconciledAt,
+		"broker_reconnect_attempts":          brokerStatus.ReconnectAttempts,
+		"broker_next_retry_at":               brokerNextRetryAt,
+		"broker_recovery_active":             brokerStatus.RecoveryActive,
+		"broker_trading_allowed":             brokerTradingAllowed,
+		"readiness_status":                   readiness.Status,
+		"readiness_message":                  readiness.Message,
+		"readiness_checked_at":               readinessCheckedAt,
+		"readiness_trading_allowed":          readiness.TradingAllowed,
+		"readiness_pass_count":               readiness.PassCount,
+		"readiness_warn_count":               readiness.WarnCount,
+		"readiness_fail_count":               readiness.FailCount,
+		"readiness_checks":                   readiness.Checks,
+		"trading_allowed":                    gate.TradingAllowed,
+		"entries_allowed":                    gate.EntriesAllowed,
+		"exits_allowed":                      gate.ExitsAllowed,
+		"reduce_only":                        gate.ReduceOnly,
+		"trading_block_reason":               gate.BlockReason,
+		"blocking_reasons":                   gate.BlockingReasons,
+		"risk_supervisor_mode":               riskSupervisorState.Mode,
+		"risk_supervisor_summary":            riskSupervisorState.Summary,
+		"risk_supervisor_active_incidents":   riskSupervisorState.ActiveIncidentCount,
+		"risk_supervisor_critical_incidents": riskSupervisorState.CriticalIncidentCount,
+		"risk_supervisor_incidents":          riskSupervisorState.Incidents,
 		"execution": map[string]interface{}{
-			"available":                    executionSummary.Available,
-			"in_flight_count":              executionSummary.InFlightCount,
-			"stale_count":                  executionSummary.StaleCount,
-			"last_execution_at":            formatRFC3339(executionSummary.LastExecutionAt),
-			"last_execution_symbol":        executionSummary.LastExecutionSymbol,
-			"last_execution_status":        executionSummary.LastExecutionStatus,
-			"duplicate_suppressed_count":   executionSummary.DuplicateSuppressedCount,
-			"blocked_execution_count":      executionSummary.BlockedExecutionCount,
-			"submitted_count":              executionSummary.SubmittedCount,
-			"filled_count":                 executionSummary.FilledCount,
-			"rejected_count":               executionSummary.RejectedCount,
-			"failed_count":                 executionSummary.FailedCount,
+			"available":                  executionSummary.Available,
+			"in_flight_count":            executionSummary.InFlightCount,
+			"stale_count":                executionSummary.StaleCount,
+			"last_execution_at":          formatRFC3339(executionSummary.LastExecutionAt),
+			"last_execution_symbol":      executionSummary.LastExecutionSymbol,
+			"last_execution_status":      executionSummary.LastExecutionStatus,
+			"duplicate_suppressed_count": executionSummary.DuplicateSuppressedCount,
+			"blocked_execution_count":    executionSummary.BlockedExecutionCount,
+			"submitted_count":            executionSummary.SubmittedCount,
+			"filled_count":               executionSummary.FilledCount,
+			"rejected_count":             executionSummary.RejectedCount,
+			"failed_count":               executionSummary.FailedCount,
 		},
-		"execution_available":                   executionSummary.Available,
-		"execution_in_flight_count":             executionSummary.InFlightCount,
-		"execution_stale_count":                 executionSummary.StaleCount,
-		"execution_last_execution_at":           formatRFC3339(executionSummary.LastExecutionAt),
-		"execution_last_execution_symbol":       executionSummary.LastExecutionSymbol,
-		"execution_last_execution_status":       executionSummary.LastExecutionStatus,
-		"execution_duplicate_suppressed_count":  executionSummary.DuplicateSuppressedCount,
-		"execution_blocked_count":               executionSummary.BlockedExecutionCount,
-		"execution_submitted_count":             executionSummary.SubmittedCount,
-		"execution_filled_count":                executionSummary.FilledCount,
-		"execution_rejected_count":              executionSummary.RejectedCount,
-		"execution_failed_count":                executionSummary.FailedCount,
+		"execution_available":                  executionSummary.Available,
+		"execution_in_flight_count":            executionSummary.InFlightCount,
+		"execution_stale_count":                executionSummary.StaleCount,
+		"execution_last_execution_at":          formatRFC3339(executionSummary.LastExecutionAt),
+		"execution_last_execution_symbol":      executionSummary.LastExecutionSymbol,
+		"execution_last_execution_status":      executionSummary.LastExecutionStatus,
+		"execution_duplicate_suppressed_count": executionSummary.DuplicateSuppressedCount,
+		"execution_blocked_count":              executionSummary.BlockedExecutionCount,
+		"execution_submitted_count":            executionSummary.SubmittedCount,
+		"execution_filled_count":               executionSummary.FilledCount,
+		"execution_rejected_count":             executionSummary.RejectedCount,
+		"execution_failed_count":               executionSummary.FailedCount,
+		"shadow": map[string]interface{}{
+			"available":                   shadowSummary.Available,
+			"active":                      shadowSummary.Active,
+			"last_decision_at":            formatRFC3339(shadowSummary.LastDecisionAt),
+			"last_decision_symbol":        shadowSummary.LastDecisionSymbol,
+			"last_decision_action":        shadowSummary.LastDecisionAction,
+			"last_decision_status":        shadowSummary.LastDecisionStatus,
+			"decision_count":              shadowSummary.TotalDecisions,
+			"would_trade_count":           shadowSummary.WouldTradeCount,
+			"blocked_count":               shadowSummary.BlockedCount,
+			"open_positions":              shadowSummary.OpenPositions,
+			"closed_trades":               shadowSummary.ClosedTrades,
+			"hypothetical_realized_pnl":   shadowSummary.HypotheticalRealizedPnL,
+			"hypothetical_unrealized_pnl": shadowSummary.HypotheticalUnrealizedPnL,
+			"last_block_reason":           shadowSummary.LastBlockReason,
+		},
+		"shadow_mode_active":                    shadowSummary.Active,
+		"shadow_decision_count":                 shadowSummary.TotalDecisions,
+		"shadow_would_trade_count":              shadowSummary.WouldTradeCount,
+		"shadow_blocked_count":                  shadowSummary.BlockedCount,
+		"shadow_realized_pnl":                   shadowSummary.HypotheticalRealizedPnL,
+		"shadow_unrealized_pnl":                 shadowSummary.HypotheticalUnrealizedPnL,
 		"kill_switch_active":                    killSwitch.Active,
 		"kill_switch_source":                    killSwitch.Source,
 		"kill_switch_message":                   killSwitch.Message,
@@ -2386,81 +2392,20 @@ func (at *AutoTrader) GetProvider() market.BarsProvider {
 
 // GetAccountInfo returns canonical broker-account and strategy-performance metrics.
 func (at *AutoTrader) GetAccountInfo() (*AccountSummary, error) {
-	if at.demoMode {
-		summary := at.buildDemoAccountSummary(at.buildDemoPositions())
-		return &summary, nil
-	}
-	if at.trader == nil {
-		return nil, fmt.Errorf("trader is not initialized")
-	}
-
-	balance, err := at.trader.GetBalance()
+	summary, _, err := at.snapshotAccountAndPositions()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get broker balance: %w", err)
+		return nil, err
 	}
-	positions, err := at.trader.GetPositions()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get positions: %w", err)
-	}
-
-	summary := at.buildAccountSummaryFromRaw(balance, positions)
-	at.setLatestAccountSummary(&summary)
 	return &summary, nil
 }
 
 // GetPositions Mapping variables maps List arrays limits Parameter string strings Logic loops MAP combinations Arrays target Map limitation Tracking array variables MAP Array maps tracking string Strings Lists array Maps variations Tracking limits limit limits loops Mapper mapping maps Tracker maps Object
 func (at *AutoTrader) GetPositions() ([]map[string]interface{}, error) {
-	if at.demoMode {
-		return at.buildDemoPositions(), nil
-	}
-
-	positions, err := at.trader.GetPositions()
+	_, positions, err := at.snapshotAccountAndPositions()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get positions: %w", err)
+		return nil, err
 	}
-
-	var result []map[string]interface{}
-	for _, pos := range positions {
-		symbol := pos["symbol"].(string)
-		side := pos["side"].(string)
-		entryPrice := pos["entryPrice"].(float64)
-		markPrice := pos["markPrice"].(float64)
-		quantity := pos["positionAmt"].(float64)
-		if quantity < 0 {
-			quantity = -quantity
-		}
-		unrealizedPnl := pos["unRealizedProfit"].(float64)
-		liquidationPrice := pos["liquidationPrice"].(float64)
-
-		leverage := 10
-		if lev, ok := pos["leverage"].(float64); ok {
-			leverage = int(lev)
-		}
-
-		pnlPct := 0.0
-		if side == "long" {
-			pnlPct = ((markPrice - entryPrice) / entryPrice) * float64(leverage) * 100
-		} else {
-			pnlPct = ((entryPrice - markPrice) / entryPrice) * float64(leverage) * 100
-		}
-
-		marginUsed := (quantity * markPrice) / float64(leverage)
-
-		result = append(result, map[string]interface{}{
-			"symbol":             symbol,
-			"side":               side,
-			"entry_price":        entryPrice,
-			"mark_price":         markPrice,
-			"quantity":           quantity,
-			"leverage":           leverage,
-			"unrealized_pnl":     unrealizedPnl,
-			"unrealized_pnl_pct": pnlPct,
-			"liquidation_price":  liquidationPrice,
-			"margin_used":        marginUsed,
-		})
-	}
-
-	return result, nil
+	return positions, nil
 }
 
 func (at *AutoTrader) buildDemoPositions() []map[string]interface{} {

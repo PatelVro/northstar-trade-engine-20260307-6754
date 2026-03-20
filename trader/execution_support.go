@@ -63,6 +63,15 @@ func executionStatusHasImmediateFill(status string) bool {
 	}
 }
 
+func executionResultMutatesBrokerSnapshot(result execution.Result) bool {
+	switch result.Status {
+	case execution.StatusSubmitted, execution.StatusPartiallyFilled, execution.StatusFilled, execution.StatusCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
 func actionHasImmediatePositionEffect(action logger.DecisionAction) bool {
 	if !action.Success {
 		return false
@@ -109,8 +118,18 @@ func (at *AutoTrader) submitExecutionIntent(d *decision.Decision, actionRecord *
 	manager := at.ensureExecutionManager()
 	gate := at.currentTradingGateDecision(true, at.currentLatestAccountSummary())
 	intent := at.buildExecutionIntent(d, actionRecord, quantity)
-	result := manager.Execute(intent, executionGateFromTradingGate(gate), at.trader)
+	executionBroker := execution.Broker(at.trader)
+	if at.shadowModeEnabled() {
+		executionBroker = at.shadowExecutionAdapter(actionRecord)
+	}
+	result := manager.Execute(intent, executionGateFromTradingGate(gate), executionBroker)
 	at.applyExecutionResult(actionRecord, result)
+	if executionResultMutatesBrokerSnapshot(result) {
+		at.invalidateRuntimeAccountSnapshot()
+	}
+	if at.shadowModeEnabled() {
+		at.observeShadowExecution(d, actionRecord, intent, result)
+	}
 	return result, executionResultError(result)
 }
 
