@@ -175,6 +175,17 @@ Tracked live-like templates:
 
 The IBKR live-like launchers can also auto-resolve the local paper account ID and the current `x-sess-uuid` session cookie from the authenticated local gateway, so you do not need to export those values manually when IBeam is already healthy.
 
+If a launcher now stops before startup, use the gateway-state probe to see whether the problem is:
+
+- gateway unreachable
+- gateway reachable but not authenticated
+- account-state endpoints unavailable
+- market-data history unavailable
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\check_ibkr_gateway_state.ps1
+```
+
 IBKR portfolio readiness now performs a bounded warm-up before checking account-scoped `/portfolio/{accountId}/*` endpoints. This matters because the gateway can report `authenticated=true` while `summary` / `positions` still flap through transient `401` or `503` responses until the portfolio session is primed. Northstar now warms `portfolio/accounts` plus the portfolio account listings, retries those account-scoped checks conservatively, and fails fast on hung account endpoints instead of letting the runtime stall for an extended period.
 
 During active runtime, Northstar also reuses one short-lived canonical broker account snapshot for repeated balance/position reads within the same decision window, then invalidates it immediately after execution submission, broker degradation, or broker reconciliation. This keeps the runtime from hammering fragile IBKR portfolio endpoints multiple times per cycle while still failing closed once the snapshot goes stale.
@@ -182,6 +193,8 @@ During active runtime, Northstar also reuses one short-lived canonical broker ac
 If IBKR starts returning `Chart data unavailable` or similar history-endpoint failures during a shadow or paper session, Northstar now treats that as a bounded market-data availability block instead of a generic runtime crash. Shadow cycles stay in the safe blocked path, a `market_data_validation_failed` incident is opened with runbook guidance, and the incident clears automatically once fresh history requests succeed again.
 
 Northstar now also runs a small liquid-symbol preflight before the full equity decision pipeline loads IBKR market data. If liquid probes like `AAPL`, `MSFT`, `NVDA`, `SPY`, or `QQQ` are delayed or unusable across the board, the runtime records one clear feed-delay state in `/api/status` and opens a `market_data_validation_failed` incident instead of spamming per-symbol failures for the whole candidate batch. This makes delayed or non-real-time IBKR sessions explicit and fail-safe.
+
+The local `ibeam_gateway` Docker health check is also auth-aware now. It only reports `healthy` when `/iserver/auth/status` says both `authenticated=true` and `connected=true`, so `docker ps` is no longer a misleading proxy for “Gateway process is up but the IBKR session is actually usable.”
 
 Recommended startup paths:
 

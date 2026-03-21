@@ -111,6 +111,21 @@ function Invoke-CurlJson {
     }
 }
 
+function Get-BodySummary {
+    param([string]$Body)
+
+    if ([string]::IsNullOrWhiteSpace($Body)) {
+        return "<empty>"
+    }
+
+    $singleLine = ($Body -replace "\s+", " ").Trim()
+    if ($singleLine.Length -gt 180) {
+        return $singleLine.Substring(0, 180) + "..."
+    }
+
+    return $singleLine
+}
+
 $cookieJar = Join-Path $env:TEMP "Northstar_ibkr_live_readiness.cookies.txt"
 if (Test-Path $cookieJar) {
     Remove-Item $cookieJar -Force
@@ -157,11 +172,25 @@ for ($i = 1; $i -le $Iterations; $i++) {
         $stamp, $i, $Iterations, $auth.Code, $accounts.Code, $summary.Code, $positions.Code, $orders.Code, $iterationPass)
 
     if (-not $iterationPass) {
+        if (-not $authOk) {
+            Write-Host "  auth body: $($auth.Body)"
+            if ($auth.Code -eq 200) {
+                Write-Host "  auth summary: gateway reachable but not authenticated/connected yet"
+            } else {
+                Write-Host "  auth summary: gateway auth endpoint unavailable or returned an unexpected response"
+            }
+        }
+        if ($accounts.Code -ne 200) {
+            Write-Host "  accounts body: $(Get-BodySummary $accounts.Body)"
+        }
         if ($summary.Code -ne 200) {
-            Write-Host "  summary body: $($summary.Body)"
+            Write-Host "  summary body: $(Get-BodySummary $summary.Body)"
         }
         if ($positions.Code -ne 200) {
-            Write-Host "  positions body: $($positions.Body)"
+            Write-Host "  positions body: $(Get-BodySummary $positions.Body)"
+        }
+        if ($orders.Code -ne 200) {
+            Write-Host "  orders body: $(Get-BodySummary $orders.Body)"
         }
     }
 
