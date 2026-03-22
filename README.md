@@ -259,6 +259,37 @@ Operator checks after restart:
 2. If `restart_recovery.pending_reconciliation=true`, wait for broker bootstrap / position reconciliation to clear it before trusting entries
 3. Confirm `order_reconciliation` and `position_reconciliation` are healthy before resuming normal supervision
 
+## Safety-Critical Event Journal
+
+Northstar now keeps one canonical append-only JSONL journal for the highest-value runtime truth transitions at:
+
+- `output/audit/journal/<trader_id>/events.jsonl`
+
+This journal is intentionally narrow. It is not a giant all-events logging system. It records the events that matter most for forensic reconstruction and restart-era safety work:
+
+- execution lifecycle transitions observed through the local order lifecycle store
+- reconciliation runs that repair, infer, or leave broker-managed execution outcomes unresolved
+- trading-gate transitions that materially change whether trading, entries, or exits are allowed
+- kill-switch activation / clear / cancel-open-orders outcomes
+- restart-recovery restore / pending / failure / reconciled markers
+
+Important truth model:
+
+- broker-confirmed lifecycle truth stays distinct from reconciliation-inferred truth
+- inferred execution outcomes are preserved as inferred in the journal with authority/confidence fields
+- unresolved broker-missing outcomes remain explicit and safety-relevant
+- the journal is append-only and survives restart because each event is appended and synced to disk
+
+Operator checks:
+
+1. Inspect `/api/status.event_journal` for the active journal path, event count, last event type, and any last write/read error
+2. Inspect `output/audit/journal/<trader_id>/events.jsonl` when you need the exact ordered sequence of execution, reconciliation, kill-switch, or restart transitions
+3. If you see unresolved reconciliation outcomes in the journal, keep trading blocked until broker reconciliation clears them
+
+Current limitation:
+
+- the journal is append-only and durable, but it is not yet a full event-sourced runtime; it complements the restart checkpoint and audit records instead of replacing them
+
 If IBKR starts returning `Chart data unavailable` or similar history-endpoint failures during a shadow or paper session, Northstar now treats that as a bounded market-data availability block instead of a generic runtime crash. Shadow cycles stay in the safe blocked path, a `market_data_validation_failed` incident is opened with runbook guidance, and the incident clears automatically once fresh history requests succeed again.
 
 Northstar now also runs a small liquid-symbol preflight before the full equity decision pipeline loads IBKR market data. If liquid probes like `AAPL`, `MSFT`, `NVDA`, `SPY`, or `QQQ` are delayed or unusable across the board, the runtime records one clear feed-delay state in `/api/status` and opens a `market_data_validation_failed` incident instead of spamming per-symbol failures for the whole candidate batch. This makes delayed or non-real-time IBKR sessions explicit and fail-safe.

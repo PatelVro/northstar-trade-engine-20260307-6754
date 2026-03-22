@@ -25,7 +25,7 @@ const (
 	SessionCompletionPartial   SessionCompletionStatus = "partial"
 )
 
-const sessionReportVersion = 13
+const sessionReportVersion = 14
 
 type SessionPortfolioRiskSnapshot struct {
 	EvaluatedAt time.Time             `json:"evaluated_at"`
@@ -58,6 +58,12 @@ type PaperSessionReport struct {
 	UniverseManifestPath              string                        `json:"universe_manifest_path,omitempty"`
 	UniverseLastCandidateWindow       []string                      `json:"universe_last_candidate_window,omitempty"`
 	UniverseLastMandatorySymbols      []string                      `json:"universe_last_mandatory_symbols,omitempty"`
+	EventJournalPath                  string                        `json:"event_journal_path,omitempty"`
+	EventJournalEventCount            int                           `json:"event_journal_event_count"`
+	EventJournalLastEventAt           string                        `json:"event_journal_last_event_at,omitempty"`
+	EventJournalLastEventType         string                        `json:"event_journal_last_event_type,omitempty"`
+	EventJournalLastSeverity          string                        `json:"event_journal_last_severity,omitempty"`
+	EventJournalLastError             string                        `json:"event_journal_last_error,omitempty"`
 	GeneratedAt                       time.Time                     `json:"generated_at"`
 	SessionDate                       string                        `json:"session_date"`
 	SessionStart                      time.Time                     `json:"session_start"`
@@ -249,6 +255,7 @@ func newPaperSessionTracker(at *AutoTrader, now time.Time) *paperSessionTracker 
 	orderRecon := at.currentOrderReconciliationSummary()
 	positionRecon := at.currentPositionReconciliationSummary()
 	universe := at.currentUniverseSummary()
+	journal := at.currentEventJournalSummary()
 	tracker := &paperSessionTracker{
 		report: PaperSessionReport{
 			ReportVersion:                sessionReportVersion,
@@ -265,6 +272,12 @@ func newPaperSessionTracker(at *AutoTrader, now time.Time) *paperSessionTracker 
 			UniverseManifestPath:         universe.ManifestPath,
 			UniverseLastCandidateWindow:  cloneUniverseStrings(universe.LastCandidateWindow),
 			UniverseLastMandatorySymbols: cloneUniverseStrings(universe.LastMandatory),
+			EventJournalPath:             journal.Path,
+			EventJournalEventCount:       journal.EventCount,
+			EventJournalLastEventAt:      formatRFC3339(journal.LastEventAt),
+			EventJournalLastEventType:    journal.LastEventType,
+			EventJournalLastSeverity:     string(journal.LastSeverity),
+			EventJournalLastError:        journal.LastError,
 			SessionDate:                  now.Format("2006-01-02"),
 			SessionStart:                 now,
 			StrategyInitialCapital:       at.initialBalance,
@@ -828,6 +841,7 @@ func (at *AutoTrader) writePaperSessionReport(tracker *paperSessionTracker, reas
 	endTime := time.Now().In(time.Local)
 	report := tracker.report
 	universe := at.currentUniverseSummary()
+	journal := at.currentEventJournalSummary()
 	report.UniverseSelectionMode = universe.SelectionMode
 	report.UniverseConfiguredSource = universe.ConfiguredSource
 	report.UniverseConfiguredCount = len(universe.ConfiguredSymbols)
@@ -836,6 +850,12 @@ func (at *AutoTrader) writePaperSessionReport(tracker *paperSessionTracker, reas
 	report.UniverseManifestPath = universe.ManifestPath
 	report.UniverseLastCandidateWindow = cloneUniverseStrings(universe.LastCandidateWindow)
 	report.UniverseLastMandatorySymbols = cloneUniverseStrings(universe.LastMandatory)
+	report.EventJournalPath = journal.Path
+	report.EventJournalEventCount = journal.EventCount
+	report.EventJournalLastEventAt = formatRFC3339(journal.LastEventAt)
+	report.EventJournalLastEventType = journal.LastEventType
+	report.EventJournalLastSeverity = string(journal.LastSeverity)
+	report.EventJournalLastError = journal.LastError
 	report.GeneratedAt = endTime
 	report.SessionEnd = endTime
 	report.SessionDurationSeconds = int64(endTime.Sub(report.SessionStart).Seconds())

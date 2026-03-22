@@ -3,6 +3,7 @@ package trader
 import (
 	"fmt"
 	"northstar/alerts"
+	"northstar/audit"
 	"northstar/decision"
 	"northstar/execution"
 	"northstar/logger"
@@ -79,13 +80,20 @@ func (t *restartStateTestTrader) LookupOrderRecord(localID, brokerOrderID string
 
 func newRestartStateTestAutoTrader(cfg AutoTraderConfig, tr *restartStateTestTrader) *AutoTrader {
 	at := &AutoTrader{
-		id:                 cfg.ID,
-		name:               cfg.Name,
-		exchange:           cfg.Exchange,
-		config:             cfg,
-		trader:             tr,
-		executionManager:   execution.NewManager(execution.Config{DedupeWindow: time.Minute, StaleAfter: 5 * time.Minute, MaxHistory: 32}),
-		alertManager:       alerts.NewManager(),
+		id:               cfg.ID,
+		name:             cfg.Name,
+		exchange:         cfg.Exchange,
+		config:           cfg,
+		trader:           tr,
+		executionManager: execution.NewManager(execution.Config{DedupeWindow: time.Minute, StaleAfter: 5 * time.Minute, MaxHistory: 32}),
+		alertManager:     alerts.NewManager(),
+		eventJournal: audit.NewJournal(filepath.Join("output", "audit"), audit.Metadata{
+			TraderID:     cfg.ID,
+			TraderName:   cfg.Name,
+			Mode:         cfg.Mode,
+			Broker:       cfg.Broker,
+			StrategyMode: cfg.StrategyMode,
+		}),
 		initialBalance:     100000,
 		positionEntryCycle: map[string]int{},
 		positionPeakPnLPct: map[string]float64{},
@@ -223,6 +231,14 @@ func TestRestoreDurableRuntimeStateFailsSafeOnCorruptFile(t *testing.T) {
 	}
 	if check := restored.checkRestartRecoveryReadiness(); check.Status != ReadinessFail {
 		t.Fatalf("expected readiness failure for corrupt state, got %+v", check)
+	}
+	events := readTraderJournalEvents(t, filepath.Join("output", "audit", "journal", cfg.ID, "events.jsonl"))
+	if len(events) == 0 {
+		t.Fatalf("expected restart recovery journal event")
+	}
+	last := events[len(events)-1]
+	if last.Type != "restart_state_restore_failed" {
+		t.Fatalf("expected restart_state_restore_failed journal event, got %q", last.Type)
 	}
 }
 

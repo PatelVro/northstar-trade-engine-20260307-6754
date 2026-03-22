@@ -118,6 +118,7 @@ func (at *AutoTrader) submitExecutionIntent(d *decision.Decision, actionRecord *
 	manager := at.ensureExecutionManager()
 	_ = at.ensureBrokerTruthReadyForTrading()
 	gate := at.currentTradingGateDecision(true, at.currentLatestAccountSummary())
+	at.journalTradingGateDecision("execution_submit", gate)
 	intent := at.buildExecutionIntent(d, actionRecord, quantity)
 	executionBroker := execution.Broker(at.trader)
 	if at.shadowModeEnabled() {

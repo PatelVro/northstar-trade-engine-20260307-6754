@@ -178,6 +178,7 @@ type AutoTrader struct {
 	riskEngine                            *risk.Engine
 	executionManager                      *execution.Manager
 	auditRecorder                         *audit.Recorder
+	eventJournal                          *audit.Journal
 	alertManager                          *alerts.Manager
 	incidentManager                       *incidents.Manager
 	trader                                Trader // Standardized trader interface
@@ -275,6 +276,8 @@ type AutoTrader struct {
 	restartRecoveryMu                     sync.RWMutex
 	restartRecoveryState                  restartRecoverySummary
 	restartPersistMu                      sync.Mutex
+	eventJournalMu                        sync.Mutex
+	lastJournaledTradingGateKey           string
 	sessionReportMu                       sync.Mutex
 	sessionReportState                    *paperSessionTracker
 	lastSessionReportPath                 string
@@ -678,6 +681,13 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 		riskEngine:       risk.NewEngine(buildRiskConfig(config)),
 		executionManager: execution.NewManager(execution.Config{}),
 		auditRecorder: audit.NewRecorder(filepath.Join("output", "audit"), audit.Metadata{
+			TraderID:     config.ID,
+			TraderName:   config.Name,
+			Mode:         config.Mode,
+			Broker:       config.Broker,
+			StrategyMode: config.StrategyMode,
+		}),
+		eventJournal: audit.NewJournal(filepath.Join("output", "audit"), audit.Metadata{
 			TraderID:     config.ID,
 			TraderName:   config.Name,
 			Mode:         config.Mode,
@@ -1224,6 +1234,7 @@ func (at *AutoTrader) runCycle() error {
 
 	// 0. Independent supervisory risk gate
 	initialGate := at.currentTradingGateDecision(true, at.currentLatestAccountSummary())
+	at.journalTradingGateDecision("cycle_initial", initialGate)
 	if !initialGate.ExitsAllowed {
 		at.recordPaperSessionBlockedCycle(initialGate.BlockReason)
 		log.Printf(" risk supervisor gate active: %s", initialGate.Message)
@@ -1327,6 +1338,7 @@ func (at *AutoTrader) runCycle() error {
 	at.setLatestAccountSummary(postAccount)
 	postAccount = at.currentLatestAccountSummary()
 	postGate := at.currentTradingGateDecision(false, postAccount)
+	at.journalTradingGateDecision("cycle_post_decision", postGate)
 	if !postGate.ExitsAllowed {
 		at.recordPaperSessionBlockedCycle(postGate.BlockReason)
 		record.Success = false

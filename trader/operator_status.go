@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const operatorStatusSchemaVersion = 19
+const operatorStatusSchemaVersion = 20
 
 type OperatorRuntimeSummary struct {
 	IsRunning         bool    `json:"is_running"`
@@ -59,6 +59,16 @@ type OperatorSessionSummary struct {
 	LastSessionReportPath   string `json:"last_session_report_path"`
 	LastSessionReportStatus string `json:"last_session_report_status"`
 	LastSessionReportAt     string `json:"last_session_report_at"`
+}
+
+type OperatorEventJournalSummary struct {
+	Available     bool   `json:"available"`
+	Path          string `json:"path,omitempty"`
+	EventCount    int    `json:"event_count"`
+	LastEventAt   string `json:"last_event_at"`
+	LastEventType string `json:"last_event_type,omitempty"`
+	LastSeverity  string `json:"last_severity,omitempty"`
+	LastError     string `json:"last_error,omitempty"`
 }
 
 type OperatorExecutionSummary struct {
@@ -376,6 +386,7 @@ type OperatorStatusSummary struct {
 	BrokerTruth            OperatorBrokerTruthSummary            `json:"broker_truth"`
 	DeploymentValidation   OperatorDeploymentValidationSummary   `json:"deployment_validation"`
 	Session                OperatorSessionSummary                `json:"session"`
+	EventJournal           OperatorEventJournalSummary           `json:"event_journal"`
 	Runtime                OperatorRuntimeSummary                `json:"runtime"`
 	TradingGate            OperatorTradingGateSummary            `json:"trading_gate"`
 	OrderReconciliation    OperatorOrderReconciliationSummary    `json:"order_reconciliation"`
@@ -551,6 +562,7 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 	shadowState := at.currentShadowSummary()
 	restartRecovery := at.currentRestartRecoverySummary()
 	brokerTruth := at.currentBrokerTruthSummary()
+	eventJournal := at.currentEventJournalSummary()
 	deploymentValidation := startup.CurrentLiveValidationStatus("", strings.EqualFold(at.config.Mode, "live"), time.Now())
 
 	aiProvider := "DeepSeek"
@@ -728,6 +740,15 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		RestoredLocalPositions:  restartRecovery.RestoredLocalPositions,
 		RestoredPendingProtect:  restartRecovery.RestoredPendingProtect,
 		RestoredShadowPositions: restartRecovery.RestoredShadowPositions,
+	}
+	eventJournalSummary := OperatorEventJournalSummary{
+		Available:     eventJournal.Available,
+		Path:          eventJournal.Path,
+		EventCount:    eventJournal.EventCount,
+		LastEventAt:   formatRFC3339(eventJournal.LastEventAt),
+		LastEventType: eventJournal.LastEventType,
+		LastSeverity:  string(eventJournal.LastSeverity),
+		LastError:     eventJournal.LastError,
 	}
 	brokerTruthSummary := OperatorBrokerTruthSummary{
 		Available:            brokerTruth.Available,
@@ -946,6 +967,7 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		BrokerTruth:                     brokerTruthSummary,
 		DeploymentValidation:            deploymentValidationSummary,
 		Session:                         sessionSummary,
+		EventJournal:                    eventJournalSummary,
 		Runtime:                         runtimeSummary,
 		TradingGate:                     tradingGate,
 		OrderReconciliation:             orderReconSummary,

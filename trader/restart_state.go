@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"northstar/audit"
 	"northstar/execution"
 	"northstar/logger"
 	"northstar/orders"
@@ -108,7 +109,9 @@ func (at *AutoTrader) restoreDurableRuntimeState() {
 			at.restartRecoveryState.StatePresent = false
 			at.restartRecoveryState.Message = "no persisted runtime state checkpoint found"
 			at.restartRecoveryState.TradingBlocked = false
+			summary := at.restartRecoveryState
 			at.restartRecoveryMu.Unlock()
+			at.journalRestartRecoveryEvent("restart_state_absent", audit.JournalSeverityInfo, summary, nil)
 			return
 		}
 		at.markRestartRecoveryLoadFailure(path, fmt.Errorf("read durable runtime state: %w", err))
@@ -200,9 +203,17 @@ func (at *AutoTrader) restoreDurableRuntimeState() {
 		RestoredPendingProtect:  pendingProtect,
 		RestoredShadowPositions: shadowPositions,
 	}
+	summary := at.restartRecoveryState
 	at.restartRecoveryMu.Unlock()
 
 	log.Printf(" [%s] %s from %s", at.name, message, path)
+	eventType := "restart_state_restored"
+	severity := audit.JournalSeverityInfo
+	if needsBrokerReconciliation {
+		eventType = "restart_state_pending_reconciliation"
+		severity = audit.JournalSeverityWarning
+	}
+	at.journalRestartRecoveryEvent(eventType, severity, summary, nil)
 }
 
 func (at *AutoTrader) validateDurableRuntimeState(state durableRuntimeState) error {
@@ -327,8 +338,12 @@ func (at *AutoTrader) markRestartRecoveryLoadFailure(path string, err error) {
 	at.restartRecoveryState.Corrupt = true
 	at.restartRecoveryState.Message = "durable runtime state could not be restored; trading remains blocked"
 	at.restartRecoveryState.LastLoadError = message
+	summary := at.restartRecoveryState
 	at.restartRecoveryMu.Unlock()
 	log.Printf(" [%s] Durable runtime state recovery blocked trading: %s", at.name, message)
+	at.journalRestartRecoveryEvent("restart_state_restore_failed", audit.JournalSeverityCritical, summary, map[string]interface{}{
+		"error": message,
+	})
 }
 
 func (at *AutoTrader) markRestartRecoverySaveFailure(path string, err error) {
@@ -340,8 +355,12 @@ func (at *AutoTrader) markRestartRecoverySaveFailure(path string, err error) {
 	at.restartRecoveryState.TradingBlocked = true
 	at.restartRecoveryState.Message = "durable runtime state persistence failed; trading remains blocked"
 	at.restartRecoveryState.LastSaveError = message
+	summary := at.restartRecoveryState
 	at.restartRecoveryMu.Unlock()
 	log.Printf(" [%s] Durable runtime state persistence blocked trading: %s", at.name, message)
+	at.journalRestartRecoveryEvent("restart_state_persist_failed", audit.JournalSeverityCritical, summary, map[string]interface{}{
+		"error": message,
+	})
 }
 
 func (at *AutoTrader) resolveRestartRecoveryAfterBrokerReconciliation(message string) {
@@ -359,9 +378,11 @@ func (at *AutoTrader) resolveRestartRecoveryAfterBrokerReconciliation(message st
 	at.restartRecoveryState.TradingBlocked = false
 	at.restartRecoveryState.Partial = false
 	at.restartRecoveryState.Message = strings.TrimSpace(message)
+	summary := at.restartRecoveryState
 	at.restartRecoveryMu.Unlock()
 
 	at.persistDurableRuntimeState("recovery_reconciled")
+	at.journalRestartRecoveryEvent("restart_state_reconciled", audit.JournalSeverityInfo, summary, nil)
 }
 
 func (at *AutoTrader) checkRestartRecoveryReadiness() ReadinessCheck {

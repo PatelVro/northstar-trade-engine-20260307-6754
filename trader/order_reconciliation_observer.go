@@ -45,9 +45,12 @@ func (o orderReconciliationRuntimeObserver) OnReconciliation(result orders.Recon
 }
 
 func (at *AutoTrader) buildOrderObserver() orders.Observer {
-	observers := make([]orders.Observer, 0, 2)
+	observers := make([]orders.Observer, 0, 3)
 	if at.auditRecorder != nil {
 		observers = append(observers, at.auditRecorder)
+	}
+	if at.eventJournal != nil {
+		observers = append(observers, at.eventJournal)
 	}
 	observers = append(observers, orderReconciliationRuntimeObserver{at: at})
 	filtered := make([]orders.Observer, 0, len(observers))

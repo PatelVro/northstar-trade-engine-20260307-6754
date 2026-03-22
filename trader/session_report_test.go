@@ -2,6 +2,7 @@ package trader
 
 import (
 	"encoding/json"
+	"northstar/audit"
 	"northstar/execution"
 	"northstar/incidents"
 	"northstar/logger"
@@ -108,6 +109,45 @@ func TestWritePaperSessionReportWritesExpectedJSON(t *testing.T) {
 	}
 	if parsed.SessionCompletionStatus != SessionCompletionCompleted {
 		t.Fatalf("unexpected session completion status: %s", parsed.SessionCompletionStatus)
+	}
+}
+
+func TestNewPaperSessionTrackerIncludesEventJournalSummary(t *testing.T) {
+	cleanup := withTempWorkingDir(t)
+	defer cleanup()
+
+	at := &AutoTrader{
+		id:   "paper_trader",
+		name: "Paper Trader",
+		config: AutoTraderConfig{
+			ID:           "paper_trader",
+			Name:         "Paper Trader",
+			Mode:         "paper",
+			Broker:       "ibkr",
+			StrategyMode: "multi_factor",
+		},
+		eventJournal: audit.NewJournal(filepath.Join("output", "audit"), audit.Metadata{
+			TraderID:     "paper_trader",
+			TraderName:   "Paper Trader",
+			Mode:         "paper",
+			Broker:       "ibkr",
+			StrategyMode: "multi_factor",
+		}),
+	}
+	at.appendJournalEvent(audit.JournalEvent{
+		Timestamp: time.Now().UTC(),
+		Family:    "safety",
+		Type:      "trading_gate_changed",
+		Severity:  audit.JournalSeverityWarning,
+		Message:   "entries blocked",
+	})
+
+	tracker := newPaperSessionTracker(at, time.Now())
+	if tracker.report.EventJournalEventCount != 1 {
+		t.Fatalf("expected event journal count 1, got %d", tracker.report.EventJournalEventCount)
+	}
+	if tracker.report.EventJournalLastEventType != "trading_gate_changed" {
+		t.Fatalf("expected event journal last type trading_gate_changed, got %q", tracker.report.EventJournalLastEventType)
 	}
 }
 

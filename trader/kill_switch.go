@@ -3,6 +3,7 @@ package trader
 import (
 	"fmt"
 	"log"
+	"northstar/audit"
 	"os"
 	"path/filepath"
 	"sort"
@@ -175,6 +176,9 @@ func (at *AutoTrader) activateKillSwitch(signal killSwitchSignal, now time.Time)
 	current := at.killSwitchState
 	at.killSwitchMu.Unlock()
 	at.syncKillSwitchIncident(current)
+	if changed {
+		at.journalKillSwitchEvent("kill_switch_activated", audit.JournalSeverityCritical, current, nil)
+	}
 
 	return changed
 }
@@ -195,11 +199,16 @@ func (at *AutoTrader) clearKillSwitch(now time.Time) {
 	at.killSwitchState.LastCancelAttemptAt = time.Time{}
 	at.killSwitchState.LastCancelError = ""
 	at.killSwitchState.OrdersCancelled = false
+	current := at.killSwitchState
 	at.killSwitchMu.Unlock()
-	at.syncKillSwitchIncident(at.currentKillSwitchSummary())
+	at.syncKillSwitchIncident(current)
 
 	if wasActive {
 		log.Printf(" [%s] Emergency kill switch cleared (previous source=%s): %s", at.name, prevSource, prevMessage)
+		at.journalKillSwitchEvent("kill_switch_cleared", audit.JournalSeverityInfo, current, map[string]interface{}{
+			"previous_source":  prevSource,
+			"previous_message": prevMessage,
+		})
 		at.emitAlert("info", "emergency_kill_switch_cleared", "emergency_kill_switch_cleared|"+prevSource, "emergency kill switch cleared", map[string]string{
 			"previous_source":  prevSource,
 			"previous_message": prevMessage,
@@ -228,12 +237,17 @@ func (at *AutoTrader) ensureKillSwitchOrdersCancelled(stage string, now time.Tim
 	err := at.cancelOpenOrdersForKillSwitch()
 
 	at.killSwitchMu.Lock()
-	defer at.killSwitchMu.Unlock()
 	if err != nil {
 		at.killSwitchState.OrdersCancelled = false
 		at.killSwitchState.LastCancelError = err.Error()
+		current := at.killSwitchState
 		log.Printf(" [%s] Emergency kill switch order cancel failed during %s: %v", at.name, stage, err)
 		at.recordPaperSessionWarning(fmt.Sprintf("emergency kill switch cancel-open-orders failed: %v", err))
+		at.killSwitchMu.Unlock()
+		at.journalKillSwitchEvent("kill_switch_cancel_failed", audit.JournalSeverityCritical, current, map[string]interface{}{
+			"stage": stage,
+			"error": err.Error(),
+		})
 		at.emitAlert("critical", "emergency_kill_switch_cancel_failed", "emergency_kill_switch_cancel_failed|"+stage, "emergency kill switch failed to cancel open orders: "+err.Error(), map[string]string{
 			"stage": stage,
 			"error": err.Error(),
@@ -242,7 +256,12 @@ func (at *AutoTrader) ensureKillSwitchOrdersCancelled(stage string, now time.Tim
 	}
 	at.killSwitchState.OrdersCancelled = true
 	at.killSwitchState.LastCancelError = ""
+	current := at.killSwitchState
 	log.Printf(" [%s] Emergency kill switch cancelled open orders", at.name)
+	at.killSwitchMu.Unlock()
+	at.journalKillSwitchEvent("kill_switch_orders_cancelled", audit.JournalSeverityWarning, current, map[string]interface{}{
+		"stage": stage,
+	})
 }
 
 func (at *AutoTrader) cancelOpenOrdersForKillSwitch() error {
