@@ -320,6 +320,40 @@ Operator checks after restart:
 2. If `restart_recovery.pending_reconciliation=true`, wait for broker bootstrap / position reconciliation to clear it before trusting entries
 3. Confirm `order_reconciliation` and `position_reconciliation` are healthy before resuming normal supervision
 
+## Broker Truth Preflight
+
+For broker-managed trading modes, Northstar now treats broker/account/orders/positions/data truth as one explicit preflight instead of a loose set of best-effort checks.
+
+Normal broker-managed trading now expects all required truth components to be both present and fresh enough for the active mode:
+
+- account snapshot
+- order reconciliation summary
+- position reconciliation summary
+- market-data preflight when the runtime depends on IBKR equity data
+
+`/api/status.broker_truth` now exposes:
+
+- `preflight_ready`
+- `coherence_verified`
+- `account_fresh`
+- `orders_fresh`
+- `positions_fresh`
+- `market_data_fresh`
+- `preflight_checked_at`
+
+Fail-closed behavior:
+
+- missing or stale account/order/position truth blocks trading
+- unresolved broker-managed order truth still blocks trading
+- reconciliation-inferred execution truth still restricts new entries
+- missing or stale market-data preflight blocks IBKR-backed equity trading modes until it is revalidated
+
+Mode behavior:
+
+- `live` / broker-managed `paper`: require fresh broker and account truth
+- `shadow` with IBKR equity data: does not require broker order/position truth, but still requires fresh market-data preflight
+- `demo` / `replay`: hard broker-truth preflight is not required
+
 ## Restart / Interruption Validation Harness
 
 Northstar now has one focused restart-safety validation harness for the highest-value interruption scenarios:

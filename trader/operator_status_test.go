@@ -138,6 +138,14 @@ func TestGetOperatorStatus_LivePromotionFailureAppearsInTradingGate(t *testing.T
 		name:     "Live Trader",
 		aiModel:  "deepseek",
 		exchange: "ibkr",
+		trader: &brokerTruthTestTrader{
+			orderSummary: orders.Summary{
+				LastRunAt:              now,
+				LastSuccessAt:          now,
+				LastSummary:            "order reconciliation clean",
+				CurrentConfirmedOrders: 0,
+			},
+		},
 		config: AutoTraderConfig{
 			ID:             "live_trader",
 			Name:           "Live Trader",
@@ -160,6 +168,7 @@ func TestGetOperatorStatus_LivePromotionFailureAppearsInTradingGate(t *testing.T
 		PassCount:      6,
 	})
 	at.initializeBrokerRuntimeState()
+	at.positionReconSummary = freshPositionReconSummary(now)
 	at.setRuntimeAccountSnapshot(AccountSummary{
 		AccountingVersion:      accountingVersion,
 		StrategyInitialCapital: 100000,

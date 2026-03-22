@@ -12,18 +12,25 @@ type brokerTruthSummary struct {
 	Required             bool
 	BrokerManaged        bool
 	Verified             bool
+	PreflightReady       bool
+	CoherenceVerified    bool
 	TradingBlocked       bool
 	EntriesRestricted    bool
 	ConfidenceDegraded   bool
 	RestrictionReason    string
 	AccountRequired      bool
 	AccountVerified      bool
+	AccountFresh         bool
 	OrdersRequired       bool
 	OrdersVerified       bool
+	OrdersFresh          bool
 	PositionsRequired    bool
 	PositionsVerified    bool
+	PositionsFresh       bool
 	MarketDataRequired   bool
 	MarketDataVerified   bool
+	MarketDataFresh      bool
+	PreflightCheckedAt   time.Time
 	AccountCapturedAt    time.Time
 	OrdersCheckedAt      time.Time
 	PositionsCheckedAt   time.Time
@@ -62,12 +69,15 @@ func (at *AutoTrader) brokerTruthAccountMaxAge() time.Duration {
 	if at == nil {
 		return 5 * time.Minute
 	}
-	age := at.config.ScanInterval * 2
-	if age < 5*time.Minute {
+	age := at.config.ScanInterval
+	if age <= 0 {
 		age = 5 * time.Minute
 	}
-	if age > 30*time.Minute {
-		age = 30 * time.Minute
+	if age < 2*time.Minute {
+		age = 2 * time.Minute
+	}
+	if age > 10*time.Minute {
+		age = 10 * time.Minute
 	}
 	return age
 }
@@ -100,6 +110,20 @@ func (at *AutoTrader) brokerTruthPositionMaxAge() time.Duration {
 	return age
 }
 
+func (at *AutoTrader) brokerTruthMarketDataMaxAge() time.Duration {
+	age := at.config.ScanInterval
+	if age <= 0 {
+		age = time.Minute
+	}
+	if age < 30*time.Second {
+		age = 30 * time.Second
+	}
+	if age > 5*time.Minute {
+		age = 5 * time.Minute
+	}
+	return age
+}
+
 func staleBrokerTruth(ts time.Time, maxAge time.Duration) bool {
 	if ts.IsZero() {
 		return true
@@ -112,15 +136,17 @@ func staleBrokerTruth(ts time.Time, maxAge time.Duration) bool {
 
 func (at *AutoTrader) currentBrokerTruthSummary() brokerTruthSummary {
 	summary := brokerTruthSummary{
-		Available:       true,
-		Required:        at.requiresHardBrokerTruthGate(),
-		BrokerManaged:   at.requiresBrokerDependency() && !strings.EqualFold(at.config.Broker, "sim") && !at.shadowModeEnabled(),
-		Verified:        true,
-		TradingBlocked:  false,
-		BlockingReasons: []string{},
+		Available:         true,
+		Required:          at.requiresHardBrokerTruthGate(),
+		BrokerManaged:     at.requiresBrokerDependency() && !strings.EqualFold(at.config.Broker, "sim") && !at.shadowModeEnabled(),
+		CoherenceVerified: true,
+		Verified:          true,
+		TradingBlocked:    false,
+		BlockingReasons:   []string{},
 	}
 	if !summary.Required {
 		summary.Message = "hard broker-truth gate is not required for this mode"
+		summary.PreflightReady = true
 		return summary
 	}
 
@@ -137,6 +163,7 @@ func (at *AutoTrader) currentBrokerTruthSummary() brokerTruthSummary {
 		summary.AccountRequired = true
 		if account, _, ok := at.currentRuntimeAccountSnapshot(at.brokerTruthAccountMaxAge()); ok && account != nil {
 			summary.AccountVerified = true
+			summary.AccountFresh = true
 			at.accountSnapshotMu.RLock()
 			if at.runtimeAccountSnapshot != nil {
 				summary.AccountCapturedAt = at.runtimeAccountSnapshot.CapturedAt
@@ -147,8 +174,10 @@ func (at *AutoTrader) currentBrokerTruthSummary() brokerTruthSummary {
 		}
 
 		orderRecon := at.currentOrderReconciliationSummary()
-		summary.OrdersRequired = orderRecon != nil
-		if summary.OrdersRequired {
+		summary.OrdersRequired = true
+		if orderRecon == nil {
+			blocking = append(blocking, "broker open-order reconciliation summary is unavailable")
+		} else {
 			summary.OrdersCheckedAt = orderRecon.LastRunAt
 			summary.InferredOrderCount = orderRecon.CurrentInferredOrders
 			summary.UnresolvedOrderCount = orderRecon.CurrentUnresolvedOrders
@@ -172,6 +201,7 @@ func (at *AutoTrader) currentBrokerTruthSummary() brokerTruthSummary {
 				blocking = append(blocking, "broker order truth remains unresolved for one or more broker-missing orders")
 			default:
 				summary.OrdersVerified = true
+				summary.OrdersFresh = true
 				if orderRecon.CurrentInferredOrders > 0 {
 					summary.ConfidenceDegraded = true
 				}
@@ -179,8 +209,10 @@ func (at *AutoTrader) currentBrokerTruthSummary() brokerTruthSummary {
 		}
 
 		positionRecon := at.currentPositionReconciliationSummary()
-		summary.PositionsRequired = positionRecon != nil && positionRecon.Available
-		if summary.PositionsRequired {
+		summary.PositionsRequired = true
+		if positionRecon == nil || !positionRecon.Available {
+			blocking = append(blocking, "broker position reconciliation summary is unavailable")
+		} else {
 			summary.PositionsCheckedAt = firstNonZeroTime(positionRecon.LastReconciledAt, positionRecon.LastSuccessAt, positionRecon.LastRunAt)
 			switch {
 			case !positionRecon.TradingAllowed:
@@ -193,6 +225,7 @@ func (at *AutoTrader) currentBrokerTruthSummary() brokerTruthSummary {
 				blocking = append(blocking, "broker position truth is stale")
 			default:
 				summary.PositionsVerified = true
+				summary.PositionsFresh = true
 			}
 		}
 	}
@@ -203,10 +236,16 @@ func (at *AutoTrader) currentBrokerTruthSummary() brokerTruthSummary {
 		feedStatus := at.dataQualityState.FeedStatus
 		at.dataQualityMu.RUnlock()
 		summary.MarketDataCheckedAt = feedStatus.LastCheckedAt
-		if feedStatus.Delayed {
+		switch {
+		case feedStatus.LastCheckedAt.IsZero():
+			blocking = append(blocking, "market-data truth has not been preflighted yet")
+		case staleBrokerTruth(feedStatus.LastCheckedAt, at.brokerTruthMarketDataMaxAge()):
+			blocking = append(blocking, "market-data truth is stale and must be revalidated")
+		case feedStatus.Delayed:
 			blocking = append(blocking, firstNonEmpty(strings.TrimSpace(feedStatus.Summary), "market-data feed is delayed or unavailable"))
-		} else {
+		default:
 			summary.MarketDataVerified = true
+			summary.MarketDataFresh = true
 		}
 	}
 
@@ -224,10 +263,17 @@ func (at *AutoTrader) currentBrokerTruthSummary() brokerTruthSummary {
 		return summary
 	}
 
+	summary.PreflightCheckedAt = oldestNonZeroTime(
+		requiredPreflightTime(summary.AccountRequired, summary.AccountCapturedAt),
+		requiredPreflightTime(summary.OrdersRequired, summary.OrdersCheckedAt),
+		requiredPreflightTime(summary.PositionsRequired, summary.PositionsCheckedAt),
+		requiredPreflightTime(summary.MarketDataRequired, summary.MarketDataCheckedAt),
+	)
 	summary.Verified = true
 	if summary.ConfidenceDegraded && summary.InferredOrderCount > 0 {
 		summary.EntriesRestricted = true
 		summary.RestrictionReason = "broker truth confidence is degraded by reconciliation-inferred execution outcomes; new entries are restricted pending clean reconciliation"
+		summary.PreflightReady = false
 		if summary.PrimaryAuthority == orders.TruthAuthorityReconciliationInferred && summary.PrimaryReason != "" {
 			summary.Message = summary.RestrictionReason + ": " + summary.PrimaryReason
 			return summary
@@ -235,6 +281,7 @@ func (at *AutoTrader) currentBrokerTruthSummary() brokerTruthSummary {
 		summary.Message = summary.RestrictionReason
 		return summary
 	}
+	summary.PreflightReady = true
 	summary.Message = "broker/account/order/position/data truth verified for active mode"
 	return summary
 }
@@ -247,10 +294,21 @@ func (at *AutoTrader) brokerTruthNeedsRefresh() bool {
 	if !summary.Required || !summary.BrokerManaged {
 		return false
 	}
-	if !summary.AccountVerified || !summary.OrdersVerified {
+	if !summary.AccountVerified || !summary.OrdersVerified || !summary.PositionsVerified {
 		return true
 	}
 	return false
+}
+
+func (at *AutoTrader) brokerTruthNeedsMarketDataRefresh() bool {
+	if at == nil {
+		return false
+	}
+	summary := at.currentBrokerTruthSummary()
+	if !summary.Required || !summary.MarketDataRequired {
+		return false
+	}
+	return !summary.MarketDataVerified || !summary.MarketDataFresh
 }
 
 func (at *AutoTrader) ensureBrokerTruthReadyForTrading() error {
@@ -266,12 +324,37 @@ func (at *AutoTrader) ensureBrokerTruthReadyForTrading() error {
 			return at.handleIBKRRuntimeError("broker_truth_reconcile", err)
 		}
 	}
+	if at.brokerTruthNeedsMarketDataRefresh() {
+		if err := at.preflightRuntimeMarketData(nil); err != nil {
+			return err
+		}
+	}
 
 	summary := at.currentBrokerTruthSummary()
 	if !summary.TradingBlocked {
 		return nil
 	}
 	return errors.New(strings.TrimSpace(summary.Message))
+}
+
+func requiredPreflightTime(required bool, ts time.Time) time.Time {
+	if !required {
+		return time.Time{}
+	}
+	return ts
+}
+
+func oldestNonZeroTime(values ...time.Time) time.Time {
+	var oldest time.Time
+	for _, value := range values {
+		if value.IsZero() {
+			continue
+		}
+		if oldest.IsZero() || value.Before(oldest) {
+			oldest = value
+		}
+	}
+	return oldest
 }
 
 func firstNonZeroTime(values ...time.Time) time.Time {

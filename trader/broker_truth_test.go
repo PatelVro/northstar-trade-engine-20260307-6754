@@ -11,6 +11,25 @@ type brokerTruthTestTrader struct {
 	orderSummary orders.Summary
 }
 
+func freshBrokerPositionViews(symbols ...string) []map[string]interface{} {
+	views := make([]map[string]interface{}, 0, len(symbols))
+	for _, symbol := range symbols {
+		views = append(views, map[string]interface{}{
+			"symbol":             symbol,
+			"side":               "long",
+			"entryPrice":         100.0,
+			"markPrice":          100.0,
+			"positionAmt":        1.0,
+			"unRealizedProfit":   0.0,
+			"leverage":           1.0,
+			"liquidationPrice":   0.0,
+			"unrealized_pnl_pct": 0.0,
+			"margin_used":        100.0,
+		})
+	}
+	return views
+}
+
 func (t *brokerTruthTestTrader) GetBalance() (map[string]interface{}, error) {
 	return map[string]interface{}{}, nil
 }
@@ -253,7 +272,7 @@ func TestBrokerTruthSummaryMarksInferredOrderTruthAsDegraded(t *testing.T) {
 		AccountEquity:          100000,
 		AvailableBalance:       100000,
 		PositionCount:          1,
-	}, []map[string]interface{}{})
+	}, freshBrokerPositionViews("AAPL"))
 
 	summary := at.currentBrokerTruthSummary()
 	if summary.TradingBlocked {
@@ -264,6 +283,9 @@ func TestBrokerTruthSummaryMarksInferredOrderTruthAsDegraded(t *testing.T) {
 	}
 	if !summary.EntriesRestricted {
 		t.Fatalf("expected inferred broker truth to restrict entries, got %+v", summary)
+	}
+	if summary.PreflightReady {
+		t.Fatalf("expected inferred broker truth preflight to remain not-ready for normal entries, got %+v", summary)
 	}
 	if summary.PrimaryAuthority != orders.TruthAuthorityReconciliationInferred || summary.PrimaryConfidence != orders.TruthConfidenceHigh {
 		t.Fatalf("expected inferred primary issue metadata, got %+v", summary)
@@ -306,6 +328,108 @@ func TestBrokerTruthGateBlocksShadowWhenFeedDelayed(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(gate.BlockReason), "market data delayed") && !strings.Contains(strings.ToLower(gate.BlockReason), "market data") {
 		t.Fatalf("expected market-data block reason, got %q", gate.BlockReason)
+	}
+}
+
+func TestBrokerTruthGateBlocksShadowWhenMarketDataHasNotBeenPreflighted(t *testing.T) {
+	now := time.Now()
+	at := &AutoTrader{
+		id:        "shadow_feed_unchecked",
+		name:      "Shadow Feed Unchecked",
+		exchange:  "ibkr",
+		isRunning: true,
+		config: AutoTraderConfig{
+			Mode:           "shadow",
+			Broker:         "sim",
+			DataProvider:   "ibkr",
+			InstrumentType: "equity",
+			StrategyMode:   "momentum_only",
+			ScanInterval:   5 * time.Minute,
+			InitialBalance: 100000,
+		},
+		initialBalance: 100000,
+	}
+	at.initializeBrokerRuntimeState()
+	at.initializeDataQualityState()
+	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", TradingAllowed: true, CheckedAt: now})
+
+	gate := at.currentTradingGateDecision(false, nil)
+	if gate.TradingAllowed {
+		t.Fatalf("expected unchecked market-data truth to block shadow trading, got %+v", gate)
+	}
+	if !strings.Contains(strings.ToLower(gate.BlockReason), "preflighted") {
+		t.Fatalf("expected unchecked market-data preflight reason, got %q", gate.BlockReason)
+	}
+}
+
+func TestBrokerTruthGateBlocksPaperIBKRWithoutOrderReconciliationSummary(t *testing.T) {
+	now := time.Now()
+	at := &AutoTrader{
+		id:       "broker_truth_missing_orders",
+		name:     "Broker Truth Missing Orders",
+		exchange: "ibkr",
+		config: AutoTraderConfig{
+			Mode:           "paper",
+			Broker:         "ibkr",
+			StrategyMode:   "momentum_only",
+			ScanInterval:   5 * time.Minute,
+			InitialBalance: 100000,
+		},
+		initialBalance: 100000,
+		isRunning:      true,
+	}
+	at.initializeBrokerRuntimeState()
+	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", TradingAllowed: true, CheckedAt: now})
+	at.positionReconSummary = freshPositionReconSummary(now)
+	at.setRuntimeAccountSnapshot(AccountSummary{
+		AccountingVersion:      accountingVersion,
+		StrategyInitialCapital: 100000,
+		StrategyEquity:         100000,
+		AccountEquity:          100000,
+		AvailableBalance:       100000,
+		PositionCount:          0,
+	}, []map[string]interface{}{})
+
+	gate := at.currentTradingGateDecision(false, at.currentLatestAccountSummary())
+	if gate.TradingAllowed {
+		t.Fatalf("expected missing order reconciliation summary to block trading, got %+v", gate)
+	}
+	if !strings.Contains(strings.ToLower(gate.BlockReason), "reconciliation summary is unavailable") {
+		t.Fatalf("expected missing order reconciliation reason, got %q", gate.BlockReason)
+	}
+}
+
+func TestBrokerTruthSummaryMarksStaleMarketDataPreflightAsBlocked(t *testing.T) {
+	now := time.Now().UTC()
+	at := &AutoTrader{
+		id:       "shadow_feed_stale",
+		name:     "Shadow Feed Stale",
+		exchange: "ibkr",
+		config: AutoTraderConfig{
+			Mode:           "shadow",
+			Broker:         "sim",
+			DataProvider:   "ibkr",
+			InstrumentType: "equity",
+			StrategyMode:   "momentum_only",
+			ScanInterval:   time.Minute,
+			InitialBalance: 100000,
+		},
+		initialBalance: 100000,
+		isRunning:      true,
+	}
+	at.initializeBrokerRuntimeState()
+	at.initializeDataQualityState()
+	at.updateMarketDataFeedStatus(false, "", []string{"AAPL", "MSFT"})
+	at.dataQualityMu.Lock()
+	at.dataQualityState.FeedStatus.LastCheckedAt = now.Add(-6 * time.Minute)
+	at.dataQualityMu.Unlock()
+
+	summary := at.currentBrokerTruthSummary()
+	if !summary.TradingBlocked || summary.MarketDataFresh {
+		t.Fatalf("expected stale market-data preflight to block trading, got %+v", summary)
+	}
+	if !strings.Contains(strings.ToLower(summary.Message), "stale") {
+		t.Fatalf("expected stale market-data message, got %q", summary.Message)
 	}
 }
 
@@ -359,7 +483,7 @@ func TestGetOperatorStatus_IncludesBrokerTruthSummary(t *testing.T) {
 		AccountEquity:          100000,
 		AvailableBalance:       100000,
 		PositionCount:          1,
-	}, []map[string]interface{}{})
+	}, freshBrokerPositionViews("AAPL"))
 
 	status := at.GetOperatorStatus()
 	if !status.BrokerTruth.Available || !status.BrokerTruth.Required {
@@ -370,6 +494,9 @@ func TestGetOperatorStatus_IncludesBrokerTruthSummary(t *testing.T) {
 	}
 	if !status.BrokerTruth.EntriesRestricted || status.BrokerTruth.PrimaryAuthority != string(orders.TruthAuthorityReconciliationInferred) {
 		t.Fatalf("expected operator status to expose inferred broker truth restriction, got %+v", status.BrokerTruth)
+	}
+	if status.BrokerTruth.PreflightReady || !status.BrokerTruth.AccountFresh || !status.BrokerTruth.OrdersFresh || !status.BrokerTruth.PositionsFresh {
+		t.Fatalf("expected operator status to expose component freshness and non-ready preflight for inferred truth, got %+v", status.BrokerTruth)
 	}
 	if status.BrokerTruth.PrimaryIssueLocalID != "status-local-order" || !status.BrokerTruth.PrimaryNeedsReview {
 		t.Fatalf("expected operator status to expose primary issue details, got %+v", status.BrokerTruth)

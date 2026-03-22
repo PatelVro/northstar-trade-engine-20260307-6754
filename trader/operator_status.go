@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const operatorStatusSchemaVersion = 21
+const operatorStatusSchemaVersion = 22
 
 type OperatorRuntimeSummary struct {
 	IsRunning         bool    `json:"is_running"`
@@ -191,18 +191,25 @@ type OperatorBrokerTruthSummary struct {
 	Required             bool     `json:"required"`
 	BrokerManaged        bool     `json:"broker_managed"`
 	Verified             bool     `json:"verified"`
+	PreflightReady       bool     `json:"preflight_ready"`
+	CoherenceVerified    bool     `json:"coherence_verified"`
 	TradingBlocked       bool     `json:"trading_blocked"`
 	EntriesRestricted    bool     `json:"entries_restricted"`
 	ConfidenceDegraded   bool     `json:"confidence_degraded"`
 	RestrictionReason    string   `json:"restriction_reason"`
 	AccountRequired      bool     `json:"account_required"`
 	AccountVerified      bool     `json:"account_verified"`
+	AccountFresh         bool     `json:"account_fresh"`
 	OrdersRequired       bool     `json:"orders_required"`
 	OrdersVerified       bool     `json:"orders_verified"`
+	OrdersFresh          bool     `json:"orders_fresh"`
 	PositionsRequired    bool     `json:"positions_required"`
 	PositionsVerified    bool     `json:"positions_verified"`
+	PositionsFresh       bool     `json:"positions_fresh"`
 	MarketDataRequired   bool     `json:"market_data_required"`
 	MarketDataVerified   bool     `json:"market_data_verified"`
+	MarketDataFresh      bool     `json:"market_data_fresh"`
+	PreflightCheckedAt   string   `json:"preflight_checked_at"`
 	AccountCapturedAt    string   `json:"account_captured_at"`
 	OrdersCheckedAt      string   `json:"orders_checked_at"`
 	PositionsCheckedAt   string   `json:"positions_checked_at"`
@@ -794,18 +801,25 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		Required:             brokerTruth.Required,
 		BrokerManaged:        brokerTruth.BrokerManaged,
 		Verified:             brokerTruth.Verified,
+		PreflightReady:       brokerTruth.PreflightReady,
+		CoherenceVerified:    brokerTruth.CoherenceVerified,
 		TradingBlocked:       brokerTruth.TradingBlocked,
 		EntriesRestricted:    brokerTruth.EntriesRestricted,
 		ConfidenceDegraded:   brokerTruth.ConfidenceDegraded,
 		RestrictionReason:    brokerTruth.RestrictionReason,
 		AccountRequired:      brokerTruth.AccountRequired,
 		AccountVerified:      brokerTruth.AccountVerified,
+		AccountFresh:         brokerTruth.AccountFresh,
 		OrdersRequired:       brokerTruth.OrdersRequired,
 		OrdersVerified:       brokerTruth.OrdersVerified,
+		OrdersFresh:          brokerTruth.OrdersFresh,
 		PositionsRequired:    brokerTruth.PositionsRequired,
 		PositionsVerified:    brokerTruth.PositionsVerified,
+		PositionsFresh:       brokerTruth.PositionsFresh,
 		MarketDataRequired:   brokerTruth.MarketDataRequired,
 		MarketDataVerified:   brokerTruth.MarketDataVerified,
+		MarketDataFresh:      brokerTruth.MarketDataFresh,
+		PreflightCheckedAt:   formatRFC3339(brokerTruth.PreflightCheckedAt),
 		AccountCapturedAt:    formatRFC3339(brokerTruth.AccountCapturedAt),
 		OrdersCheckedAt:      formatRFC3339(brokerTruth.OrdersCheckedAt),
 		PositionsCheckedAt:   formatRFC3339(brokerTruth.PositionsCheckedAt),

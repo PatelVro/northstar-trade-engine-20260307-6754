@@ -175,6 +175,17 @@ func (at *AutoTrader) currentRuntimeConditionState(
 		return view
 	}
 
+	if recentBlocked.Reason != "" && recentBlocked.ExpectedNonTradable {
+		view.State = RuntimeConditionMarketClosed
+		view.Severity = incidents.SeverityInfo
+		view.CycleTradable = false
+		view.ExpectedNonTradable = true
+		view.Reason = recentBlocked.Reason
+		view.Causes = []string{recentBlocked.Reason}
+		view.UpdatedAt = recentBlocked.UpdatedAt
+		return view
+	}
+
 	if brokerTruth.TradingBlocked {
 		view.State = RuntimeConditionBlocked
 		view.Severity = incidents.SeverityWarning
@@ -191,17 +202,6 @@ func (at *AutoTrader) currentRuntimeConditionState(
 			view.Severity = incidents.SeverityCritical
 			view.AwaitingReconciliation = true
 		}
-		return view
-	}
-
-	if recentBlocked.Reason != "" && recentBlocked.ExpectedNonTradable {
-		view.State = RuntimeConditionMarketClosed
-		view.Severity = incidents.SeverityInfo
-		view.CycleTradable = false
-		view.ExpectedNonTradable = true
-		view.Reason = recentBlocked.Reason
-		view.Causes = []string{recentBlocked.Reason}
-		view.UpdatedAt = recentBlocked.UpdatedAt
 		return view
 	}
 
