@@ -412,6 +412,14 @@ For equity traders (`exchange=ibkr` or `exchange=alpaca`), `strategy_mode` suppo
 
 Reference template: `ibkr_autonomous_template.json`
 
+Northstar now uses one canonical runtime decision architecture for equities:
+
+1. load canonical market data first (`market.Get` now carries features, regime, and selector output)
+2. let the configured `strategy_mode` generate candidate actions
+3. run the canonical selector/allocator dispatch layer before execution
+
+That means the research pipeline is no longer only a shadow/backtest overlay for equities. It is now the universal entry gate and sizing layer across runtime equity modes. `strategy_mode` still chooses how ideas are generated; the canonical pipeline now consistently decides whether those entry ideas are allowed and how large they may be.
+
 Key automation/risk fields:
 
 - `max_gross_exposure`

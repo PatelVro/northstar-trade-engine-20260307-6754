@@ -50,6 +50,9 @@ func TestGetOperatorStatus_ReadinessFailureBlocksTradingClearly(t *testing.T) {
 	if status.TradingAllowed {
 		t.Fatalf("expected trading to be blocked")
 	}
+	if status.DecisionArchitecture != "equity_generator_plus_canonical_pipeline" {
+		t.Fatalf("expected equity trader to report canonical pipeline architecture, got %q", status.DecisionArchitecture)
+	}
 	if status.TradingBlockReason != "startup readiness failed" {
 		t.Fatalf("expected readiness block reason, got %q", status.TradingBlockReason)
 	}
@@ -104,6 +107,9 @@ func TestGetOperatorStatus_BrokerDegradedAppearsDistinctFromLiveness(t *testing.
 	status := at.GetOperatorStatus()
 	if status.TradingAllowed {
 		t.Fatalf("expected degraded broker runtime to block trading")
+	}
+	if status.DecisionArchitecture != "equity_generator_plus_canonical_pipeline" {
+		t.Fatalf("expected equity trader to report canonical pipeline architecture, got %q", status.DecisionArchitecture)
 	}
 	if status.TradingBlockReason != "broker runtime degraded" {
 		t.Fatalf("expected broker degraded block reason, got %q", status.TradingBlockReason)

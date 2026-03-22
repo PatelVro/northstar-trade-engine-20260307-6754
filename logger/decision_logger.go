@@ -12,18 +12,20 @@ import (
 
 // DecisionRecord holds the log entry for an AI trading decision
 type DecisionRecord struct {
-	Timestamp      time.Time          `json:"timestamp"`       // Decision timestamp
-	CycleNumber    int                `json:"cycle_number"`    // Cycle number
-	InputPrompt    string             `json:"input_prompt"`    // Input prompt sent to AI
-	CoTTrace       string             `json:"cot_trace"`       // AI chain of thought trace
-	DecisionJSON   string             `json:"decision_json"`   // Raw decision JSON
-	AccountState   AccountSnapshot    `json:"account_state"`   // Snapshot of account state
-	Positions      []PositionSnapshot `json:"positions"`       // Snapshot of open positions
-	CandidateCoins []string           `json:"candidate_coins"` // List of candidate coins
-	Decisions      []DecisionAction   `json:"decisions"`       // List of executed decisions
-	ExecutionLog   []string           `json:"execution_log"`   // Log of execution steps
-	Success        bool               `json:"success"`         // Flag indicating success
-	ErrorMessage   string             `json:"error_message"`   // Error message if applicable
+	Timestamp      time.Time             `json:"timestamp"`    // Decision timestamp
+	CycleNumber    int                   `json:"cycle_number"` // Cycle number
+	ShadowMode     bool                  `json:"shadow_mode,omitempty"`
+	InputPrompt    string                `json:"input_prompt"`       // Input prompt sent to AI
+	CoTTrace       string                `json:"cot_trace"`          // AI chain of thought trace
+	DecisionJSON   string                `json:"decision_json"`      // Raw decision JSON
+	AccountState   AccountSnapshot       `json:"account_state"`      // Snapshot of account state
+	Positions      []PositionSnapshot    `json:"positions"`          // Snapshot of open positions
+	CandidateCoins []string              `json:"candidate_coins"`    // List of candidate coins
+	Pipeline       []PipelineObservation `json:"pipeline,omitempty"` // Canonical runtime decision-pipeline state per symbol
+	Decisions      []DecisionAction      `json:"decisions"`          // List of executed decisions
+	ExecutionLog   []string              `json:"execution_log"`      // Log of execution steps
+	Success        bool                  `json:"success"`            // Flag indicating success
+	ErrorMessage   string                `json:"error_message"`      // Error message if applicable
 }
 
 // AccountSnapshot records account balance state
@@ -107,6 +109,8 @@ type DecisionAction struct {
 	RiskApprovedQuantity  float64           `json:"risk_approved_quantity,omitempty"`
 	RiskApprovedNotional  float64           `json:"risk_approved_notional,omitempty"`
 	RiskChecks            []RiskCheckResult `json:"risk_checks,omitempty"`
+	Pipeline              *PipelineDecision `json:"pipeline,omitempty"`
+	Shadow                *ShadowExecution  `json:"shadow,omitempty"`
 }
 
 type RiskCheckResult struct {
@@ -115,6 +119,57 @@ type RiskCheckResult struct {
 	Message          string  `json:"message"`
 	ApprovedQuantity float64 `json:"approved_quantity,omitempty"`
 	ApprovedNotional float64 `json:"approved_notional,omitempty"`
+}
+
+type PipelineObservation struct {
+	Symbol                     string    `json:"symbol"`
+	Timestamp                  time.Time `json:"timestamp"`
+	Timeframe                  string    `json:"timeframe"`
+	FeatureValid               bool      `json:"feature_valid"`
+	FeatureInsufficientHistory bool      `json:"feature_insufficient_history"`
+	FeatureWarnings            []string  `json:"feature_warnings,omitempty"`
+	Regime                     string    `json:"regime,omitempty"`
+	RegimeScore                float64   `json:"regime_score,omitempty"`
+	RegimeConfidence           float64   `json:"regime_confidence,omitempty"`
+	RegimeExplanation          string    `json:"regime_explanation,omitempty"`
+	SelectedFamily             string    `json:"selected_family,omitempty"`
+	SelectedStrategy           string    `json:"selected_strategy,omitempty"`
+	SelectionConfidence        float64   `json:"selection_confidence,omitempty"`
+	SelectionAllowTrade        bool      `json:"selection_allow_trade"`
+	SelectionRiskMode          string    `json:"selection_risk_mode,omitempty"`
+	SelectionReason            string    `json:"selection_reason,omitempty"`
+	SelectionWarnings          []string  `json:"selection_warnings,omitempty"`
+}
+
+type PipelineDecision struct {
+	PipelineObservation
+	DecisionAction        string   `json:"decision_action,omitempty"`
+	DecisionAllowed       bool     `json:"decision_allowed"`
+	BlockingReason        string   `json:"blocking_reason,omitempty"`
+	AllocationAllowTrade  bool     `json:"allocation_allow_trade"`
+	AllocationReducedSize bool     `json:"allocation_reduced_size"`
+	RecommendedQuantity   float64  `json:"recommended_quantity,omitempty"`
+	RecommendedNotional   float64  `json:"recommended_notional,omitempty"`
+	TargetPositionPct     float64  `json:"target_position_pct,omitempty"`
+	RiskBudgetUsed        float64  `json:"risk_budget_used,omitempty"`
+	SizingReason          string   `json:"sizing_reason,omitempty"`
+	AllocationWarnings    []string `json:"allocation_warnings,omitempty"`
+}
+
+type ShadowExecution struct {
+	Active               bool      `json:"active"`
+	RecordedAt           time.Time `json:"recorded_at"`
+	Status               string    `json:"status"`
+	WouldTrade           bool      `json:"would_trade"`
+	Message              string    `json:"message,omitempty"`
+	ReferencePrice       float64   `json:"reference_price,omitempty"`
+	HypotheticalQuantity float64   `json:"hypothetical_quantity,omitempty"`
+	HypotheticalNotional float64   `json:"hypothetical_notional,omitempty"`
+	PositionKey          string    `json:"position_key,omitempty"`
+	RealizedPnL          float64   `json:"realized_pnl,omitempty"`
+	UnrealizedPnL        float64   `json:"unrealized_pnl,omitempty"`
+	BlockReason          string    `json:"block_reason,omitempty"`
+	Warnings             []string  `json:"warnings,omitempty"`
 }
 
 // DecisionLogger records system decision workflows over time

@@ -766,6 +766,7 @@ func (at *AutoTrader) Run() error {
 	log.Printf(" Initial balance: %.2f %s", at.initialBalance, currency)
 	log.Printf("  Scan interval: %v", at.config.ScanInterval)
 	log.Printf(" Strategy mode: %s", at.config.StrategyMode)
+	log.Printf(" Decision architecture: %s", at.canonicalDecisionArchitecture())
 	if at.config.InstrumentType == "equity" && (at.config.StrategyMode == "momentum_only" || at.config.StrategyMode == "multi_factor") {
 		log.Println(" Local strategy engine controls position sizing and exits for this trader")
 	} else {
@@ -1412,7 +1413,7 @@ func (at *AutoTrader) runCycle() error {
 
 	at.maybeApplyEquityMomentumFallback(ctx, fullDecision)
 	at.applyEquityDecisionOverlay(ctx, fullDecision)
-	at.applyBacktestResearchPipeline(ctx, fullDecision)
+	at.applyCanonicalRuntimeStrategyDispatch(ctx, fullDecision)
 	record.Pipeline = at.buildPipelineObservations(ctx)
 	if len(fullDecision.Decisions) > 0 {
 		decisionJSON, _ := json.MarshalIndent(fullDecision.Decisions, "", "  ")
@@ -1549,29 +1550,26 @@ func classifyExpectedMarketDataBlock(err error) (string, bool) {
 }
 
 func (at *AutoTrader) getDecision(ctx *decision.Context) (*decision.FullDecision, error) {
-	if at.config.InstrumentType == "equity" {
+	if at.usesCanonicalEquityPipeline() {
+		if err := at.prepareCanonicalEquityContext(ctx); err != nil {
+			return nil, err
+		}
 		switch at.config.StrategyMode {
 		case "momentum_only":
-			if err := at.loadMomentumMarketData(ctx); err != nil {
-				return nil, err
-			}
 			return at.buildMomentumOnlyDecision(ctx), nil
 		case "multi_factor":
-			if err := at.loadMomentumMarketData(ctx); err != nil {
-				return nil, err
-			}
 			return at.buildMultiFactorDecision(ctx), nil
 		case "hybrid_ai":
 			fullDecision, err := decision.GetFullDecision(ctx, at.mcpClient)
 			if err != nil {
 				// Keep the system autonomous: fallback to local factors when AI API is unavailable.
-				if loadErr := at.loadMomentumMarketData(ctx); loadErr == nil {
+				if len(ctx.MarketDataMap) > 0 {
 					log.Printf(" Hybrid AI fallback activated: switching to local multi-factor engine (%v)", err)
 					return at.buildMultiFactorDecision(ctx), nil
 				}
 				return nil, err
 			}
-			if loadErr := at.loadMomentumMarketData(ctx); loadErr == nil {
+			if len(ctx.MarketDataMap) > 0 {
 				at.applyHybridFactorFilter(ctx, fullDecision)
 			}
 			return fullDecision, nil

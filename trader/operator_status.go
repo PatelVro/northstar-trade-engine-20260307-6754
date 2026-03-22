@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const operatorStatusSchemaVersion = 15
+const operatorStatusSchemaVersion = 16
 
 type OperatorRuntimeSummary struct {
 	IsRunning         bool    `json:"is_running"`
@@ -296,6 +296,7 @@ type OperatorStatusSummary struct {
 	Exchange               string                                `json:"exchange"`
 	Broker                 string                                `json:"broker"`
 	StrategyMode           string                                `json:"strategy_mode"`
+	DecisionArchitecture   string                                `json:"decision_architecture"`
 	TradingAllowed         bool                                  `json:"trading_allowed"`
 	EntriesAllowed         bool                                  `json:"entries_allowed"`
 	ExitsAllowed           bool                                  `json:"exits_allowed"`
@@ -786,6 +787,7 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		Exchange:                        at.exchange,
 		Broker:                          at.config.Broker,
 		StrategyMode:                    at.config.StrategyMode,
+		DecisionArchitecture:            at.canonicalDecisionArchitecture(),
 		TradingAllowed:                  gate.TradingAllowed,
 		EntriesAllowed:                  gate.EntriesAllowed,
 		ExitsAllowed:                    gate.ExitsAllowed,

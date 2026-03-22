@@ -153,9 +153,16 @@ func buildAuditRiskSummary(action logger.DecisionAction) audit.RiskSummary {
 }
 
 func buildAuditExecutionSummary(action logger.DecisionAction) audit.ExecutionSummary {
+	shadowMode := action.Shadow != nil && action.Shadow.Active
+	shadowStatus := ""
+	if shadowMode {
+		shadowStatus = strings.TrimSpace(action.Shadow.Status)
+	}
 	return audit.ExecutionSummary{
 		Result:          auditExecutionResult(action),
 		Success:         action.Success,
+		ShadowMode:      shadowMode,
+		ShadowStatus:    shadowStatus,
 		Error:           strings.TrimSpace(action.Error),
 		RequestedAction: strings.TrimSpace(action.Action),
 		RequestedQty:    action.RiskApprovedQuantity,

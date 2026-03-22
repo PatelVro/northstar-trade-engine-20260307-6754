@@ -146,8 +146,12 @@ func GetFullDecision(ctx *Context, mcpClient *mcp.Client) (*FullDecision, error)
 
 // fetchMarketDataForContext fetches market and OI data for all coins in context
 func fetchMarketDataForContext(ctx *Context) error {
-	ctx.MarketDataMap = make(map[string]*market.Data)
-	ctx.OITopDataMap = make(map[string]*OITopData)
+	if ctx.MarketDataMap == nil {
+		ctx.MarketDataMap = make(map[string]*market.Data)
+	}
+	if ctx.OITopDataMap == nil {
+		ctx.OITopDataMap = make(map[string]*OITopData)
+	}
 
 	// Collect all coins that require data fetching
 	symbolSet := make(map[string]bool)
@@ -177,6 +181,10 @@ func fetchMarketDataForContext(ctx *Context) error {
 
 	// Fetch market data for selected symbols
 	for symbol := range symbolSet {
+		if existing, ok := ctx.MarketDataMap[symbol]; ok && existing != nil {
+			continue
+		}
+
 		req := market.GetRequest{
 			Symbol:            symbol,
 			Provider:          ctx.Provider,

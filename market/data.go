@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"math"
 	"net/http"
 	dataquality "northstar/data"
+	"northstar/features"
+	"northstar/regime"
+	"northstar/selector"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +27,9 @@ type Data struct {
 	FundingRate       float64
 	IntradaySeries    *IntradayData
 	LongerTermContext *LongerTermData
+	Features          *features.FeatureSet   `json:"-"`
+	Regimes           *regime.ResultSet      `json:"-"`
+	Selections        *selector.SelectionSet `json:"-"`
 }
 
 // OIData represents Open Interest metrics
@@ -90,6 +95,7 @@ func Get(req GetRequest) (*Data, error) {
 	if err := validateBars(symbol, "3m", klines3m, 40, req.ValidationOptions); err != nil {
 		return nil, err
 	}
+	featureBars3m := toFeatureBars(klines3m)
 
 	// Retrieve 4-hour klines
 	klines4hMap, err := req.Provider.GetBars([]string{symbol}, "4h", 60)
@@ -100,12 +106,13 @@ func Get(req GetRequest) (*Data, error) {
 	if err := validateBars(symbol, "4h", klines4h, 60, req.ValidationOptions); err != nil {
 		return nil, err
 	}
+	featureBars4h := toFeatureBars(klines4h)
 
 	// Calculate current indicators (based on latest 3-minute data)
 	currentPrice := klines3m[len(klines3m)-1].Close
-	currentEMA20 := calculateEMA(klines3m, 20)
-	currentMACD := calculateMACD(klines3m)
-	currentRSI7 := calculateRSI(klines3m, 7)
+	currentEMA20 := features.EMA(featureBars3m, 20)
+	currentMACD := features.MACD(featureBars3m)
+	currentRSI7 := features.RSI(featureBars3m, 7)
 
 	// Calculate price change percentages
 	// 1-hour price change = Price from 20 periods ago (3-min * 20 = 1 hour)
@@ -152,6 +159,13 @@ func Get(req GetRequest) (*Data, error) {
 	// Evaluate longer term contexts
 	longerTermData := calculateLongerTermData(klines4h)
 
+	featureSet := features.DefaultEngine().ComputeSet(symbol, map[string][]features.Bar{
+		"3m": featureBars3m,
+		"4h": featureBars4h,
+	})
+	regimeSet := regime.DefaultDetector().DetectSet(featureSet)
+	selectionSet := selector.Default().SelectSet(regimeSet)
+
 	return &Data{
 		Symbol:            symbol,
 		CurrentPrice:      currentPrice,
@@ -164,6 +178,9 @@ func Get(req GetRequest) (*Data, error) {
 		FundingRate:       fundingRate,
 		IntradaySeries:    intradayData,
 		LongerTermContext: longerTermData,
+		Features:          featureSet,
+		Regimes:           regimeSet,
+		Selections:        selectionSet,
 	}, nil
 }
 
@@ -194,120 +211,27 @@ func validateBars(symbol, interval string, klines []Kline, expected int, opts da
 
 // calculateEMA computes Exponential Moving Average
 func calculateEMA(klines []Kline, period int) float64 {
-	if len(klines) < period {
-		return 0
-	}
-
-	// Use Simple Moving Average to bootstrap initial EMA
-	sum := 0.0
-	for i := 0; i < period; i++ {
-		sum += klines[i].Close
-	}
-	ema := sum / float64(period)
-
-	// Formulate EMA
-	multiplier := 2.0 / float64(period+1)
-	for i := period; i < len(klines); i++ {
-		ema = (klines[i].Close-ema)*multiplier + ema
-	}
-
-	return ema
+	return features.EMA(toFeatureBars(klines), period)
 }
 
 // calculateMACD evaluates MACD oscillator
 func calculateMACD(klines []Kline) float64 {
-	if len(klines) < 26 {
-		return 0
-	}
-
-	// Formulate 12-period and 26-period EMAs
-	ema12 := calculateEMA(klines, 12)
-	ema26 := calculateEMA(klines, 26)
-
-	// Apply standard MACD logic: EMA12 - EMA26
-	return ema12 - ema26
+	return features.MACD(toFeatureBars(klines))
 }
 
 // calculateRSI plots Relative Strength Index
 func calculateRSI(klines []Kline, period int) float64 {
-	if len(klines) <= period {
-		return 0
-	}
-
-	gains := 0.0
-	losses := 0.0
-
-	// Bootstrap initialization for mean calculations
-	for i := 1; i <= period; i++ {
-		change := klines[i].Close - klines[i-1].Close
-		if change > 0 {
-			gains += change
-		} else {
-			losses += -change
-		}
-	}
-
-	avgGain := gains / float64(period)
-	avgLoss := losses / float64(period)
-
-	// Wilder's smoothing bounds evaluation applied to subsequent inputs
-	for i := period + 1; i < len(klines); i++ {
-		change := klines[i].Close - klines[i-1].Close
-		if change > 0 {
-			avgGain = (avgGain*float64(period-1) + change) / float64(period)
-			avgLoss = (avgLoss * float64(period-1)) / float64(period)
-		} else {
-			avgGain = (avgGain * float64(period-1)) / float64(period)
-			avgLoss = (avgLoss*float64(period-1) + (-change)) / float64(period)
-		}
-	}
-
-	if avgLoss == 0 {
-		return 100
-	}
-
-	rs := avgGain / avgLoss
-	rsi := 100 - (100 / (1 + rs))
-
-	return rsi
+	return features.RSI(toFeatureBars(klines), period)
 }
 
 // calculateATR limits boundaries scaling output logic constraints tracking variations
 func calculateATR(klines []Kline, period int) float64 {
-	if len(klines) <= period {
-		return 0
-	}
-
-	trs := make([]float64, len(klines))
-	for i := 1; i < len(klines); i++ {
-		high := klines[i].High
-		low := klines[i].Low
-		prevClose := klines[i-1].Close
-
-		tr1 := high - low
-		tr2 := math.Abs(high - prevClose)
-		tr3 := math.Abs(low - prevClose)
-
-		trs[i] = math.Max(tr1, math.Max(tr2, tr3))
-	}
-
-	// Bootstrap ATR mapping ranges limitations logic
-	sum := 0.0
-	for i := 1; i <= period; i++ {
-		sum += trs[i]
-	}
-	atr := sum / float64(period)
-
-	// Wilder's smoothing output values mappings
-	for i := period + 1; i < len(klines); i++ {
-		atr = (atr*float64(period-1) + trs[i]) / float64(period)
-	}
-
-	return atr
+	return features.ATR(toFeatureBars(klines), period)
 }
 
 // calculateIntradaySeries logs matrix limitations calculations conditions limit variables mapping
 func calculateIntradaySeries(klines []Kline) *IntradayData {
+	featureBars := toFeatureBars(klines)
 	data := &IntradayData{
 		MidPrices:   make([]float64, 0, 10),
 		EMA20Values: make([]float64, 0, 10),
@@ -327,23 +251,23 @@ func calculateIntradaySeries(klines []Kline) *IntradayData {
 
 		// EMA20 limits variations variables logic tracking
 		if i >= 19 {
-			ema20 := calculateEMA(klines[:i+1], 20)
+			ema20 := features.EMA(featureBars[:i+1], 20)
 			data.EMA20Values = append(data.EMA20Values, ema20)
 		}
 
 		// MACD parameter variables arrays calculations execution limitation variables mapping Maps Limit Map targeting Maps variables
 		if i >= 25 {
-			macd := calculateMACD(klines[:i+1])
+			macd := features.MACD(featureBars[:i+1])
 			data.MACDValues = append(data.MACDValues, macd)
 		}
 
 		// RSI scaling variables array combinations limitations targets
 		if i >= 7 {
-			rsi7 := calculateRSI(klines[:i+1], 7)
+			rsi7 := features.RSI(featureBars[:i+1], 7)
 			data.RSI7Values = append(data.RSI7Values, rsi7)
 		}
 		if i >= 14 {
-			rsi14 := calculateRSI(klines[:i+1], 14)
+			rsi14 := features.RSI(featureBars[:i+1], 14)
 			data.RSI14Values = append(data.RSI14Values, rsi14)
 		}
 	}
@@ -353,18 +277,19 @@ func calculateIntradaySeries(klines []Kline) *IntradayData {
 
 // calculateLongerTermData processes macro limits configurations variables execution
 func calculateLongerTermData(klines []Kline) *LongerTermData {
+	featureBars := toFeatureBars(klines)
 	data := &LongerTermData{
 		MACDValues:  make([]float64, 0, 10),
 		RSI14Values: make([]float64, 0, 10),
 	}
 
 	// Extract EMA ranges limit tracking maps Limit Map Map limitation target loops configurations tracking arrays mapping
-	data.EMA20 = calculateEMA(klines, 20)
-	data.EMA50 = calculateEMA(klines, 50)
+	data.EMA20 = features.EMA(featureBars, 20)
+	data.EMA50 = features.EMA(featureBars, 50)
 
 	// Analyze ATR constraints Limit Target Maps combination
-	data.ATR3 = calculateATR(klines, 3)
-	data.ATR14 = calculateATR(klines, 14)
+	data.ATR3 = features.ATR(featureBars, 3)
+	data.ATR14 = features.ATR(featureBars, 14)
 
 	// Volumes maps targeting Tracking Values evaluation Limitations Lists Tracking Map Map limits combinations loops conditions limitations targets tracking conditions limitation Tracker Matrix variables parameters configurations target Arrays Tracking Tracking variables variables Maps map tracking configurations limitations
 	if len(klines) > 0 {
@@ -385,16 +310,32 @@ func calculateLongerTermData(klines []Kline) *LongerTermData {
 
 	for i := start; i < len(klines); i++ {
 		if i >= 25 {
-			macd := calculateMACD(klines[:i+1])
+			macd := features.MACD(featureBars[:i+1])
 			data.MACDValues = append(data.MACDValues, macd)
 		}
 		if i >= 14 {
-			rsi14 := calculateRSI(klines[:i+1], 14)
+			rsi14 := features.RSI(featureBars[:i+1], 14)
 			data.RSI14Values = append(data.RSI14Values, rsi14)
 		}
 	}
 
 	return data
+}
+
+func toFeatureBars(klines []Kline) []features.Bar {
+	out := make([]features.Bar, 0, len(klines))
+	for _, k := range klines {
+		out = append(out, features.Bar{
+			OpenTime:  k.OpenTime,
+			Open:      k.Open,
+			High:      k.High,
+			Low:       k.Low,
+			Close:     k.Close,
+			Volume:    k.Volume,
+			CloseTime: k.CloseTime,
+		})
+	}
+	return out
 }
 
 // getOpenInterestData aggregates OI mappings array limitations Tracking Limits

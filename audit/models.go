@@ -49,6 +49,8 @@ type RiskSummary struct {
 type ExecutionSummary struct {
 	Result          string    `json:"result"`
 	Success         bool      `json:"success"`
+	ShadowMode      bool      `json:"shadow_mode,omitempty"`
+	ShadowStatus    string    `json:"shadow_status,omitempty"`
 	Error           string    `json:"error,omitempty"`
 	RequestedAction string    `json:"requested_action"`
 	RequestedQty    float64   `json:"requested_qty,omitempty"`

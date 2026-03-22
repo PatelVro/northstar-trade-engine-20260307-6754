@@ -239,11 +239,12 @@ func TestLoadMomentumMarketDataRaisesExpectedBlockForChartUnavailable(t *testing
 	}
 }
 
-func TestApplyBacktestResearchPipelineBlocksNoTradeEntriesInShadowMode(t *testing.T) {
+func TestApplyCanonicalRuntimeStrategyDispatchBlocksNoTradeEntriesInShadowMode(t *testing.T) {
 	now := time.Date(2026, 3, 19, 10, 0, 0, 0, time.UTC)
 	at := &AutoTrader{
 		config: AutoTraderConfig{
 			Mode:                  "shadow",
+			InstrumentType:        "equity",
 			StrategyMode:          "momentum_only",
 			DynamicPositionSizing: true,
 			FallbackPositionPct:   0.10,
@@ -300,14 +301,14 @@ func TestApplyBacktestResearchPipelineBlocksNoTradeEntriesInShadowMode(t *testin
 		},
 	}
 
-	at.applyBacktestResearchPipeline(ctx, fullDecision)
+	at.applyCanonicalRuntimeStrategyDispatch(ctx, fullDecision)
 	if len(fullDecision.Decisions) != 1 {
 		t.Fatalf("expected one decision, got %d", len(fullDecision.Decisions))
 	}
 	if got := fullDecision.Decisions[0].Action; got != "wait" {
 		t.Fatalf("expected blocked decision to become wait, got %s", got)
 	}
-	if !strings.Contains(fullDecision.Decisions[0].Reasoning, "Research pipeline blocked AAPL open_long") {
+	if !strings.Contains(fullDecision.Decisions[0].Reasoning, "Canonical pipeline blocked AAPL open_long") {
 		t.Fatalf("expected blocking reason to be preserved, got %q", fullDecision.Decisions[0].Reasoning)
 	}
 }
