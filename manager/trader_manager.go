@@ -31,6 +31,22 @@ func (tm *TraderManager) AddTrader(cfg config.TraderConfig, defaultSymbols []str
 		return fmt.Errorf("trader ID '%s' already exists", cfg.ID)
 	}
 
+	traderConfig := BuildTraderConfig(cfg, defaultSymbols, defaultSymbolsFile, coinPoolURL, maxDailyLoss, maxDrawdown, stopTradingMinutes, leverage)
+
+	// Create new AutoTrader execution wrapper
+	at, err := trader.NewAutoTrader(traderConfig)
+	if err != nil {
+		return fmt.Errorf("failed generating new trader: %w", err)
+	}
+
+	tm.traders[cfg.ID] = at
+	log.Printf(" Trader '%s' (%s) added", cfg.Name, cfg.AIModel)
+	return nil
+}
+
+// BuildTraderConfig maps a config.TraderConfig to a trader.AutoTraderConfig.
+// Exported for testability — this is the single source of truth for field mapping.
+func BuildTraderConfig(cfg config.TraderConfig, defaultSymbols []string, defaultSymbolsFile string, coinPoolURL string, maxDailyLoss, maxDrawdown float64, stopTradingMinutes int, leverage config.LeverageConfig) trader.AutoTraderConfig {
 	allowShort := true
 	if cfg.AllowShort != nil {
 		allowShort = *cfg.AllowShort
@@ -68,8 +84,7 @@ func (tm *TraderManager) AddTrader(cfg config.TraderConfig, defaultSymbols []str
 		supervisorReduceOnlyOnDrawdown = *cfg.SupervisorReduceOnlyOnDrawdown
 	}
 
-	// Construct AutoTraderConfig parameter map
-	traderConfig := trader.AutoTraderConfig{
+	return trader.AutoTraderConfig{
 		ID:                           cfg.ID,
 		Name:                         cfg.Name,
 		AIModel:                      cfg.AIModel,
@@ -109,13 +124,11 @@ func (tm *TraderManager) AddTrader(cfg config.TraderConfig, defaultSymbols []str
 		DemoMode:                     cfg.DemoMode,
 		ScanInterval:                 cfg.GetScanInterval(),
 		InitialBalance:               cfg.InitialBalance,
-		BTCETHLeverage:               leverage.BTCETHLeverage,  // Bind configured leverage sizing
-		AltcoinLeverage:              leverage.AltcoinLeverage, // Bind configured leverage sizing
+		BTCETHLeverage:               leverage.BTCETHLeverage,
+		AltcoinLeverage:              leverage.AltcoinLeverage,
 		MaxDailyLoss:                 maxDailyLoss,
 		MaxDrawdown:                  maxDrawdown,
 		StopTradingTime:              time.Duration(stopTradingMinutes) * time.Minute,
-
-		// Exec mode and data provider settings integration
 		Mode:                                cfg.Mode,
 		DataProvider:                        cfg.DataProvider,
 		Broker:                              cfg.Broker,
@@ -184,16 +197,6 @@ func (tm *TraderManager) AddTrader(cfg config.TraderConfig, defaultSymbols []str
 		RegimeRiskScaling:                   regimeRiskScaling,
 		BenchmarkSymbols:                    cfg.BenchmarkSymbols,
 	}
-
-	// Create new AutoTrader execution wrapper
-	at, err := trader.NewAutoTrader(traderConfig)
-	if err != nil {
-		return fmt.Errorf("failed generating new trader: %w", err)
-	}
-
-	tm.traders[cfg.ID] = at
-	log.Printf(" Trader '%s' (%s) added", cfg.Name, cfg.AIModel)
-	return nil
 }
 
 // GetTrader extracts mapping logic execution handler
