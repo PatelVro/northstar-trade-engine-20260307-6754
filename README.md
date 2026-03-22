@@ -320,6 +320,37 @@ Operator checks after restart:
 2. If `restart_recovery.pending_reconciliation=true`, wait for broker bootstrap / position reconciliation to clear it before trusting entries
 3. Confirm `order_reconciliation` and `position_reconciliation` are healthy before resuming normal supervision
 
+## Restart / Interruption Validation Harness
+
+Northstar now has one focused restart-safety validation harness for the highest-value interruption scenarios:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\run_restart_validation.ps1
+```
+
+This harness is intentionally narrow. It validates the real safety assumptions already built into the runtime, including:
+
+- controlled restart with a clean durable checkpoint
+- interruption-style restart with no checkpoint until broker truth is re-established
+- restored submitted/in-flight state that must stay blocked until reconciliation clears it
+- unresolved execution truth on restart remaining hard-blocked
+- reconciliation-inferred execution truth on restart remaining reduce-only / entries-restricted
+- corrupt checkpoint failure staying fail-closed and journaled
+
+What it does not prove:
+
+- actual live-broker outage replay against IBKR
+- perfect crash durability for writes that never reached disk
+- full end-to-end OMS recovery beyond the current checkpoint + reconciliation model
+
+Developer/operator rule:
+
+1. Run `tools\run_green_checks.ps1` for broad repo health.
+2. Run `tools\run_restart_validation.ps1` after touching restart, reconciliation, execution-lifecycle, or broker-truth gating logic.
+3. Treat any harness failure as a safety regression until the runtime behavior is explained and fixed.
+
+Because the harness lives in the Go test suite, it also runs under the normal `go test ./...` path and the repo's `Go Tests` CI workflow.
+
 ## Safety-Critical Event Journal
 
 Northstar now keeps one canonical append-only JSONL journal for the highest-value runtime truth transitions at:
