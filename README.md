@@ -250,6 +250,53 @@ Operator checks before trusting a broker-backed paper/live session:
 2. Confirm `broker_truth.verified=true`
 3. Confirm `order_reconciliation` and `position_reconciliation` remain fresh and healthy
 
+## Mode Parity Evidence
+
+Northstar now exposes one compact mode-parity evidence summary in both:
+
+- `/api/status.mode_parity`
+- paper/shadow session reports under `output/session_reports/<trader_id>/...`
+
+This summary exists to answer one operator question honestly:
+
+- what does the active mode actually prove right now?
+
+It does not pretend that `shadow`, `paper`, and `live` are interchangeable.
+
+Key fields include:
+
+- `profile`
+- `summary`
+- `proven`
+- `gaps`
+- `warnings`
+- `broker_managed_execution`
+- `broker_truth_preflight_ready`
+- `real_market_data_verified`
+- `deployment_validation_passed`
+- `promotion_passed`
+- `live_capital_at_risk`
+
+Typical profiles:
+
+- `shadow_hypothetical_execution`
+  - can prove runtime decision/data-path behavior
+  - does **not** prove broker-managed execution, broker account truth, or live capital behavior
+- `paper_broker_managed`
+  - can prove broker-managed paper execution plus broker truth/reconciliation behavior
+  - does **not** prove live-capital deployment, live deployment validation, or live promotion
+- `live_broker_managed`
+  - can prove the broker-managed live path only while deployment validation, promotion, and broker-truth preflight remain clean
+- `demo_synthetic` / `replay_historical`
+  - useful for controlled runtime validation
+  - do **not** prove live market or broker behavior
+
+Operator rule:
+
+1. Treat `mode_parity.summary` as the top-line trust statement for the active mode.
+2. Read `mode_parity.gaps` before inferring that paper proves live or shadow proves paper.
+3. If `mode_parity.warnings` is non-empty, treat the current evidence as degraded even if the mode profile itself is strong.
+
 ## Operator Runtime Truth
 
 `/api/status` now carries a canonical `runtime_condition` summary so operators do not need to infer the real state by stitching together gate, incident, and broker fields manually.

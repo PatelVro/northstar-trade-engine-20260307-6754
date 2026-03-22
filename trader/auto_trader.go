@@ -817,6 +817,14 @@ func (at *AutoTrader) Run() error {
 		return err
 	}
 	at.startPositionReconciliationLoop()
+	modeParity := at.currentModeParitySummary()
+	log.Printf(" Mode parity: profile=%s | %s", modeParity.Profile, modeParity.Summary)
+	if len(modeParity.Gaps) > 0 {
+		log.Printf("  Evidence gaps: %s", strings.Join(modeParity.Gaps, "; "))
+	}
+	if len(modeParity.Warnings) > 0 {
+		log.Printf("  Evidence warnings: %s", strings.Join(modeParity.Warnings, "; "))
+	}
 
 	for at.isRunning {
 		if err := at.runCycle(); err != nil {

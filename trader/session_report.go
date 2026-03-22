@@ -25,7 +25,7 @@ const (
 	SessionCompletionPartial   SessionCompletionStatus = "partial"
 )
 
-const sessionReportVersion = 15
+const sessionReportVersion = 16
 
 type SessionPortfolioRiskSnapshot struct {
 	EvaluatedAt time.Time             `json:"evaluated_at"`
@@ -50,6 +50,7 @@ type PaperSessionReport struct {
 	Mode                              string                        `json:"mode"`
 	Broker                            string                        `json:"broker"`
 	StrategyMode                      string                        `json:"strategy_mode"`
+	ModeParity                        ModeParitySummary             `json:"mode_parity"`
 	UniverseSelectionMode             string                        `json:"universe_selection_mode"`
 	UniverseConfiguredSource          string                        `json:"universe_configured_source"`
 	UniverseConfiguredCount           int                           `json:"universe_configured_count"`
@@ -273,6 +274,7 @@ func newPaperSessionTracker(at *AutoTrader, now time.Time) *paperSessionTracker 
 	positionRecon := at.currentPositionReconciliationSummary()
 	universe := at.currentUniverseSummary()
 	journal := at.currentEventJournalSummary()
+	modeParity := at.currentModeParitySummary()
 	tracker := &paperSessionTracker{
 		report: PaperSessionReport{
 			ReportVersion:                sessionReportVersion,
@@ -281,6 +283,7 @@ func newPaperSessionTracker(at *AutoTrader, now time.Time) *paperSessionTracker 
 			Mode:                         at.config.Mode,
 			Broker:                       at.config.Broker,
 			StrategyMode:                 at.config.StrategyMode,
+			ModeParity:                   modeParity,
 			UniverseSelectionMode:        universe.SelectionMode,
 			UniverseConfiguredSource:     universe.ConfiguredSource,
 			UniverseConfiguredCount:      len(universe.ConfiguredSymbols),
@@ -874,6 +877,7 @@ func (at *AutoTrader) writePaperSessionReport(tracker *paperSessionTracker, reas
 	report := tracker.report
 	universe := at.currentUniverseSummary()
 	journal := at.currentEventJournalSummary()
+	modeParity := at.currentModeParitySummary()
 	report.UniverseSelectionMode = universe.SelectionMode
 	report.UniverseConfiguredSource = universe.ConfiguredSource
 	report.UniverseConfiguredCount = len(universe.ConfiguredSymbols)
@@ -888,6 +892,7 @@ func (at *AutoTrader) writePaperSessionReport(tracker *paperSessionTracker, reas
 	report.EventJournalLastEventType = journal.LastEventType
 	report.EventJournalLastSeverity = string(journal.LastSeverity)
 	report.EventJournalLastError = journal.LastError
+	report.ModeParity = modeParity
 	status := at.GetOperatorStatus()
 	report.FinalRuntimeConditionState = string(status.RuntimeCondition.State)
 	report.FinalRuntimeConditionSeverity = string(status.RuntimeCondition.Severity)

@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const operatorStatusSchemaVersion = 22
+const operatorStatusSchemaVersion = 23
 
 type OperatorRuntimeSummary struct {
 	IsRunning         bool    `json:"is_running"`
@@ -238,6 +238,8 @@ type OperatorDeploymentValidationSummary struct {
 	Message             string `json:"message"`
 }
 
+type OperatorModeParitySummary = ModeParitySummary
+
 type OperatorPromotionSummary struct {
 	Status             PromotionStatus  `json:"status"`
 	Message            string           `json:"message"`
@@ -420,6 +422,7 @@ type OperatorStatusSummary struct {
 	RestartRecovery        OperatorRestartRecoverySummary        `json:"restart_recovery"`
 	BrokerTruth            OperatorBrokerTruthSummary            `json:"broker_truth"`
 	DeploymentValidation   OperatorDeploymentValidationSummary   `json:"deployment_validation"`
+	ModeParity             OperatorModeParitySummary             `json:"mode_parity"`
 	Session                OperatorSessionSummary                `json:"session"`
 	EventJournal           OperatorEventJournalSummary           `json:"event_journal"`
 	Runtime                OperatorRuntimeSummary                `json:"runtime"`
@@ -521,6 +524,11 @@ type OperatorStatusSummary struct {
 	DeploymentValidationPassed      bool               `json:"deployment_validation_passed"`
 	DeploymentValidationFresh       bool               `json:"deployment_validation_fresh"`
 	DeploymentValidationMessage     string             `json:"deployment_validation_message"`
+	ModeParityProfile               string             `json:"mode_parity_profile"`
+	ModeParitySummary               string             `json:"mode_parity_summary"`
+	ModeParityProvenCount           int                `json:"mode_parity_proven_count"`
+	ModeParityGapCount              int                `json:"mode_parity_gap_count"`
+	ModeParityWarningCount          int                `json:"mode_parity_warning_count"`
 	LastSessionReportPath           string             `json:"last_session_report_path"`
 	LastSessionReportStatus         string             `json:"last_session_report_status"`
 	LastSessionReportAt             string             `json:"last_session_report_at"`
@@ -606,6 +614,7 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 	brokerTruth := at.currentBrokerTruthSummary()
 	eventJournal := at.currentEventJournalSummary()
 	deploymentValidation := startup.CurrentLiveValidationStatus("", strings.EqualFold(at.config.Mode, "live"), time.Now())
+	modeParity := at.currentModeParitySummary()
 	var primaryOrderIssue *orders.Issue
 	if orderRecon != nil {
 		primaryOrderIssue = orders.PrimaryExecutionTruthIssue(orderRecon.LastIssues)
@@ -1061,6 +1070,7 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		RestartRecovery:                 restartRecoverySummary,
 		BrokerTruth:                     brokerTruthSummary,
 		DeploymentValidation:            deploymentValidationSummary,
+		ModeParity:                      modeParity,
 		Session:                         sessionSummary,
 		EventJournal:                    eventJournalSummary,
 		Runtime:                         runtimeSummary,
@@ -1160,6 +1170,11 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		DeploymentValidationPassed:      deploymentValidationSummary.Passed,
 		DeploymentValidationFresh:       deploymentValidationSummary.Fresh,
 		DeploymentValidationMessage:     deploymentValidationSummary.Message,
+		ModeParityProfile:               string(modeParity.Profile),
+		ModeParitySummary:               modeParity.Summary,
+		ModeParityProvenCount:           modeParity.ProvenCount,
+		ModeParityGapCount:              modeParity.GapCount,
+		ModeParityWarningCount:          modeParity.WarningCount,
 		LastSessionReportPath:           sessionSummary.LastSessionReportPath,
 		LastSessionReportStatus:         sessionSummary.LastSessionReportStatus,
 		LastSessionReportAt:             sessionSummary.LastSessionReportAt,
