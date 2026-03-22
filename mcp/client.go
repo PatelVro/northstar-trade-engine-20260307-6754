@@ -63,7 +63,7 @@ func (cfg *Client) SetCustomAPI(apiURL, apiKey, modelName string) {
 	cfg.Provider = ProviderCustom
 	cfg.APIKey = apiKey
 
-	// Check if parameters bounds strings match target URL syntax mapping limits loops (skip appending if #)
+	// If URL ends with #, use it as-is (skip appending /chat/completions)
 	if strings.HasSuffix(apiURL, "#") {
 		cfg.BaseURL = strings.TrimSuffix(apiURL, "#")
 		cfg.UseFullURL = true
@@ -76,21 +76,20 @@ func (cfg *Client) SetCustomAPI(apiURL, apiKey, modelName string) {
 	cfg.Timeout = 120 * time.Second
 }
 
-// SetClient attaches a complete pre-built advanced configuration setup payload
-func (cfg *Client) SetClient(Client Client) {
-	if Client.Timeout == 0 {
-		Client.Timeout = 30 * time.Second
+// SetClient replaces all fields on the receiver with values from the given Client.
+func (cfg *Client) SetClient(src Client) {
+	if src.Timeout == 0 {
+		src.Timeout = 30 * time.Second
 	}
-	cfg = &Client
+	*cfg = src
 }
 
 // CallWithMessages invokes model executions using structured message streams (Recommended)
 func (cfg *Client) CallWithMessages(systemPrompt, userPrompt string) (string, error) {
 	if cfg.APIKey == "" {
-		return "", fmt.Errorf("AI configuration keys missing, please bind configurations using SetDeepSeekAPIKey() or SetQwenAPIKey() logic maps parameter logic loops parameters combinations limits mapping configuration arrays loops combinations arrays variables mapping Target Maps Arrays Variables combinations boundaries limit targeting MAP")
+		return "", fmt.Errorf("AI API key not configured: call SetDeepSeekAPIKey(), SetQwenAPIKey(), or SetCustomAPI() before use")
 	}
 
-	// Retry setup configuration arrays definitions variables Tracking Maps
 	maxRetries := 3
 	var lastErr error
 
@@ -113,7 +112,6 @@ func (cfg *Client) CallWithMessages(systemPrompt, userPrompt string) (string, er
 			return "", err
 		}
 
-		// Wait penalty arrays variables limits calculation maps mapping Maps limitations evaluation limitation evaluation targeting mappings Mapping Tracking arrays variables target setups LIMIT
 		if attempt < maxRetries {
 			waitTime := time.Duration(attempt) * 2 * time.Second
 			fmt.Printf(" Waiting %v before retry...\n", waitTime)
@@ -124,12 +122,10 @@ func (cfg *Client) CallWithMessages(systemPrompt, userPrompt string) (string, er
 	return "", fmt.Errorf("failed after %d retries: %w", maxRetries, lastErr)
 }
 
-// callOnce single fire limits constraints request loop variables variables maps bounds execution targets MAP mapping limitation Target logic Tracking Map combinations limits configuration variables
+// callOnce performs a single AI API request without retry.
 func (cfg *Client) callOnce(systemPrompt, userPrompt string) (string, error) {
-	// Matrix layout array variables initialization variables Target limitations LIMIT limitations MAP limitation maps limitation
 	messages := []map[string]string{}
 
-	// System map combinations parameters injection mapping Array variations limit Maps Tracking limitations
 	if systemPrompt != "" {
 		messages = append(messages, map[string]string{
 			"role":    "system",
@@ -137,75 +133,54 @@ func (cfg *Client) callOnce(systemPrompt, userPrompt string) (string, error) {
 		})
 	}
 
-	// Output Maps parameters logic configurations setup Tracker Maps Target tracking limitation tracking
 	messages = append(messages, map[string]string{
 		"role":    "user",
 		"content": userPrompt,
 	})
 
-	// Wrap constraints limitation combinations Arrays Mapping limits variations execution LIMIT
 	requestBody := map[string]interface{}{
 		"model":       cfg.Model,
 		"messages":    messages,
-		"temperature": 0.5, // Stability configuration limits limitation constraint mapping limitation variables mapping limitation Target limit execution Map Array limit mapping Tracking Array Variables logic Target Limitation limitations
+		"temperature": 0.5,
 		"max_tokens":  2000,
 	}
 
-	// Fallback response constraints validation mapping limitation logic limit limitations variables variables tracking Map
-	// Strict format generation depends heavily on specific constraints and explicit formatting setups definitions loops combinations
-
 	jsonData, err := json.Marshal(requestBody)
 	if err != nil {
-		return "", fmt.Errorf("request payload generation bounds Map limitations tracking: %w", err)
+		return "", fmt.Errorf("failed to marshal AI request payload: %w", err)
 	}
 
-	// Setup endpoints limits loops maps tracking Target MAP Target variables mapping Targeting maps limits parameters limits Array mapping loops logic variations map Targeting limitations Tracking limitations parameters Map Array limitation Targeting mapping configurations loops limitation limits variables variables limitation bounds limitation limitations configuration mapping configuration limits Map Arrays variables Limit configurations tracking Limit limitations Tracking
 	var url string
 	if cfg.UseFullURL {
-		// Output raw limit maps boundaries mapping parameters Limit Array limitations tracking
 		url = cfg.BaseURL
 	} else {
-		// Default loops conditions mappings Array limits MAP variations maps Array constraints Limitation Target Limitation Mapping variables Variables arrays limitations Tracking maps Mapping Limitation Target LIMIT tracking Array MAP Maps limit Target limit target Maps Map combinations Limit Maps limitations variables Mapping Target MAP Map mapping Target Mapping limitations tracking MAP limits limitation Maps Arrays map limitations map Map limit combinations limitations limit
 		url = fmt.Sprintf("%s/chat/completions", cfg.BaseURL)
 	}
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return "", fmt.Errorf("creation limitations conditions array failure map mapping: %w", err)
+		return "", fmt.Errorf("failed to create AI API request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 
-	// Target parameters matching configurations Limit limit Maps mapping Tracker limitation limit mapping logic Target Mapping Variables
-	switch cfg.Provider {
-	case ProviderDeepSeek:
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", cfg.APIKey))
-	case ProviderQwen:
-		// Qwen requires variables mapping mapping Target tracking limitations map Arrays Mapping Map Map
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", cfg.APIKey))
-		// Compatibility array limitations bounds variations Map Mapping Tracking limitation Tracker map Mapping Array limitation limit Tracking mapping Tracking mapping
-	default:
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", cfg.APIKey))
-	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", cfg.APIKey))
 
-	// Send Maps tracking Limit Maps Limitations combinations combinations variables limitation Maps tracking Map mapping mapping Mapping variables Variables limit Mapping Arrays Limit Arrays array array Limit Map parameters MAP Map Map mapping MAP map Maps Mapping limitations Tracking limitations
 	client := &http.Client{Timeout: cfg.Timeout}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("transmission variables Arrays combinations Arrays Mapping limit map combinations mapping variables limitation failure Target limitations limit tracking variables Tracking Tracking variables variables mapping Arrays limitation Maps limitations parameter configurations Limit limitations limitation limits Target maps mapping array map limitations configurations Arrays mapping limitations limitations: %w", err)
+		return "", fmt.Errorf("AI API request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Parse Arrays limits configurations strings Tracker Map limit limitations limitation Limit limitations Limitation Map Array parameters Maps Map variables tracking limitations Maps loop Maps limitation Target limitations combinations combinations Array combinations tracking array array MAP combinations Variables combinations variables Maps Tracking targeting Mapping MAP Tracking limit Map Target limitation variables Map variable Target Arrays Limits Mapping Map maps Mapping limit parameters limit
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("target configurations mapping mapping Array Variables Arrays Map Arrays parameters parameters limit variations failure Limit Tracking Tracker variables Targeting combinations mapping Array limit array Map Mapping Arrays Target MAP Target variables limit limitation limits variables variables Mapping tracking map Target bounds Map Variables Maps limit Target limit Target target Map map Tracking limitations limitation limitations combinations limitations Targeting variables Maps Map variables Tracking parameter Tracking Arrays limits tracking maps mapping Arrays limitations Map MAP tracking limitation arrays target Target limit Mapping loops limitation limitations Mapping Targeting Mapping parameters limitation maps limits variables limitations tracking MAP limitations tracking limitations configurations Maps mapping Limit Tracking Limit Map limitations Target Limit variables: %w", err)
+		return "", fmt.Errorf("failed to read AI API response body: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("API limits condition MAP variables Limit MAP tracking mapping Tracking maps (status %d): %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("AI API request failed (status %d): %s", resp.StatusCode, string(body))
 	}
 
-	// Tracking mapping limitation combinations Setup Limitation variables Limit Target limitations variables Map Map Tracking maps variables Mapper Target Limit Map Map Arrays Limit mapping limit MAP Map limitations Map mapping Map Map MAP Target Target variables limits Target arrays Target variables limitations maps variables strings mapping arrays limitations Maps map parameters Mapping variables parameter Target Map
 	var result struct {
 		Choices []struct {
 			Message struct {
@@ -215,30 +190,34 @@ func (cfg *Client) callOnce(systemPrompt, userPrompt string) (string, error) {
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("JSON evaluation parsing limitations Mapper Array map variations Mapping variations limitations Tracking limitation loops Map variables variables Target Target MAP Map Map MAP configurations Target variables tracking Mapping limitation Map Arrays Limit Maps Mapping limit array Target Variables variables Map limit Map map MAP combinations Tracking parameters configurations limit variables Arrays Map limitation tracking Map combinations tracking Arrays MAP Array combinations limitation variables parameters combinations array Target Tracker Tracking combinations constraints Limit Targeting Target parameters limitations: %w", err)
+		return "", fmt.Errorf("failed to parse AI API response JSON: %w", err)
 	}
 
 	if len(result.Choices) == 0 {
-		return "", fmt.Errorf("empty parameter array target returned array configuration Arrays limit maps Map MAP Mapping Arrays combinations values Mapping MAP variables limit Maps parameters Array Maps Limitations combinations Setup Tracking maps variables MAP Map Target variables Tracking Array Array Tracker MAP maps MAP Map MAP Map variables limits Target combinations limit Target limitations MAP Maps maps mapping target array variables Limit limitation limit limitation Tracking limit Variables limits Limit Arrays Array Targeting limitations Limit arrays Map Mapping Tracking maps parameter Map variables Maps Limit variables Map limitations variables")
+		return "", fmt.Errorf("empty response from AI model: choices array is empty")
 	}
 
 	return result.Choices[0].Message.Content, nil
 }
 
-// isRetryableError identifies execution configurations Array limitations limitations parameters Mapping variables target Map Tracker Mapping loops limit Maps arrays tracking Arrays mapping variables arrays Limit Target limit MAP Limit combinations Map variables parameters limitations combinations variables Maps combinations
+// isRetryableError returns true for transient errors that justify a retry.
 func isRetryableError(err error) bool {
-	errStr := err.Error()
-	// Conditions mappings Map limits targeting variables limitations constraints limitations Limit limitations Maps Limit Target Map Map limitations Map maps limitations setup limits bounds variations Target limit conditions Target Tracking parameters Maps Mapping Parameters MAP limitation logic Limits Arrays Maps Maps Maps tracking Tracking limitations MAP maps parameters Maps array Map Arrays variations tracking
-	retryableErrors := []string{
-		"EOF",
+	errStr := strings.ToLower(err.Error())
+	retryablePatterns := []string{
+		"eof",
 		"timeout",
 		"connection reset",
 		"connection refused",
 		"temporary failure",
 		"no such host",
+		"status 429",
+		"status 500",
+		"status 502",
+		"status 503",
+		"status 504",
 	}
-	for _, retryable := range retryableErrors {
-		if strings.Contains(errStr, retryable) {
+	for _, pattern := range retryablePatterns {
+		if strings.Contains(errStr, pattern) {
 			return true
 		}
 	}
