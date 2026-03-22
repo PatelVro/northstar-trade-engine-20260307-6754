@@ -36,7 +36,7 @@ func TestReconcileImportsUnknownBrokerOrder(t *testing.T) {
 func TestReconcileRepairsMissingEntryOrderToFilled(t *testing.T) {
 	store := NewStore()
 	now := time.Now()
-	store.RegisterSubmitted(IntentEntryLong, "AAPL", "BUY", "long", 10, now.Add(-(missingBrokerInferenceGraceWindow + 5*time.Second)))
+	localID := store.RegisterSubmitted(IntentEntryLong, "AAPL", "BUY", "long", 10, now.Add(-(missingBrokerInferenceGraceWindow + 5*time.Second)))
 
 	result := store.Reconcile(nil, []PositionSnapshot{
 		{Symbol: "AAPL", Side: "long", Quantity: 10},
@@ -48,6 +48,19 @@ func TestReconcileRepairsMissingEntryOrderToFilled(t *testing.T) {
 	active := store.ActiveOrders()
 	if len(active) != 0 {
 		t.Fatalf("expected no active orders after fill repair, got %d", len(active))
+	}
+	record := store.Lookup(localID, "")
+	if record == nil {
+		t.Fatalf("expected repaired record")
+	}
+	if record.TruthAuthority != TruthAuthorityReconciliationInferred || record.TruthConfidence != TruthConfidenceHigh {
+		t.Fatalf("expected inferred high-confidence truth, got authority=%s confidence=%s", record.TruthAuthority, record.TruthConfidence)
+	}
+	if !record.NeedsReview {
+		t.Fatalf("expected inferred repair to require review")
+	}
+	if result.InferredOutcomes != 1 || result.UnresolvedOutcomes != 0 {
+		t.Fatalf("expected inferred-only reconciliation result, got %+v", result)
 	}
 }
 
@@ -110,6 +123,36 @@ func TestReconcileRepairsFillMismatchFromBrokerTruth(t *testing.T) {
 	}
 	if active[0].FilledQty != 4 {
 		t.Fatalf("expected filled qty repaired to 4, got %.4f", active[0].FilledQty)
+	}
+	if active[0].TruthAuthority != TruthAuthorityBrokerConfirmed || active[0].TruthConfidence != TruthConfidenceConfirmed {
+		t.Fatalf("expected broker-confirmed truth after broker repair, got authority=%s confidence=%s", active[0].TruthAuthority, active[0].TruthConfidence)
+	}
+}
+
+func TestReconcileLeavesMissingEntryOrderUnresolvedWithoutPositionEvidence(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+	localID := store.RegisterSubmitted(IntentEntryLong, "AAPL", "BUY", "long", 10, now.Add(-(missingBrokerInferenceGraceWindow + 5*time.Second)))
+
+	result := store.Reconcile(nil, nil, now)
+	record := store.Lookup(localID, "")
+	if record == nil {
+		t.Fatalf("expected missing record to remain tracked")
+	}
+	if record.Status != StatusUnknown {
+		t.Fatalf("expected unresolved missing order to become unknown, got %s", record.Status)
+	}
+	if record.TruthAuthority != TruthAuthorityUnresolved || record.TruthConfidence != TruthConfidenceUnresolved {
+		t.Fatalf("expected unresolved truth, got authority=%s confidence=%s", record.TruthAuthority, record.TruthConfidence)
+	}
+	if !record.NeedsReview {
+		t.Fatalf("expected unresolved missing order to require review")
+	}
+	if result.UnresolvedOutcomes != 1 || result.Repairs != 0 || !result.TradingBlocked {
+		t.Fatalf("expected unresolved broker-missing outcome to block and avoid repair, got %+v", result)
+	}
+	if len(store.ActiveOrders()) != 1 {
+		t.Fatalf("expected unresolved order to remain active")
 	}
 }
 

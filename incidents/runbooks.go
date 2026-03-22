@@ -38,6 +38,18 @@ func RunbookActions(incidentType Type) []string {
 			"Inspect order/position reconciliation summaries and recent audit records.",
 			"Do not resume normal trading until the broker and local state match again.",
 		}
+	case TypeOrderReconciliationInferredExecution:
+		return []string{
+			"Review the order-reconciliation summary to see which execution outcomes were inferred from position evidence.",
+			"Inspect recent order audit records before treating the fill outcome as fully broker-confirmed.",
+			"Keep monitoring reconciliation until broker lifecycle truth catches up or the ambiguity is otherwise explained.",
+		}
+	case TypeOrderReconciliationUnresolvedExecution:
+		return []string{
+			"Treat the missing broker-managed order as unresolved until broker and position truth are reconciled.",
+			"Inspect open orders, positions, and recent order audit records before re-enabling new entries.",
+			"Do not assume protective coverage or execution completion until the unresolved state is cleared.",
+		}
 	case TypeSymbolDataQualityBlocked, TypeMarketDataValidationFailed:
 		return []string{
 			"Inspect the affected symbol and the data-quality summary in /api/status.",

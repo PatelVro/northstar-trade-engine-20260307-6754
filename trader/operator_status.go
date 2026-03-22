@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const operatorStatusSchemaVersion = 18
+const operatorStatusSchemaVersion = 19
 
 type OperatorRuntimeSummary struct {
 	IsRunning         bool    `json:"is_running"`
@@ -166,25 +166,28 @@ type OperatorRestartRecoverySummary struct {
 }
 
 type OperatorBrokerTruthSummary struct {
-	Available           bool     `json:"available"`
-	Required            bool     `json:"required"`
-	BrokerManaged       bool     `json:"broker_managed"`
-	Verified            bool     `json:"verified"`
-	TradingBlocked      bool     `json:"trading_blocked"`
-	AccountRequired     bool     `json:"account_required"`
-	AccountVerified     bool     `json:"account_verified"`
-	OrdersRequired      bool     `json:"orders_required"`
-	OrdersVerified      bool     `json:"orders_verified"`
-	PositionsRequired   bool     `json:"positions_required"`
-	PositionsVerified   bool     `json:"positions_verified"`
-	MarketDataRequired  bool     `json:"market_data_required"`
-	MarketDataVerified  bool     `json:"market_data_verified"`
-	AccountCapturedAt   string   `json:"account_captured_at"`
-	OrdersCheckedAt     string   `json:"orders_checked_at"`
-	PositionsCheckedAt  string   `json:"positions_checked_at"`
-	MarketDataCheckedAt string   `json:"market_data_checked_at"`
-	Message             string   `json:"message"`
-	BlockingReasons     []string `json:"blocking_reasons"`
+	Available            bool     `json:"available"`
+	Required             bool     `json:"required"`
+	BrokerManaged        bool     `json:"broker_managed"`
+	Verified             bool     `json:"verified"`
+	TradingBlocked       bool     `json:"trading_blocked"`
+	ConfidenceDegraded   bool     `json:"confidence_degraded"`
+	AccountRequired      bool     `json:"account_required"`
+	AccountVerified      bool     `json:"account_verified"`
+	OrdersRequired       bool     `json:"orders_required"`
+	OrdersVerified       bool     `json:"orders_verified"`
+	PositionsRequired    bool     `json:"positions_required"`
+	PositionsVerified    bool     `json:"positions_verified"`
+	MarketDataRequired   bool     `json:"market_data_required"`
+	MarketDataVerified   bool     `json:"market_data_verified"`
+	AccountCapturedAt    string   `json:"account_captured_at"`
+	OrdersCheckedAt      string   `json:"orders_checked_at"`
+	PositionsCheckedAt   string   `json:"positions_checked_at"`
+	MarketDataCheckedAt  string   `json:"market_data_checked_at"`
+	InferredOrderCount   int      `json:"inferred_order_count"`
+	UnresolvedOrderCount int      `json:"unresolved_order_count"`
+	Message              string   `json:"message"`
+	BlockingReasons      []string `json:"blocking_reasons"`
 }
 
 type OperatorDeploymentValidationSummary struct {
@@ -235,23 +238,32 @@ type OperatorTradingGateSummary struct {
 }
 
 type OperatorOrderReconciliationSummary struct {
-	Available            bool           `json:"available"`
-	LastRunAt            string         `json:"last_run_at"`
-	LastSuccessAt        string         `json:"last_success_at"`
-	LastError            string         `json:"last_error"`
-	TotalRuns            int            `json:"total_runs"`
-	TotalMismatches      int            `json:"total_mismatches"`
-	TotalRepairs         int            `json:"total_repairs"`
-	UnknownBrokerOrders  int            `json:"unknown_broker_orders"`
-	LocalMissingAtBroker int            `json:"local_missing_at_broker"`
-	FillMismatches       int            `json:"fill_mismatches"`
-	ImportedOrders       int            `json:"imported_orders"`
-	ResolvedOrders       int            `json:"resolved_orders"`
-	TrackedOrders        int            `json:"tracked_orders"`
-	ActiveLocalOrders    int            `json:"active_local_orders"`
-	BrokerOpenOrders     int            `json:"broker_open_orders"`
-	LastSummary          string         `json:"last_summary"`
-	LastIssues           []orders.Issue `json:"last_issues,omitempty"`
+	Available               bool           `json:"available"`
+	LastRunAt               string         `json:"last_run_at"`
+	LastSuccessAt           string         `json:"last_success_at"`
+	LastError               string         `json:"last_error"`
+	TotalRuns               int            `json:"total_runs"`
+	TotalMismatches         int            `json:"total_mismatches"`
+	TotalRepairs            int            `json:"total_repairs"`
+	UnknownBrokerOrders     int            `json:"unknown_broker_orders"`
+	LocalMissingAtBroker    int            `json:"local_missing_at_broker"`
+	FillMismatches          int            `json:"fill_mismatches"`
+	ImportedOrders          int            `json:"imported_orders"`
+	ResolvedOrders          int            `json:"resolved_orders"`
+	TotalInferredOutcomes   int            `json:"total_inferred_outcomes"`
+	TotalUnresolvedOutcomes int            `json:"total_unresolved_outcomes"`
+	TrackedOrders           int            `json:"tracked_orders"`
+	ActiveLocalOrders       int            `json:"active_local_orders"`
+	BrokerOpenOrders        int            `json:"broker_open_orders"`
+	CurrentPendingOrders    int            `json:"current_pending_orders"`
+	CurrentConfirmedOrders  int            `json:"current_confirmed_orders"`
+	CurrentInferredOrders   int            `json:"current_inferred_orders"`
+	CurrentUnresolvedOrders int            `json:"current_unresolved_orders"`
+	LastInferredAt          string         `json:"last_inferred_at"`
+	LastUnresolvedAt        string         `json:"last_unresolved_at"`
+	ConfidenceDegraded      bool           `json:"confidence_degraded"`
+	LastSummary             string         `json:"last_summary"`
+	LastIssues              []orders.Issue `json:"last_issues,omitempty"`
 }
 
 type OperatorPortfolioRiskSummary struct {
@@ -465,6 +477,9 @@ type OperatorStatusSummary struct {
 	OrderReconciliationTotalRuns    int                `json:"order_reconciliation_total_runs"`
 	OrderReconciliationMismatches   int                `json:"order_reconciliation_total_mismatches"`
 	OrderReconciliationRepairs      int                `json:"order_reconciliation_total_repairs"`
+	OrderReconciliationInferred     int                `json:"order_reconciliation_total_inferred"`
+	OrderReconciliationUnresolved   int                `json:"order_reconciliation_total_unresolved"`
+	OrderReconciliationDegraded     bool               `json:"order_reconciliation_confidence_degraded"`
 	OrderReconciliationSummary      string             `json:"order_reconciliation_summary"`
 	PositionReconciliationAvailable bool               `json:"position_reconciliation_available"`
 	PositionReconciliationStatus    string             `json:"position_reconciliation_status"`
@@ -715,25 +730,28 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		RestoredShadowPositions: restartRecovery.RestoredShadowPositions,
 	}
 	brokerTruthSummary := OperatorBrokerTruthSummary{
-		Available:           brokerTruth.Available,
-		Required:            brokerTruth.Required,
-		BrokerManaged:       brokerTruth.BrokerManaged,
-		Verified:            brokerTruth.Verified,
-		TradingBlocked:      brokerTruth.TradingBlocked,
-		AccountRequired:     brokerTruth.AccountRequired,
-		AccountVerified:     brokerTruth.AccountVerified,
-		OrdersRequired:      brokerTruth.OrdersRequired,
-		OrdersVerified:      brokerTruth.OrdersVerified,
-		PositionsRequired:   brokerTruth.PositionsRequired,
-		PositionsVerified:   brokerTruth.PositionsVerified,
-		MarketDataRequired:  brokerTruth.MarketDataRequired,
-		MarketDataVerified:  brokerTruth.MarketDataVerified,
-		AccountCapturedAt:   formatRFC3339(brokerTruth.AccountCapturedAt),
-		OrdersCheckedAt:     formatRFC3339(brokerTruth.OrdersCheckedAt),
-		PositionsCheckedAt:  formatRFC3339(brokerTruth.PositionsCheckedAt),
-		MarketDataCheckedAt: formatRFC3339(brokerTruth.MarketDataCheckedAt),
-		Message:             brokerTruth.Message,
-		BlockingReasons:     append([]string(nil), brokerTruth.BlockingReasons...),
+		Available:            brokerTruth.Available,
+		Required:             brokerTruth.Required,
+		BrokerManaged:        brokerTruth.BrokerManaged,
+		Verified:             brokerTruth.Verified,
+		TradingBlocked:       brokerTruth.TradingBlocked,
+		ConfidenceDegraded:   brokerTruth.ConfidenceDegraded,
+		AccountRequired:      brokerTruth.AccountRequired,
+		AccountVerified:      brokerTruth.AccountVerified,
+		OrdersRequired:       brokerTruth.OrdersRequired,
+		OrdersVerified:       brokerTruth.OrdersVerified,
+		PositionsRequired:    brokerTruth.PositionsRequired,
+		PositionsVerified:    brokerTruth.PositionsVerified,
+		MarketDataRequired:   brokerTruth.MarketDataRequired,
+		MarketDataVerified:   brokerTruth.MarketDataVerified,
+		AccountCapturedAt:    formatRFC3339(brokerTruth.AccountCapturedAt),
+		OrdersCheckedAt:      formatRFC3339(brokerTruth.OrdersCheckedAt),
+		PositionsCheckedAt:   formatRFC3339(brokerTruth.PositionsCheckedAt),
+		MarketDataCheckedAt:  formatRFC3339(brokerTruth.MarketDataCheckedAt),
+		InferredOrderCount:   brokerTruth.InferredOrderCount,
+		UnresolvedOrderCount: brokerTruth.UnresolvedOrderCount,
+		Message:              brokerTruth.Message,
+		BlockingReasons:      append([]string(nil), brokerTruth.BlockingReasons...),
 	}
 	deploymentValidationSummary := OperatorDeploymentValidationSummary{
 		Required:            deploymentValidation.Required,
@@ -770,23 +788,32 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 	orderReconSummary := OperatorOrderReconciliationSummary{}
 	if orderRecon != nil {
 		orderReconSummary = OperatorOrderReconciliationSummary{
-			Available:            true,
-			LastRunAt:            formatRFC3339(orderRecon.LastRunAt),
-			LastSuccessAt:        formatRFC3339(orderRecon.LastSuccessAt),
-			LastError:            orderRecon.LastError,
-			TotalRuns:            orderRecon.TotalRuns,
-			TotalMismatches:      orderRecon.TotalMismatches,
-			TotalRepairs:         orderRecon.TotalRepairs,
-			UnknownBrokerOrders:  orderRecon.UnknownBrokerOrders,
-			LocalMissingAtBroker: orderRecon.LocalMissingAtBroker,
-			FillMismatches:       orderRecon.FillMismatches,
-			ImportedOrders:       orderRecon.ImportedOrders,
-			ResolvedOrders:       orderRecon.ResolvedOrders,
-			TrackedOrders:        orderRecon.TrackedOrders,
-			ActiveLocalOrders:    orderRecon.ActiveLocalOrders,
-			BrokerOpenOrders:     orderRecon.BrokerOpenOrders,
-			LastSummary:          orderRecon.LastSummary,
-			LastIssues:           append([]orders.Issue(nil), orderRecon.LastIssues...),
+			Available:               true,
+			LastRunAt:               formatRFC3339(orderRecon.LastRunAt),
+			LastSuccessAt:           formatRFC3339(orderRecon.LastSuccessAt),
+			LastError:               orderRecon.LastError,
+			TotalRuns:               orderRecon.TotalRuns,
+			TotalMismatches:         orderRecon.TotalMismatches,
+			TotalRepairs:            orderRecon.TotalRepairs,
+			UnknownBrokerOrders:     orderRecon.UnknownBrokerOrders,
+			LocalMissingAtBroker:    orderRecon.LocalMissingAtBroker,
+			FillMismatches:          orderRecon.FillMismatches,
+			ImportedOrders:          orderRecon.ImportedOrders,
+			ResolvedOrders:          orderRecon.ResolvedOrders,
+			TotalInferredOutcomes:   orderRecon.TotalInferredOutcomes,
+			TotalUnresolvedOutcomes: orderRecon.TotalUnresolvedOutcomes,
+			TrackedOrders:           orderRecon.TrackedOrders,
+			ActiveLocalOrders:       orderRecon.ActiveLocalOrders,
+			BrokerOpenOrders:        orderRecon.BrokerOpenOrders,
+			CurrentPendingOrders:    orderRecon.CurrentPendingOrders,
+			CurrentConfirmedOrders:  orderRecon.CurrentConfirmedOrders,
+			CurrentInferredOrders:   orderRecon.CurrentInferredOrders,
+			CurrentUnresolvedOrders: orderRecon.CurrentUnresolvedOrders,
+			LastInferredAt:          formatRFC3339(orderRecon.LastInferredAt),
+			LastUnresolvedAt:        formatRFC3339(orderRecon.LastUnresolvedAt),
+			ConfidenceDegraded:      orderRecon.ConfidenceDegraded,
+			LastSummary:             orderRecon.LastSummary,
+			LastIssues:              append([]orders.Issue(nil), orderRecon.LastIssues...),
 		}
 	}
 
@@ -1018,6 +1045,9 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		OrderReconciliationTotalRuns:    orderReconSummary.TotalRuns,
 		OrderReconciliationMismatches:   orderReconSummary.TotalMismatches,
 		OrderReconciliationRepairs:      orderReconSummary.TotalRepairs,
+		OrderReconciliationInferred:     orderReconSummary.TotalInferredOutcomes,
+		OrderReconciliationUnresolved:   orderReconSummary.TotalUnresolvedOutcomes,
+		OrderReconciliationDegraded:     orderReconSummary.ConfidenceDegraded,
 		OrderReconciliationSummary:      orderReconSummary.LastSummary,
 		PositionReconciliationAvailable: positionReconSummary.Available,
 		PositionReconciliationStatus:    string(positionReconSummary.Status),

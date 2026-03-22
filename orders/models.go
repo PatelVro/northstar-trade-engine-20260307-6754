@@ -23,6 +23,25 @@ func (s Status) Terminal() bool {
 	}
 }
 
+type TruthAuthority string
+
+const (
+	TruthAuthorityLocalPending           TruthAuthority = "local_pending"
+	TruthAuthorityBrokerConfirmed        TruthAuthority = "broker_confirmed"
+	TruthAuthorityReconciliationInferred TruthAuthority = "reconciliation_inferred"
+	TruthAuthorityUnresolved             TruthAuthority = "unresolved"
+)
+
+type TruthConfidence string
+
+const (
+	TruthConfidencePending    TruthConfidence = "pending"
+	TruthConfidenceConfirmed  TruthConfidence = "confirmed"
+	TruthConfidenceHigh       TruthConfidence = "high"
+	TruthConfidenceMedium     TruthConfidence = "medium"
+	TruthConfidenceUnresolved TruthConfidence = "unresolved"
+)
+
 type Intent string
 
 const (
@@ -38,23 +57,27 @@ const (
 )
 
 type Record struct {
-	LocalID         string    `json:"local_id"`
-	BrokerOrderID   string    `json:"broker_order_id,omitempty"`
-	Intent          Intent    `json:"intent"`
-	Symbol          string    `json:"symbol"`
-	Side            string    `json:"side"`
-	PositionSide    string    `json:"position_side,omitempty"`
-	Status          Status    `json:"status"`
-	RawBrokerStatus string    `json:"raw_broker_status,omitempty"`
-	RequestedQty    float64   `json:"requested_qty"`
-	FilledQty       float64   `json:"filled_qty"`
-	RemainingQty    float64   `json:"remaining_qty"`
-	AvgFillPrice    float64   `json:"avg_fill_price,omitempty"`
-	Source          string    `json:"source"`
-	LastMessage     string    `json:"last_message,omitempty"`
-	SubmittedAt     time.Time `json:"submitted_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
-	LastSeenAt      time.Time `json:"last_seen_at,omitempty"`
+	LocalID         string          `json:"local_id"`
+	BrokerOrderID   string          `json:"broker_order_id,omitempty"`
+	Intent          Intent          `json:"intent"`
+	Symbol          string          `json:"symbol"`
+	Side            string          `json:"side"`
+	PositionSide    string          `json:"position_side,omitempty"`
+	Status          Status          `json:"status"`
+	RawBrokerStatus string          `json:"raw_broker_status,omitempty"`
+	RequestedQty    float64         `json:"requested_qty"`
+	FilledQty       float64         `json:"filled_qty"`
+	RemainingQty    float64         `json:"remaining_qty"`
+	AvgFillPrice    float64         `json:"avg_fill_price,omitempty"`
+	Source          string          `json:"source"`
+	LastMessage     string          `json:"last_message,omitempty"`
+	TruthAuthority  TruthAuthority  `json:"truth_authority,omitempty"`
+	TruthConfidence TruthConfidence `json:"truth_confidence,omitempty"`
+	TruthReason     string          `json:"truth_reason,omitempty"`
+	NeedsReview     bool            `json:"needs_review,omitempty"`
+	SubmittedAt     time.Time       `json:"submitted_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
+	LastSeenAt      time.Time       `json:"last_seen_at,omitempty"`
 }
 
 type BrokerOrder struct {
@@ -87,11 +110,14 @@ const (
 )
 
 type Issue struct {
-	Type          IssueType `json:"type"`
-	LocalID       string    `json:"local_id,omitempty"`
-	BrokerOrderID string    `json:"broker_order_id,omitempty"`
-	Message       string    `json:"message"`
-	Repaired      bool      `json:"repaired"`
+	Type          IssueType       `json:"type"`
+	LocalID       string          `json:"local_id,omitempty"`
+	BrokerOrderID string          `json:"broker_order_id,omitempty"`
+	Message       string          `json:"message"`
+	Repaired      bool            `json:"repaired"`
+	Authority     TruthAuthority  `json:"authority,omitempty"`
+	Confidence    TruthConfidence `json:"confidence,omitempty"`
+	NeedsReview   bool            `json:"needs_review,omitempty"`
 }
 
 type ReconciliationResult struct {
@@ -106,27 +132,40 @@ type ReconciliationResult struct {
 	FillMismatches       int       `json:"fill_mismatches"`
 	ImportedOrders       int       `json:"imported_orders"`
 	ResolvedOrders       int       `json:"resolved_orders"`
+	InferredOutcomes     int       `json:"inferred_outcomes"`
+	UnresolvedOutcomes   int       `json:"unresolved_outcomes"`
+	NeedsReview          bool      `json:"needs_review"`
+	TradingBlocked       bool      `json:"trading_blocked"`
 	Summary              string    `json:"summary"`
 	Issues               []Issue   `json:"issues,omitempty"`
 }
 
 type Summary struct {
-	LastRunAt            time.Time `json:"last_run_at"`
-	LastSuccessAt        time.Time `json:"last_success_at"`
-	LastError            string    `json:"last_error,omitempty"`
-	TotalRuns            int       `json:"total_runs"`
-	TotalMismatches      int       `json:"total_mismatches"`
-	TotalRepairs         int       `json:"total_repairs"`
-	UnknownBrokerOrders  int       `json:"unknown_broker_orders"`
-	LocalMissingAtBroker int       `json:"local_missing_at_broker"`
-	FillMismatches       int       `json:"fill_mismatches"`
-	ImportedOrders       int       `json:"imported_orders"`
-	ResolvedOrders       int       `json:"resolved_orders"`
-	TrackedOrders        int       `json:"tracked_orders"`
-	ActiveLocalOrders    int       `json:"active_local_orders"`
-	BrokerOpenOrders     int       `json:"broker_open_orders"`
-	LastSummary          string    `json:"last_summary,omitempty"`
-	LastIssues           []Issue   `json:"last_issues,omitempty"`
+	LastRunAt               time.Time `json:"last_run_at"`
+	LastSuccessAt           time.Time `json:"last_success_at"`
+	LastError               string    `json:"last_error,omitempty"`
+	TotalRuns               int       `json:"total_runs"`
+	TotalMismatches         int       `json:"total_mismatches"`
+	TotalRepairs            int       `json:"total_repairs"`
+	UnknownBrokerOrders     int       `json:"unknown_broker_orders"`
+	LocalMissingAtBroker    int       `json:"local_missing_at_broker"`
+	FillMismatches          int       `json:"fill_mismatches"`
+	ImportedOrders          int       `json:"imported_orders"`
+	ResolvedOrders          int       `json:"resolved_orders"`
+	TotalInferredOutcomes   int       `json:"total_inferred_outcomes"`
+	TotalUnresolvedOutcomes int       `json:"total_unresolved_outcomes"`
+	TrackedOrders           int       `json:"tracked_orders"`
+	ActiveLocalOrders       int       `json:"active_local_orders"`
+	BrokerOpenOrders        int       `json:"broker_open_orders"`
+	CurrentPendingOrders    int       `json:"current_pending_orders"`
+	CurrentConfirmedOrders  int       `json:"current_confirmed_orders"`
+	CurrentInferredOrders   int       `json:"current_inferred_orders"`
+	CurrentUnresolvedOrders int       `json:"current_unresolved_orders"`
+	LastInferredAt          time.Time `json:"last_inferred_at,omitempty"`
+	LastUnresolvedAt        time.Time `json:"last_unresolved_at,omitempty"`
+	ConfidenceDegraded      bool      `json:"confidence_degraded"`
+	LastSummary             string    `json:"last_summary,omitempty"`
+	LastIssues              []Issue   `json:"last_issues,omitempty"`
 }
 
 const storeStateVersion = 1

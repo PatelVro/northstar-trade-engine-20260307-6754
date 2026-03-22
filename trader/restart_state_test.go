@@ -225,3 +225,40 @@ func TestRestoreDurableRuntimeStateFailsSafeOnCorruptFile(t *testing.T) {
 		t.Fatalf("expected readiness failure for corrupt state, got %+v", check)
 	}
 }
+
+func TestDurableRuntimeStatePreservesUnresolvedOrderTruth(t *testing.T) {
+	cleanup := withTempWorkingDir(t)
+	defer cleanup()
+
+	cfg := AutoTraderConfig{ID: "unresolved_restart", Name: "Unresolved Restart", Mode: "paper", Broker: "ibkr", Exchange: "ibkr", StrategyMode: "momentum_only"}
+	trader := &restartStateTestTrader{orderStore: orders.NewStore()}
+	at := newRestartStateTestAutoTrader(cfg, trader)
+	localID := trader.orderStore.RegisterSubmitted(orders.IntentEntryLong, "AAPL", "BUY", "long", 10, time.Now().Add(-time.Minute).UTC())
+	state := trader.orderStore.SnapshotState()
+	for idx := range state.Orders {
+		if state.Orders[idx].LocalID != localID {
+			continue
+		}
+		state.Orders[idx].Status = orders.StatusUnknown
+		state.Orders[idx].TruthAuthority = orders.TruthAuthorityUnresolved
+		state.Orders[idx].TruthConfidence = orders.TruthConfidenceUnresolved
+		state.Orders[idx].TruthReason = "execution truth unresolved pending broker follow-up"
+		state.Orders[idx].NeedsReview = true
+	}
+	if err := trader.orderStore.RestoreState(state); err != nil {
+		t.Fatalf("RestoreState failed: %v", err)
+	}
+	at.persistDurableRuntimeState("test_unresolved_truth")
+
+	restoredTrader := &restartStateTestTrader{orderStore: orders.NewStore()}
+	restored := newRestartStateTestAutoTrader(cfg, restoredTrader)
+	restored.restoreDurableRuntimeState()
+
+	record := restoredTrader.orderStore.Lookup(localID, "")
+	if record == nil {
+		t.Fatalf("expected unresolved order to restore")
+	}
+	if record.TruthAuthority != orders.TruthAuthorityUnresolved || record.TruthConfidence != orders.TruthConfidenceUnresolved || !record.NeedsReview {
+		t.Fatalf("expected unresolved truth metadata after restore, got %+v", record)
+	}
+}

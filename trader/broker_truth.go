@@ -7,25 +7,28 @@ import (
 )
 
 type brokerTruthSummary struct {
-	Available           bool
-	Required            bool
-	BrokerManaged       bool
-	Verified            bool
-	TradingBlocked      bool
-	AccountRequired     bool
-	AccountVerified     bool
-	OrdersRequired      bool
-	OrdersVerified      bool
-	PositionsRequired   bool
-	PositionsVerified   bool
-	MarketDataRequired  bool
-	MarketDataVerified  bool
-	AccountCapturedAt   time.Time
-	OrdersCheckedAt     time.Time
-	PositionsCheckedAt  time.Time
-	MarketDataCheckedAt time.Time
-	Message             string
-	BlockingReasons     []string
+	Available            bool
+	Required             bool
+	BrokerManaged        bool
+	Verified             bool
+	TradingBlocked       bool
+	ConfidenceDegraded   bool
+	AccountRequired      bool
+	AccountVerified      bool
+	OrdersRequired       bool
+	OrdersVerified       bool
+	PositionsRequired    bool
+	PositionsVerified    bool
+	MarketDataRequired   bool
+	MarketDataVerified   bool
+	AccountCapturedAt    time.Time
+	OrdersCheckedAt      time.Time
+	PositionsCheckedAt   time.Time
+	MarketDataCheckedAt  time.Time
+	InferredOrderCount   int
+	UnresolvedOrderCount int
+	Message              string
+	BlockingReasons      []string
 }
 
 func (at *AutoTrader) requiresHardBrokerTruthGate() bool {
@@ -138,6 +141,8 @@ func (at *AutoTrader) currentBrokerTruthSummary() brokerTruthSummary {
 		summary.OrdersRequired = orderRecon != nil
 		if summary.OrdersRequired {
 			summary.OrdersCheckedAt = orderRecon.LastRunAt
+			summary.InferredOrderCount = orderRecon.CurrentInferredOrders
+			summary.UnresolvedOrderCount = orderRecon.CurrentUnresolvedOrders
 			lastError := strings.TrimSpace(orderRecon.LastError)
 			switch {
 			case orderRecon.LastRunAt.IsZero():
@@ -146,8 +151,13 @@ func (at *AutoTrader) currentBrokerTruthSummary() brokerTruthSummary {
 				blocking = append(blocking, "broker open-order truth is stale")
 			case lastError != "":
 				blocking = append(blocking, "broker open-order truth is degraded: "+lastError)
+			case orderRecon.CurrentUnresolvedOrders > 0:
+				blocking = append(blocking, "broker order truth remains unresolved for one or more broker-missing orders")
 			default:
 				summary.OrdersVerified = true
+				if orderRecon.CurrentInferredOrders > 0 {
+					summary.ConfidenceDegraded = true
+				}
 			}
 		}
 
@@ -192,6 +202,10 @@ func (at *AutoTrader) currentBrokerTruthSummary() brokerTruthSummary {
 	}
 
 	summary.Verified = true
+	if summary.ConfidenceDegraded && summary.InferredOrderCount > 0 {
+		summary.Message = "broker truth verified with reconciliation-inferred execution outcomes; operator review recommended"
+		return summary
+	}
 	summary.Message = "broker/account/order/position/data truth verified for active mode"
 	return summary
 }

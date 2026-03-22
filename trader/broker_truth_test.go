@@ -117,9 +117,10 @@ func TestBrokerTruthGateAllowsPaperIBKRWithFreshTruth(t *testing.T) {
 	now := time.Now()
 	trader := &brokerTruthTestTrader{
 		orderSummary: orders.Summary{
-			LastRunAt:     now,
-			LastSuccessAt: now,
-			LastSummary:   "order reconciliation clean",
+			LastRunAt:              now,
+			LastSuccessAt:          now,
+			LastSummary:            "order reconciliation clean",
+			CurrentConfirmedOrders: 1,
 		},
 	}
 
@@ -153,6 +154,103 @@ func TestBrokerTruthGateAllowsPaperIBKRWithFreshTruth(t *testing.T) {
 	gate := at.currentTradingGateDecision(false, at.currentLatestAccountSummary())
 	if !gate.TradingAllowed || !gate.EntriesAllowed || !gate.ExitsAllowed {
 		t.Fatalf("expected fresh broker truth to allow trading, got %+v", gate)
+	}
+}
+
+func TestBrokerTruthGateBlocksPaperIBKRWhenOrderTruthIsUnresolved(t *testing.T) {
+	now := time.Now()
+	trader := &brokerTruthTestTrader{
+		orderSummary: orders.Summary{
+			LastRunAt:               now,
+			LastSuccessAt:           now,
+			LastSummary:             "order reconciliation handled 1 mismatch(es): local_missing=1 unknown_broker=0 fill_mismatches=0 inferred=0 unresolved=1",
+			CurrentUnresolvedOrders: 1,
+			ConfidenceDegraded:      true,
+		},
+	}
+
+	at := &AutoTrader{
+		id:       "broker_truth_unresolved",
+		name:     "Broker Truth Unresolved",
+		exchange: "ibkr",
+		trader:   trader,
+		config: AutoTraderConfig{
+			Mode:           "paper",
+			Broker:         "ibkr",
+			StrategyMode:   "momentum_only",
+			ScanInterval:   5 * time.Minute,
+			InitialBalance: 100000,
+		},
+		initialBalance: 100000,
+		isRunning:      true,
+	}
+	at.initializeBrokerRuntimeState()
+	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", TradingAllowed: true, CheckedAt: now})
+	at.positionReconSummary = freshPositionReconSummary(now)
+	at.setRuntimeAccountSnapshot(AccountSummary{
+		AccountingVersion:      accountingVersion,
+		StrategyInitialCapital: 100000,
+		StrategyEquity:         100000,
+		AccountEquity:          100000,
+		AvailableBalance:       100000,
+		PositionCount:          0,
+	}, []map[string]interface{}{})
+
+	gate := at.currentTradingGateDecision(false, at.currentLatestAccountSummary())
+	if gate.TradingAllowed {
+		t.Fatalf("expected unresolved order truth to block trading, got %+v", gate)
+	}
+	if !strings.Contains(strings.ToLower(gate.BlockReason), "unresolved") {
+		t.Fatalf("expected unresolved broker-truth block reason, got %q", gate.BlockReason)
+	}
+}
+
+func TestBrokerTruthSummaryMarksInferredOrderTruthAsDegraded(t *testing.T) {
+	now := time.Now()
+	trader := &brokerTruthTestTrader{
+		orderSummary: orders.Summary{
+			LastRunAt:              now,
+			LastSuccessAt:          now,
+			LastSummary:            "order reconciliation handled 1 mismatch(es): local_missing=1 unknown_broker=0 fill_mismatches=0 inferred=1 unresolved=0",
+			CurrentInferredOrders:  1,
+			ConfidenceDegraded:     true,
+			CurrentConfirmedOrders: 1,
+		},
+	}
+
+	at := &AutoTrader{
+		id:       "broker_truth_inferred",
+		name:     "Broker Truth Inferred",
+		exchange: "ibkr",
+		trader:   trader,
+		config: AutoTraderConfig{
+			Mode:           "paper",
+			Broker:         "ibkr",
+			StrategyMode:   "momentum_only",
+			ScanInterval:   5 * time.Minute,
+			InitialBalance: 100000,
+		},
+		initialBalance: 100000,
+		isRunning:      true,
+	}
+	at.initializeBrokerRuntimeState()
+	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", TradingAllowed: true, CheckedAt: now})
+	at.positionReconSummary = freshPositionReconSummary(now)
+	at.setRuntimeAccountSnapshot(AccountSummary{
+		AccountingVersion:      accountingVersion,
+		StrategyInitialCapital: 100000,
+		StrategyEquity:         100000,
+		AccountEquity:          100000,
+		AvailableBalance:       100000,
+		PositionCount:          1,
+	}, []map[string]interface{}{})
+
+	summary := at.currentBrokerTruthSummary()
+	if summary.TradingBlocked {
+		t.Fatalf("expected inferred order truth not to hard-block trading, got %+v", summary)
+	}
+	if !summary.ConfidenceDegraded || summary.InferredOrderCount != 1 {
+		t.Fatalf("expected degraded inferred broker truth summary, got %+v", summary)
 	}
 }
 

@@ -203,18 +203,25 @@ func TestGetOperatorStatus_LivePromotionFailureAppearsInTradingGate(t *testing.T
 func TestGetOperatorStatus_IncludesOrderReconciliationSummary(t *testing.T) {
 	reporter := &operatorStatusOrderReporter{
 		summary: orders.Summary{
-			LastRunAt:            time.Now().Add(-time.Minute),
-			LastSuccessAt:        time.Now().Add(-time.Minute),
-			TotalRuns:            5,
-			TotalMismatches:      2,
-			TotalRepairs:         2,
-			UnknownBrokerOrders:  1,
-			LocalMissingAtBroker: 1,
-			FillMismatches:       0,
-			TrackedOrders:        4,
-			ActiveLocalOrders:    1,
-			BrokerOpenOrders:     1,
-			LastSummary:          "order reconciliation repaired 2 mismatch(es)",
+			LastRunAt:               time.Now().Add(-time.Minute),
+			LastSuccessAt:           time.Now().Add(-time.Minute),
+			TotalRuns:               5,
+			TotalMismatches:         2,
+			TotalRepairs:            2,
+			UnknownBrokerOrders:     1,
+			LocalMissingAtBroker:    1,
+			FillMismatches:          0,
+			TotalInferredOutcomes:   1,
+			TotalUnresolvedOutcomes: 0,
+			TrackedOrders:           4,
+			ActiveLocalOrders:       1,
+			BrokerOpenOrders:        1,
+			CurrentPendingOrders:    1,
+			CurrentConfirmedOrders:  2,
+			CurrentInferredOrders:   1,
+			CurrentUnresolvedOrders: 0,
+			ConfidenceDegraded:      true,
+			LastSummary:             "order reconciliation handled 2 mismatch(es): local_missing=1 unknown_broker=1 fill_mismatches=0 inferred=1 unresolved=0",
 		},
 	}
 
@@ -252,6 +259,9 @@ func TestGetOperatorStatus_IncludesOrderReconciliationSummary(t *testing.T) {
 	}
 	if status.OrderReconciliation.TotalMismatches != 2 {
 		t.Fatalf("expected reconciliation mismatches, got %d", status.OrderReconciliation.TotalMismatches)
+	}
+	if status.OrderReconciliation.TotalInferredOutcomes != 1 || !status.OrderReconciliation.ConfidenceDegraded {
+		t.Fatalf("expected inferred/degraded reconciliation summary, got %+v", status.OrderReconciliation)
 	}
 	if status.OrderReconciliationSummary == "" {
 		t.Fatalf("expected compatibility order reconciliation summary")

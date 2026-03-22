@@ -15,6 +15,16 @@ const (
 	issueCap                          = 12
 )
 
+type missingBrokerResolution struct {
+	Status      Status
+	FilledQty   float64
+	Authority   TruthAuthority
+	Confidence  TruthConfidence
+	Message     string
+	Repaired    bool
+	NeedsReview bool
+}
+
 func (s *Store) Reconcile(openOrders []BrokerOrder, positions []PositionSnapshot, now time.Time) ReconciliationResult {
 	s.mu.Lock()
 
@@ -48,6 +58,8 @@ func (s *Store) Reconcile(openOrders []BrokerOrder, positions []PositionSnapshot
 	unknownBroker := 0
 	localMissing := 0
 	fillMismatches := 0
+	inferredOutcomes := 0
+	unresolvedOutcomes := 0
 
 	localRecords := make([]*Record, 0, len(s.ordersByLocal))
 	for _, record := range s.ordersByLocal {
@@ -93,6 +105,8 @@ func (s *Store) Reconcile(openOrders []BrokerOrder, positions []PositionSnapshot
 					BrokerOrderID: brokerOrder.OrderID,
 					Message:       fmt.Sprintf("matched local order %s to broker order %s", record.LocalID, brokerOrder.OrderID),
 					Repaired:      true,
+					Authority:     TruthAuthorityBrokerConfirmed,
+					Confidence:    TruthConfidenceConfirmed,
 				})
 			}
 		}
@@ -109,6 +123,8 @@ func (s *Store) Reconcile(openOrders []BrokerOrder, positions []PositionSnapshot
 					BrokerOrderID: brokerOrder.OrderID,
 					Message:       fmt.Sprintf("broker filled quantity %.4f differed from local %.4f; repaired from broker truth", brokerOrder.FilledQty, record.FilledQty),
 					Repaired:      true,
+					Authority:     TruthAuthorityBrokerConfirmed,
+					Confidence:    TruthConfidenceConfirmed,
 				})
 			}
 			if changed {
@@ -128,30 +144,45 @@ func (s *Store) Reconcile(openOrders []BrokerOrder, positions []PositionSnapshot
 			continue
 		}
 
-		repairState, repairedQty, repairedMsg := inferMissingBrokerState(record, positions, now)
-		if repairState == "" {
+		resolution := inferMissingBrokerState(record, positions, now)
+		if resolution.Status == "" {
 			continue
 		}
 		localMissing++
 		mismatches++
-		repairs++
 		previousStatus := record.Status
-		record.Status = repairState
-		record.FilledQty = repairedQty
-		record.RemainingQty = math.Max(record.RequestedQty-repairedQty, 0)
-		record.LastMessage = repairedMsg
+		record.Status = resolution.Status
+		record.FilledQty = resolution.FilledQty
+		record.RemainingQty = math.Max(record.RequestedQty-resolution.FilledQty, 0)
+		record.LastMessage = resolution.Message
+		record.TruthAuthority = resolution.Authority
+		record.TruthConfidence = resolution.Confidence
+		record.TruthReason = resolution.Message
+		record.NeedsReview = resolution.NeedsReview
 		record.UpdatedAt = now
 		record.LastSeenAt = now
-		if repairState.Terminal() {
+		switch resolution.Authority {
+		case TruthAuthorityReconciliationInferred:
+			inferredOutcomes++
+		case TruthAuthorityUnresolved:
+			unresolvedOutcomes++
+		}
+		if resolution.Repaired {
+			repairs++
+		}
+		if resolution.Status.Terminal() {
 			resolvedOrders++
 		}
-		events = append(events, newEvent(eventTypeForStatus(record.Status, false), *record, previousStatus, record.Status, repairedMsg, now))
+		events = append(events, newEvent(eventTypeForResolution(*record, resolution, false), *record, previousStatus, record.Status, resolution.Message, now))
 		appendIssue(&result.Issues, Issue{
 			Type:          IssueLocalMissingAtBroker,
 			LocalID:       record.LocalID,
 			BrokerOrderID: record.BrokerOrderID,
-			Message:       repairedMsg,
-			Repaired:      true,
+			Message:       resolution.Message,
+			Repaired:      resolution.Repaired,
+			Authority:     resolution.Authority,
+			Confidence:    resolution.Confidence,
+			NeedsReview:   resolution.NeedsReview,
 		})
 	}
 
@@ -180,6 +211,9 @@ func (s *Store) Reconcile(openOrders []BrokerOrder, positions []PositionSnapshot
 			AvgFillPrice:    brokerOrder.AvgFillPrice,
 			Source:          "broker_discovered",
 			LastMessage:     "discovered active broker order with no local record",
+			TruthAuthority:  TruthAuthorityBrokerConfirmed,
+			TruthConfidence: TruthConfidenceConfirmed,
+			TruthReason:     "discovered active broker order directly from broker",
 			SubmittedAt:     now,
 			UpdatedAt:       now,
 			LastSeenAt:      now,
@@ -195,6 +229,8 @@ func (s *Store) Reconcile(openOrders []BrokerOrder, positions []PositionSnapshot
 			BrokerOrderID: brokerOrder.OrderID,
 			Message:       fmt.Sprintf("imported unknown broker order %s for %s", brokerOrder.OrderID, brokerOrder.Symbol),
 			Repaired:      true,
+			Authority:     TruthAuthorityBrokerConfirmed,
+			Confidence:    TruthConfidenceConfirmed,
 		})
 	}
 
@@ -205,6 +241,10 @@ func (s *Store) Reconcile(openOrders []BrokerOrder, positions []PositionSnapshot
 	result.FillMismatches = fillMismatches
 	result.ImportedOrders = importedOrders
 	result.ResolvedOrders = resolvedOrders
+	result.InferredOutcomes = inferredOutcomes
+	result.UnresolvedOutcomes = unresolvedOutcomes
+	result.NeedsReview = inferredOutcomes > 0 || unresolvedOutcomes > 0
+	result.TradingBlocked = unresolvedOutcomes > 0
 	s.refreshSummaryCountsLocked(len(openOrders))
 	result.ActiveLocalOrders = s.summary.ActiveLocalOrders
 	result.Summary = buildReconciliationSummary(result)
@@ -217,6 +257,14 @@ func (s *Store) Reconcile(openOrders []BrokerOrder, positions []PositionSnapshot
 	s.summary.FillMismatches += fillMismatches
 	s.summary.ImportedOrders += importedOrders
 	s.summary.ResolvedOrders += resolvedOrders
+	s.summary.TotalInferredOutcomes += inferredOutcomes
+	s.summary.TotalUnresolvedOutcomes += unresolvedOutcomes
+	if inferredOutcomes > 0 {
+		s.summary.LastInferredAt = now
+	}
+	if unresolvedOutcomes > 0 {
+		s.summary.LastUnresolvedAt = now
+	}
 	s.summary.LastSummary = result.Summary
 	s.summary.LastIssues = append([]Issue(nil), result.Issues...)
 	result.LocalOrders = len(s.ordersByLocal)
@@ -235,11 +283,13 @@ func buildReconciliationSummary(result ReconciliationResult) string {
 		return fmt.Sprintf("order reconciliation clean: %d active local / %d broker open", result.ActiveLocalOrders, result.BrokerOpenOrders)
 	}
 	return fmt.Sprintf(
-		"order reconciliation repaired %d mismatch(es): local_missing=%d unknown_broker=%d fill_mismatches=%d",
+		"order reconciliation handled %d mismatch(es): local_missing=%d unknown_broker=%d fill_mismatches=%d inferred=%d unresolved=%d",
 		result.Mismatches,
 		result.LocalMissingAtBroker,
 		result.UnknownBrokerOrders,
 		result.FillMismatches,
+		result.InferredOutcomes,
+		result.UnresolvedOutcomes,
 	)
 }
 
@@ -308,44 +358,136 @@ func applyBrokerTruth(record *Record, brokerOrder BrokerOrder, now time.Time) (b
 		record.AvgFillPrice = brokerOrder.AvgFillPrice
 		changed = true
 	}
+	if record.TruthAuthority != TruthAuthorityBrokerConfirmed {
+		record.TruthAuthority = TruthAuthorityBrokerConfirmed
+		changed = true
+	}
+	if record.TruthConfidence != TruthConfidenceConfirmed {
+		record.TruthConfidence = TruthConfidenceConfirmed
+		changed = true
+	}
+	reason := firstNonEmpty(fmt.Sprintf("reconciled from broker status %s", brokerOrder.RawStatus), "reconciled from broker truth")
+	if record.TruthReason != reason {
+		record.TruthReason = reason
+		changed = true
+	}
+	if record.NeedsReview {
+		record.NeedsReview = false
+		changed = true
+	}
 	record.LastSeenAt = now
 	record.UpdatedAt = now
-	record.LastMessage = fmt.Sprintf("reconciled from broker status %s", brokerOrder.RawStatus)
+	record.LastMessage = reason
 	return changed, fillMismatch
 }
 
-func inferMissingBrokerState(record *Record, positions []PositionSnapshot, now time.Time) (Status, float64, string) {
+func inferMissingBrokerState(record *Record, positions []PositionSnapshot, now time.Time) missingBrokerResolution {
 	if missingBrokerInferenceStillWaiting(record, now) {
-		return "", 0, ""
+		return missingBrokerResolution{}
 	}
 	positionQty := quantityForIntentPosition(record, positions)
 	switch record.Intent {
 	case IntentEntryLong, IntentEntryShort:
 		if positionQty >= record.RequestedQty*(1-qtyTolerance) && record.RequestedQty > 0 {
-			return StatusFilled, record.RequestedQty, fmt.Sprintf("local order %s missing at broker active list; position evidence indicates fill", record.LocalID)
+			return missingBrokerResolution{
+				Status:      StatusFilled,
+				FilledQty:   record.RequestedQty,
+				Authority:   TruthAuthorityReconciliationInferred,
+				Confidence:  TruthConfidenceHigh,
+				Message:     fmt.Sprintf("local order %s missing at broker active list; position evidence indicates fill", record.LocalID),
+				Repaired:    true,
+				NeedsReview: true,
+			}
 		}
 		if positionQty > 0 {
 			filled := math.Min(positionQty, record.RequestedQty)
-			return StatusPartiallyFilled, filled, fmt.Sprintf("local order %s missing at broker active list; position evidence indicates partial fill %.4f", record.LocalID, filled)
+			return missingBrokerResolution{
+				Status:      StatusPartiallyFilled,
+				FilledQty:   filled,
+				Authority:   TruthAuthorityReconciliationInferred,
+				Confidence:  TruthConfidenceMedium,
+				Message:     fmt.Sprintf("local order %s missing at broker active list; position evidence indicates partial fill %.4f", record.LocalID, filled),
+				Repaired:    true,
+				NeedsReview: true,
+			}
 		}
-		return StatusCancelled, 0, fmt.Sprintf("local order %s missing at broker active list with no fill evidence; marked cancelled", record.LocalID)
+		return missingBrokerResolution{
+			Status:      StatusUnknown,
+			Authority:   TruthAuthorityUnresolved,
+			Confidence:  TruthConfidenceUnresolved,
+			Message:     fmt.Sprintf("local order %s missing at broker active list with no fill evidence; execution truth remains unresolved", record.LocalID),
+			Repaired:    false,
+			NeedsReview: true,
+		}
 	case IntentExitLong, IntentExitShort:
 		if positionQty <= qtyTolerance {
-			return StatusFilled, record.RequestedQty, fmt.Sprintf("exit order %s missing at broker active list; position closed", record.LocalID)
+			return missingBrokerResolution{
+				Status:      StatusFilled,
+				FilledQty:   record.RequestedQty,
+				Authority:   TruthAuthorityReconciliationInferred,
+				Confidence:  TruthConfidenceHigh,
+				Message:     fmt.Sprintf("exit order %s missing at broker active list; position closed", record.LocalID),
+				Repaired:    true,
+				NeedsReview: true,
+			}
 		}
 		if record.RequestedQty > positionQty+qtyTolerance {
 			filled := math.Max(record.RequestedQty-positionQty, 0)
-			return StatusPartiallyFilled, filled, fmt.Sprintf("exit order %s missing at broker active list; remaining position indicates partial fill %.4f", record.LocalID, filled)
+			return missingBrokerResolution{
+				Status:      StatusPartiallyFilled,
+				FilledQty:   filled,
+				Authority:   TruthAuthorityReconciliationInferred,
+				Confidence:  TruthConfidenceMedium,
+				Message:     fmt.Sprintf("exit order %s missing at broker active list; remaining position indicates partial fill %.4f", record.LocalID, filled),
+				Repaired:    true,
+				NeedsReview: true,
+			}
 		}
-		return StatusCancelled, 0, fmt.Sprintf("exit order %s missing at broker active list with no close evidence; marked cancelled", record.LocalID)
+		return missingBrokerResolution{
+			Status:      StatusUnknown,
+			Authority:   TruthAuthorityUnresolved,
+			Confidence:  TruthConfidenceUnresolved,
+			Message:     fmt.Sprintf("exit order %s missing at broker active list with no close evidence; execution truth remains unresolved", record.LocalID),
+			Repaired:    false,
+			NeedsReview: true,
+		}
 	case IntentProtectiveStopLong, IntentProtectiveStopShort, IntentProtectiveTargetLong, IntentProtectiveTargetShort:
 		if positionQty <= qtyTolerance {
-			return StatusFilled, record.RequestedQty, fmt.Sprintf("protective order %s missing at broker active list; protected position closed", record.LocalID)
+			return missingBrokerResolution{
+				Status:      StatusFilled,
+				FilledQty:   record.RequestedQty,
+				Authority:   TruthAuthorityReconciliationInferred,
+				Confidence:  TruthConfidenceMedium,
+				Message:     fmt.Sprintf("protective order %s missing at broker active list; protected position closed", record.LocalID),
+				Repaired:    true,
+				NeedsReview: true,
+			}
 		}
-		return StatusCancelled, 0, fmt.Sprintf("protective order %s missing at broker active list while position remains; marked cancelled", record.LocalID)
+		return missingBrokerResolution{
+			Status:      StatusUnknown,
+			Authority:   TruthAuthorityUnresolved,
+			Confidence:  TruthConfidenceUnresolved,
+			Message:     fmt.Sprintf("protective order %s missing at broker active list while position remains; protection state is unresolved", record.LocalID),
+			Repaired:    false,
+			NeedsReview: true,
+		}
 	default:
-		return StatusCancelled, 0, fmt.Sprintf("order %s missing at broker active list; marked cancelled", record.LocalID)
+		return missingBrokerResolution{
+			Status:      StatusUnknown,
+			Authority:   TruthAuthorityUnresolved,
+			Confidence:  TruthConfidenceUnresolved,
+			Message:     fmt.Sprintf("order %s missing at broker active list; execution truth remains unresolved", record.LocalID),
+			Repaired:    false,
+			NeedsReview: true,
+		}
 	}
+}
+
+func eventTypeForResolution(record Record, resolution missingBrokerResolution, fillMismatch bool) EventType {
+	if resolution.Authority == TruthAuthorityUnresolved {
+		return EventUpdated
+	}
+	return eventTypeForStatus(record.Status, fillMismatch)
 }
 
 func missingBrokerInferenceStillWaiting(record *Record, now time.Time) bool {

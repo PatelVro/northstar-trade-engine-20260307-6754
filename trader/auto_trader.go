@@ -724,8 +724,10 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 	if err := at.initializeTradingUniverse(); err != nil {
 		return nil, err
 	}
-	if observerSetter, ok := trader.(interface{ SetOrderObserver(orders.Observer) }); ok && at.auditRecorder != nil {
-		observerSetter.SetOrderObserver(at.auditRecorder)
+	if observerSetter, ok := trader.(interface{ SetOrderObserver(orders.Observer) }); ok {
+		if observer := at.buildOrderObserver(); observer != nil {
+			observerSetter.SetOrderObserver(observer)
+		}
 	}
 	if orderLookup, ok := trader.(execution.OrderLookup); ok && at.executionManager != nil {
 		at.executionManager.SetOrderLookup(orderLookup)

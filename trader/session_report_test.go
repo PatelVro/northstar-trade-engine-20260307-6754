@@ -267,21 +267,26 @@ func TestPaperSessionTrackerCapturesUniverseSummary(t *testing.T) {
 func TestApplyPaperSessionOrderReconciliationUsesDeltas(t *testing.T) {
 	report := PaperSessionReport{}
 	start := &orders.Summary{
-		TotalRuns:            2,
-		TotalMismatches:      1,
-		TotalRepairs:         1,
-		UnknownBrokerOrders:  0,
-		LocalMissingAtBroker: 1,
-		FillMismatches:       0,
+		TotalRuns:               2,
+		TotalMismatches:         1,
+		TotalRepairs:            1,
+		UnknownBrokerOrders:     0,
+		LocalMissingAtBroker:    1,
+		FillMismatches:          0,
+		TotalInferredOutcomes:   0,
+		TotalUnresolvedOutcomes: 0,
 	}
 	end := &orders.Summary{
-		TotalRuns:            7,
-		TotalMismatches:      4,
-		TotalRepairs:         4,
-		UnknownBrokerOrders:  1,
-		LocalMissingAtBroker: 2,
-		FillMismatches:       1,
-		LastSummary:          "order reconciliation repaired 3 mismatch(es)",
+		TotalRuns:               7,
+		TotalMismatches:         4,
+		TotalRepairs:            4,
+		UnknownBrokerOrders:     1,
+		LocalMissingAtBroker:    2,
+		FillMismatches:          1,
+		TotalInferredOutcomes:   2,
+		TotalUnresolvedOutcomes: 1,
+		ConfidenceDegraded:      true,
+		LastSummary:             "order reconciliation handled 3 mismatch(es): local_missing=1 unknown_broker=1 fill_mismatches=1 inferred=2 unresolved=1",
 	}
 
 	applyPaperSessionOrderReconciliation(&report, start, end)
@@ -303,6 +308,9 @@ func TestApplyPaperSessionOrderReconciliationUsesDeltas(t *testing.T) {
 	}
 	if report.OrderReconciliationFillMismatch != 1 {
 		t.Fatalf("expected 1 fill mismatch delta, got %d", report.OrderReconciliationFillMismatch)
+	}
+	if report.OrderReconciliationInferred != 2 || report.OrderReconciliationUnresolved != 1 || !report.OrderReconciliationDegraded {
+		t.Fatalf("expected inferred/unresolved reconciliation deltas, got %+v", report)
 	}
 }
 

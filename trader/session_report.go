@@ -25,7 +25,7 @@ const (
 	SessionCompletionPartial   SessionCompletionStatus = "partial"
 )
 
-const sessionReportVersion = 12
+const sessionReportVersion = 13
 
 type SessionPortfolioRiskSnapshot struct {
 	EvaluatedAt time.Time             `json:"evaluated_at"`
@@ -132,6 +132,9 @@ type PaperSessionReport struct {
 	OrderReconciliationUnknownBroker  int                           `json:"order_reconciliation_unknown_broker_orders"`
 	OrderReconciliationLocalMissing   int                           `json:"order_reconciliation_local_missing_at_broker"`
 	OrderReconciliationFillMismatch   int                           `json:"order_reconciliation_fill_mismatches"`
+	OrderReconciliationInferred       int                           `json:"order_reconciliation_inferred_outcomes"`
+	OrderReconciliationUnresolved     int                           `json:"order_reconciliation_unresolved_outcomes"`
+	OrderReconciliationDegraded       bool                          `json:"order_reconciliation_confidence_degraded"`
 	OrderReconciliationSummary        string                        `json:"order_reconciliation_summary"`
 	PositionReconciliationRuns        int                           `json:"position_reconciliation_runs"`
 	PositionReconciliationIncidents   int                           `json:"position_reconciliation_incidents"`
@@ -1004,6 +1007,8 @@ func applyPaperSessionOrderReconciliation(report *PaperSessionReport, start, end
 	startUnknown := 0
 	startMissing := 0
 	startFillMismatch := 0
+	startInferred := 0
+	startUnresolved := 0
 	if start != nil {
 		startRuns = start.TotalRuns
 		startMismatches = start.TotalMismatches
@@ -1011,6 +1016,8 @@ func applyPaperSessionOrderReconciliation(report *PaperSessionReport, start, end
 		startUnknown = start.UnknownBrokerOrders
 		startMissing = start.LocalMissingAtBroker
 		startFillMismatch = start.FillMismatches
+		startInferred = start.TotalInferredOutcomes
+		startUnresolved = start.TotalUnresolvedOutcomes
 	}
 	report.OrderReconciliationRuns = maxInt(0, end.TotalRuns-startRuns)
 	report.OrderReconciliationMismatches = maxInt(0, end.TotalMismatches-startMismatches)
@@ -1018,6 +1025,9 @@ func applyPaperSessionOrderReconciliation(report *PaperSessionReport, start, end
 	report.OrderReconciliationUnknownBroker = maxInt(0, end.UnknownBrokerOrders-startUnknown)
 	report.OrderReconciliationLocalMissing = maxInt(0, end.LocalMissingAtBroker-startMissing)
 	report.OrderReconciliationFillMismatch = maxInt(0, end.FillMismatches-startFillMismatch)
+	report.OrderReconciliationInferred = maxInt(0, end.TotalInferredOutcomes-startInferred)
+	report.OrderReconciliationUnresolved = maxInt(0, end.TotalUnresolvedOutcomes-startUnresolved)
+	report.OrderReconciliationDegraded = end.ConfidenceDegraded
 	report.OrderReconciliationSummary = strings.TrimSpace(end.LastSummary)
 }
 
@@ -1069,6 +1079,9 @@ func classifyPaperSessionCompletion(report PaperSessionReport, hasStart, hasEnd,
 		return SessionCompletionDegraded
 	}
 	if report.PositionReconciliationIncidents > 0 {
+		return SessionCompletionDegraded
+	}
+	if report.OrderReconciliationUnresolved > 0 {
 		return SessionCompletionDegraded
 	}
 	if report.SessionHadOperationalIncident && report.CriticalIncidentCount > 0 {

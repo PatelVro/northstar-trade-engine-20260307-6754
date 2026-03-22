@@ -74,6 +74,10 @@ type OrderLifecycle struct {
 	AvgFillPrice    float64   `json:"avg_fill_price,omitempty"`
 	Source          string    `json:"source,omitempty"`
 	LastMessage     string    `json:"last_message,omitempty"`
+	TruthAuthority  string    `json:"truth_authority,omitempty"`
+	TruthConfidence string    `json:"truth_confidence,omitempty"`
+	TruthReason     string    `json:"truth_reason,omitempty"`
+	NeedsReview     bool      `json:"needs_review"`
 	SubmittedAt     time.Time `json:"submitted_at,omitempty"`
 	UpdatedAt       time.Time `json:"updated_at,omitempty"`
 	LastSeenAt      time.Time `json:"last_seen_at,omitempty"`

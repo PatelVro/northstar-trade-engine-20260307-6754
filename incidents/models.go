@@ -22,21 +22,23 @@ const (
 type Type string
 
 const (
-	TypeBrokerRuntimeDegraded        Type = "broker_runtime_degraded"
-	TypeBrokerRuntimeReconnectFailed Type = "broker_runtime_reconnect_failed"
-	TypeBrokerRuntimeReconcileFailed Type = "broker_runtime_reconciliation_failed"
-	TypeStartupReadinessFailed       Type = "startup_readiness_failed"
-	TypeLivePromotionFailed          Type = "live_promotion_failed"
-	TypeRiskSupervisorHalted         Type = "risk_supervisor_halted"
-	TypeDailyLossBreached            Type = "daily_loss_breached"
-	TypeDrawdownBreached             Type = "drawdown_breached"
-	TypeKillSwitchActivated          Type = "kill_switch_activated"
-	TypeExcessiveOrderRejects        Type = "excessive_order_rejects"
-	TypePositionReconciliationFailed Type = "position_reconciliation_failed"
-	TypePositionMismatchDetected     Type = "position_mismatch_detected"
-	TypeOrderReconciliationFailed    Type = "order_reconciliation_failed"
-	TypeSymbolDataQualityBlocked     Type = "symbol_data_quality_blocked"
-	TypeMarketDataValidationFailed   Type = "market_data_validation_failed"
+	TypeBrokerRuntimeDegraded                  Type = "broker_runtime_degraded"
+	TypeBrokerRuntimeReconnectFailed           Type = "broker_runtime_reconnect_failed"
+	TypeBrokerRuntimeReconcileFailed           Type = "broker_runtime_reconciliation_failed"
+	TypeStartupReadinessFailed                 Type = "startup_readiness_failed"
+	TypeLivePromotionFailed                    Type = "live_promotion_failed"
+	TypeRiskSupervisorHalted                   Type = "risk_supervisor_halted"
+	TypeDailyLossBreached                      Type = "daily_loss_breached"
+	TypeDrawdownBreached                       Type = "drawdown_breached"
+	TypeKillSwitchActivated                    Type = "kill_switch_activated"
+	TypeExcessiveOrderRejects                  Type = "excessive_order_rejects"
+	TypePositionReconciliationFailed           Type = "position_reconciliation_failed"
+	TypePositionMismatchDetected               Type = "position_mismatch_detected"
+	TypeOrderReconciliationFailed              Type = "order_reconciliation_failed"
+	TypeOrderReconciliationInferredExecution   Type = "order_reconciliation_inferred_execution"
+	TypeOrderReconciliationUnresolvedExecution Type = "order_reconciliation_unresolved_execution"
+	TypeSymbolDataQualityBlocked               Type = "symbol_data_quality_blocked"
+	TypeMarketDataValidationFailed             Type = "market_data_validation_failed"
 )
 
 type Incident struct {

@@ -439,12 +439,32 @@ Northstar no longer treats IBKR submit acknowledgement or disappearance from the
 - `acknowledged` means broker/open-order lifecycle has confirmed the order is working, but there is still no fill truth yet
 - `partially_filled` and `filled` only come from broker-confirmed lifecycle or later reconciliation evidence
 
+When reconciliation has to repair a broker-missing order from position evidence, Northstar now keeps that authority explicit instead of flattening it into ordinary broker-confirmed truth:
+
+- `broker_confirmed` means the lifecycle state came directly from broker-visible order truth
+- `reconciliation_inferred` means the lifecycle outcome was inferred later from position evidence and still requires operator awareness
+- `unresolved` means the broker-managed order disappeared and Northstar still does not have enough evidence to normalize the outcome safely
+
+Operator-facing impact:
+
+- `/api/status.order_reconciliation` now exposes current confirmed, inferred, pending, and unresolved counts
+- `/api/status.broker_truth` now shows when broker truth is verified but confidence is degraded by inferred outcomes
+- unresolved broker-missing outcomes open critical incidents/alerts and keep trading blocked through the broker-truth gate
+- inferred outcomes open warning incidents/alerts and remain visible in session reports and order audit records
+
 Protective orders are now also truth-driven:
 
 - Northstar does not claim protection is active just because an entry submit succeeded
 - if an entry is not yet filled, protection stays in a durable `pending` state
 - once lifecycle or reconciliation confirms fill quantity, Northstar submits only the protective quantity that is actually confirmed
 - after restart, unresolved pending protection is restored and trading stays blocked until reconciliation clears the uncertainty
+
+Operator checks when broker-managed order truth is degraded:
+
+1. Inspect `/api/status.order_reconciliation` for `current_inferred_orders` and `current_unresolved_orders`
+2. Review `output/audit/orders/<trader_id>/` to see whether the lifecycle truth was broker-confirmed or reconciliation-inferred
+3. If `current_unresolved_orders > 0`, do not resume normal entries until reconciliation clears the ambiguity
+4. If only inferred outcomes remain, keep trading supervised and confirm the broker lifecycle catches up before treating the result as fully broker-confirmed
 
 ## Equity strategy modes
 

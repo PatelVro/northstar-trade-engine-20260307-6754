@@ -78,6 +78,9 @@ func (s *Store) RestoreState(state StoreState) error {
 		record.Symbol = strings.ToUpper(strings.TrimSpace(record.Symbol))
 		record.Side = normalizeSide(record.Side)
 		record.PositionSide = normalizePositionSide(record.PositionSide)
+		record.TruthAuthority = normalizeTruthAuthority(record.TruthAuthority, record.Status, record.Source, record.BrokerOrderID, record.RawBrokerStatus, record.LastMessage)
+		record.TruthConfidence = normalizeTruthConfidence(record.TruthConfidence, record.TruthAuthority, record.LastMessage)
+		record.TruthReason = normalizeTruthReason(record.TruthReason, record.TruthAuthority, record.LastMessage)
 		record.SubmittedAt = normalizeTime(record.SubmittedAt)
 		record.UpdatedAt = normalizeTime(record.UpdatedAt)
 		if !record.LastSeenAt.IsZero() {
@@ -112,17 +115,21 @@ func (s *Store) RegisterSubmitted(intent Intent, symbol, side, positionSide stri
 	s.nextID++
 	localID := fmt.Sprintf("local-%06d", s.nextID)
 	record := &Record{
-		LocalID:      localID,
-		Intent:       normalizeIntent(intent),
-		Symbol:       strings.ToUpper(strings.TrimSpace(symbol)),
-		Side:         normalizeSide(side),
-		PositionSide: normalizePositionSide(positionSide),
-		Status:       StatusSubmitted,
-		RequestedQty: requestedQty,
-		RemainingQty: requestedQty,
-		Source:       "local_submission",
-		SubmittedAt:  normalizeTime(submittedAt),
-		UpdatedAt:    normalizeTime(submittedAt),
+		LocalID:         localID,
+		Intent:          normalizeIntent(intent),
+		Symbol:          strings.ToUpper(strings.TrimSpace(symbol)),
+		Side:            normalizeSide(side),
+		PositionSide:    normalizePositionSide(positionSide),
+		Status:          StatusSubmitted,
+		RequestedQty:    requestedQty,
+		RemainingQty:    requestedQty,
+		Source:          "local_submission",
+		TruthAuthority:  TruthAuthorityLocalPending,
+		TruthConfidence: TruthConfidencePending,
+		TruthReason:     "submitted locally; awaiting broker acknowledgement",
+		LastMessage:     "submitted locally; awaiting broker acknowledgement",
+		SubmittedAt:     normalizeTime(submittedAt),
+		UpdatedAt:       normalizeTime(submittedAt),
 	}
 	s.ordersByLocal[localID] = record
 	s.refreshSummaryCountsLocked(0)
@@ -146,6 +153,10 @@ func (s *Store) MarkRejected(localID, message string, at time.Time) {
 	previousStatus := record.Status
 	record.Status = StatusRejected
 	record.LastMessage = strings.TrimSpace(message)
+	record.TruthAuthority = TruthAuthorityBrokerConfirmed
+	record.TruthConfidence = TruthConfidenceConfirmed
+	record.TruthReason = firstNonEmpty(strings.TrimSpace(message), "broker rejected order")
+	record.NeedsReview = false
 	record.UpdatedAt = normalizeTime(at)
 	record.LastSeenAt = normalizeTime(at)
 	s.refreshSummaryCountsLocked(s.summary.BrokerOpenOrders)
@@ -217,12 +228,31 @@ func (s *Store) refreshSummaryCountsLocked(brokerOpenOrders int) {
 	s.summary.TrackedOrders = len(s.ordersByLocal)
 	s.summary.BrokerOpenOrders = brokerOpenOrders
 	active := 0
+	pending := 0
+	confirmed := 0
+	inferred := 0
+	unresolved := 0
 	for _, record := range s.ordersByLocal {
 		if !record.Status.Terminal() {
 			active++
 		}
+		switch normalizeTruthAuthority(record.TruthAuthority, record.Status, record.Source, record.BrokerOrderID, record.RawBrokerStatus, record.LastMessage) {
+		case TruthAuthorityLocalPending:
+			pending++
+		case TruthAuthorityBrokerConfirmed:
+			confirmed++
+		case TruthAuthorityReconciliationInferred:
+			inferred++
+		case TruthAuthorityUnresolved:
+			unresolved++
+		}
 	}
 	s.summary.ActiveLocalOrders = active
+	s.summary.CurrentPendingOrders = pending
+	s.summary.CurrentConfirmedOrders = confirmed
+	s.summary.CurrentInferredOrders = inferred
+	s.summary.CurrentUnresolvedOrders = unresolved
+	s.summary.ConfidenceDegraded = inferred > 0 || unresolved > 0
 }
 
 func normalizeTime(ts time.Time) time.Time {
@@ -253,6 +283,77 @@ func normalizeSide(side string) string {
 
 func normalizePositionSide(side string) string {
 	return strings.ToLower(strings.TrimSpace(side))
+}
+
+func normalizeTruthAuthority(current TruthAuthority, status Status, source, brokerOrderID, rawBrokerStatus, lastMessage string) TruthAuthority {
+	switch current {
+	case TruthAuthorityLocalPending, TruthAuthorityBrokerConfirmed, TruthAuthorityReconciliationInferred, TruthAuthorityUnresolved:
+		return current
+	}
+	message := strings.ToLower(strings.TrimSpace(lastMessage))
+	switch {
+	case strings.Contains(message, "missing at broker active list"):
+		if strings.Contains(message, "position evidence indicates") ||
+			strings.Contains(message, "position closed") ||
+			strings.Contains(message, "remaining position indicates") ||
+			strings.Contains(message, "protected position closed") {
+			return TruthAuthorityReconciliationInferred
+		}
+		return TruthAuthorityUnresolved
+	case status == StatusSubmitted || status == StatusAccepted:
+		return TruthAuthorityLocalPending
+	case strings.TrimSpace(rawBrokerStatus) != "" || strings.TrimSpace(brokerOrderID) != "" || strings.EqualFold(strings.TrimSpace(source), "broker_discovered"):
+		return TruthAuthorityBrokerConfirmed
+	default:
+		return TruthAuthorityUnresolved
+	}
+}
+
+func normalizeTruthConfidence(current TruthConfidence, authority TruthAuthority, lastMessage string) TruthConfidence {
+	switch current {
+	case TruthConfidencePending, TruthConfidenceConfirmed, TruthConfidenceHigh, TruthConfidenceMedium, TruthConfidenceUnresolved:
+		return current
+	}
+	message := strings.ToLower(strings.TrimSpace(lastMessage))
+	switch authority {
+	case TruthAuthorityLocalPending:
+		return TruthConfidencePending
+	case TruthAuthorityBrokerConfirmed:
+		return TruthConfidenceConfirmed
+	case TruthAuthorityReconciliationInferred:
+		if strings.Contains(message, "partial fill") {
+			return TruthConfidenceMedium
+		}
+		return TruthConfidenceHigh
+	default:
+		return TruthConfidenceUnresolved
+	}
+}
+
+func normalizeTruthReason(current string, authority TruthAuthority, lastMessage string) string {
+	current = strings.TrimSpace(current)
+	if current != "" {
+		return current
+	}
+	switch authority {
+	case TruthAuthorityLocalPending:
+		return "submitted locally; awaiting broker acknowledgement"
+	case TruthAuthorityBrokerConfirmed:
+		return firstNonEmpty(strings.TrimSpace(lastMessage), "broker-confirmed order state")
+	case TruthAuthorityReconciliationInferred:
+		return firstNonEmpty(strings.TrimSpace(lastMessage), "reconciled from position evidence")
+	default:
+		return firstNonEmpty(strings.TrimSpace(lastMessage), "execution truth unresolved pending broker follow-up")
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func newEvent(eventType EventType, record Record, previousStatus, currentStatus Status, message string, at time.Time) Event {

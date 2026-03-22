@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -89,14 +90,18 @@ func TestRecorderLinksOrderEventsToTrade(t *testing.T) {
 		PreviousStatus: orders.StatusSubmitted,
 		CurrentStatus:  orders.StatusFilled,
 		Record: orders.Record{
-			LocalID:       "local-2",
-			BrokerOrderID: "B-2",
-			Symbol:        "MSFT",
-			Status:        orders.StatusFilled,
-			RequestedQty:  10,
-			FilledQty:     10,
-			SubmittedAt:   now,
-			UpdatedAt:     now.Add(time.Second),
+			LocalID:         "local-2",
+			BrokerOrderID:   "B-2",
+			Symbol:          "MSFT",
+			Status:          orders.StatusFilled,
+			RequestedQty:    10,
+			FilledQty:       10,
+			TruthAuthority:  orders.TruthAuthorityReconciliationInferred,
+			TruthConfidence: orders.TruthConfidenceHigh,
+			TruthReason:     "position evidence indicates fill",
+			NeedsReview:     true,
+			SubmittedAt:     now,
+			UpdatedAt:       now.Add(time.Second),
 		},
 	})
 
@@ -107,5 +112,12 @@ func TestRecorderLinksOrderEventsToTrade(t *testing.T) {
 	}
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 order audit record, got %d", len(entries))
+	}
+	data, err := os.ReadFile(filepath.Join(orderDir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile(order audit) failed: %v", err)
+	}
+	if !bytes.Contains(data, []byte(`"truth_authority": "reconciliation_inferred"`)) {
+		t.Fatalf("expected order audit to persist truth authority, got %s", string(data))
 	}
 }
