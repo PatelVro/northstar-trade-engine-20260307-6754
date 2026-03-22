@@ -379,6 +379,38 @@ What to do when live validation fails:
 
 Shadow, paper, demo, and replay launchers do not use this live-only handoff requirement.
 
+## Trading universe truth
+
+For equity traders, the runtime entry universe is now explicit and canonical:
+
+- `default_coins` plus any merged `default_coins_file` symbols define the configured equity entry universe
+- `trusted_symbols_file` is treated as an additional allowlist filter, not a hidden universe expander
+- Northstar no longer pulls the equity entry universe from the merged dynamic pool at runtime
+
+That means a config like:
+
+- `default_coins = ["AAPL", "MSFT", "NVDA"]`
+- `default_coins_file = "data/universe/us_companies.txt"`
+
+produces one explicit merged equity universe before trading starts, and that resolved universe is what the runtime rotates through for new entry candidates.
+
+Operator visibility:
+
+- startup logs print the resolved equity universe source and counts
+- `/api/status` now includes a `universe` section with:
+  - selection mode
+  - configured/effective counts
+  - trusted-symbol filter details
+  - last candidate window and market-data load order
+- Northstar writes the full resolved universe manifest to:
+  - `output/universe/<trader_id>/active_universe.json`
+- paper/session reports now record the active universe source and counts used during the session
+
+Safety note:
+
+- equity configs must now resolve to at least one non-`USDT` symbol through `default_coins` or `default_coins_file`
+- if the explicit equity universe is empty, startup fails instead of quietly falling back to a hidden broader pool
+
 ## Execution management
 
 Northstar now uses a dedicated execution-management layer between approved decisions and broker submission:

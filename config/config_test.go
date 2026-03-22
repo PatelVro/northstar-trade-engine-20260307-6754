@@ -94,6 +94,7 @@ func TestAlpacaConfigDefaults(t *testing.T) {
 func TestAlpacaReplayConfig(t *testing.T) {
 	// Setup a trader with mode "replay"
 	cfg := Config{
+		DefaultCoins: []string{"AAPL", "MSFT", "NVDA"},
 		Traders: []TraderConfig{
 			{
 				ID:              "replay_1",
@@ -139,6 +140,7 @@ func TestLoadConfigResolvesEnvPlaceholders(t *testing.T) {
 	t.Setenv("NORTHSTAR_IBKR_BASE_URL", "https://127.0.0.1:5002/v1/api")
 
 	mockConfig := `{
+		"default_coins": ["AAPL", "MSFT", "NVDA"],
 		"traders": [
 			{
 				"id": "ibkr_env",
@@ -191,6 +193,7 @@ func TestLoadConfigAppliesLocalOverride(t *testing.T) {
 	overridePath := filepath.Join(dir, "config_ibkr.local.json")
 
 	baseConfig := `{
+		"default_coins": ["AAPL", "MSFT", "NVDA"],
 		"traders": [
 			{
 				"id": "ibkr_local",
@@ -210,6 +213,7 @@ func TestLoadConfigAppliesLocalOverride(t *testing.T) {
 		]
 	}`
 	overrideConfig := `{
+		"default_coins": ["AAPL", "MSFT", "NVDA"],
 		"traders": [
 			{
 				"id": "ibkr_local",
@@ -307,8 +311,42 @@ func TestLoadConfigDefaultCoinsFileExtendsInlineDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRejectsEquityConfigWithoutExplicitUniverse(t *testing.T) {
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "config.json")
+
+	configJSON := `{
+		"traders": [
+			{
+				"id": "alpaca_live",
+				"name": "Alpaca Live",
+				"enabled": true,
+				"ai_model": "deepseek",
+				"exchange": "alpaca",
+				"alpaca_api_key": "key",
+				"alpaca_secret_key": "secret",
+				"mode": "live",
+				"data_provider": "alpaca",
+				"broker": "alpaca",
+				"instrument_type": "equity",
+				"deepseek_key": "test",
+				"initial_balance": 1000.0,
+				"scan_interval_minutes": 5
+			}
+		]
+	}`
+	if err := os.WriteFile(configFile, []byte(configJSON), 0644); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+
+	if _, err := LoadConfig(configFile); err == nil {
+		t.Fatalf("expected equity config without explicit default_coins/default_coins_file to fail")
+	}
+}
+
 func TestAlpacaReplayWithoutSecretsUsesLocalCSV(t *testing.T) {
 	cfg := Config{
+		DefaultCoins: []string{"AAPL", "MSFT", "NVDA"},
 		Traders: []TraderConfig{
 			{
 				ID:                  "replay_local",

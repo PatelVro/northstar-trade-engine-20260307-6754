@@ -347,6 +347,8 @@ func buildLiveTraders(cfg *config.Config, liveTraders []config.TraderConfig) ([]
 	for _, traderCfg := range liveTraders {
 		if err := traderManager.AddTrader(
 			traderCfg,
+			cfg.DefaultCoins,
+			cfg.DefaultCoinsFile,
 			cfg.CoinPoolAPIURL,
 			cfg.MaxDailyLoss,
 			cfg.MaxDrawdown,

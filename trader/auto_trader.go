@@ -103,6 +103,8 @@ type AutoTraderConfig struct {
 	Broker                              string
 	CSVDataDir                          string
 	InstrumentType                      string
+	ConfiguredDefaultSymbols            []string
+	ConfiguredDefaultSymbolsFile        string
 	BarsAdjustment                      string
 	CandidateBatchSize                  int
 	TrustedSymbolsFile                  string
@@ -225,6 +227,8 @@ type AutoTrader struct {
 	provider                              market.BarsProvider // Injected data provider
 	candidateCursor                       int
 	trustedSymbolSet                      map[string]struct{}
+	universeMu                            sync.RWMutex
+	universeState                         runtimeUniverseState
 	demoMode                              bool
 	demoRand                              *rand.Rand
 	demoEquity                            float64
@@ -717,6 +721,9 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 		demoPositionCount:     0,
 		demoMarginUsedPct:     0,
 	}
+	if err := at.initializeTradingUniverse(); err != nil {
+		return nil, err
+	}
 	if observerSetter, ok := trader.(interface{ SetOrderObserver(orders.Observer) }); ok && at.auditRecorder != nil {
 		observerSetter.SetOrderObserver(at.auditRecorder)
 	}
@@ -771,6 +778,7 @@ func (at *AutoTrader) Run() error {
 	log.Printf("  Scan interval: %v", at.config.ScanInterval)
 	log.Printf(" Strategy mode: %s", at.config.StrategyMode)
 	log.Printf(" Decision architecture: %s", at.canonicalDecisionArchitecture())
+	at.persistTradingUniverseManifest()
 	if at.config.InstrumentType == "equity" && (at.config.StrategyMode == "momentum_only" || at.config.StrategyMode == "multi_factor") {
 		log.Println(" Local strategy engine controls position sizing and exits for this trader")
 	} else {
@@ -1643,6 +1651,7 @@ func (at *AutoTrader) loadMomentumMarketData(ctx *decision.Context) error {
 		}
 		loadOrder = append(loadOrder, symbol)
 	}
+	at.recordUniverseCycleSelection(candidates, mandatory, loadOrder)
 
 	for _, symbol := range loadOrder {
 		data, err := at.getValidatedMarketData(symbol)
@@ -1751,17 +1760,30 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 		batchSize = 12
 	}
 
-	const universeLimit = 20000
-
-	// Matrix limits Parameter Object Tracker Variables limitation strings MAP Strings String parameters strings map array String LIMIT limit map String configurations parameters mapping
-	mergedPool, err := pool.GetMergedCoinPool(universeLimit)
-	if err != nil {
-		return nil, fmt.Errorf("variables lists Logic Mapping Tracker arrays limitations maps Array map LIMIT strings map parameter %w", err)
-	}
-
-	allSymbols := append([]string(nil), mergedPool.AllSymbols...)
+	var (
+		allSymbols    []string
+		symbolSources map[string][]string
+		universeErr   error
+	)
 	if at.config.InstrumentType == "equity" {
-		allSymbols = filterTradableEquitySymbols(allSymbols, at.trustedSymbolSet)
+		allSymbols = at.activeEntryUniverseSymbols()
+		symbolSources = make(map[string][]string, len(allSymbols))
+		for _, symbol := range allSymbols {
+			sources := []string{"configured_universe"}
+			if len(at.trustedSymbolSet) > 0 {
+				sources = append(sources, "trusted_symbol_filter")
+			}
+			symbolSources[symbol] = sources
+		}
+	} else {
+		const universeLimit = 20000
+		var mergedPool *pool.MergedCoinPool
+		mergedPool, universeErr = pool.GetMergedCoinPool(universeLimit)
+		if universeErr != nil {
+			return nil, fmt.Errorf("variables lists Logic Mapping Tracker arrays limitations maps Array map LIMIT strings map parameter %w", universeErr)
+		}
+		allSymbols = append([]string(nil), mergedPool.AllSymbols...)
+		symbolSources = mergedPool.SymbolSources
 	}
 	if len(allSymbols) == 0 {
 		return nil, fmt.Errorf("candidate universe is empty")
@@ -1785,12 +1807,13 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 	// Strings Tracking Lists Array Strings limits variations Tracker limits arrays string mapping map combinations Target Strings Target limitation Target Tracking limits target configurations string Tracking Maps mapping LIMIT tracking arrays
 	var candidateCoins []decision.CandidateCoin
 	for _, symbol := range selectedSymbols {
-		sources := mergedPool.SymbolSources[symbol]
+		sources := symbolSources[symbol]
 		candidateCoins = append(candidateCoins, decision.CandidateCoin{
 			Symbol:  symbol,
 			Sources: sources, // "ai500" tracking "oi_top"
 		})
 	}
+	at.recordUniverseCycleSelection(selectedSymbols, nil, nil)
 
 	// 5. String strings Array Tracking mapping constraints limitations limits Array Targeting variables tracking string Limitations Arrays Strings strings Map Target MAP Target Tracker Limits Variables Mapping logic arrays Limit map Array variations Map Tracking Map Object strings limits limitation constraints LIMIT arrays
 	// Limitations maps Tracking Variables Tracker limitation Strings Target MAP Array variables target Variables Map Tracking Tracker tracking maps configurations Mapping Maps parameter Tracking Maps limitations tracking strings Array array variables array
@@ -2230,6 +2253,8 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 	if len(alertSummary.Recent) > 0 {
 		recentAlerts = append([]alerts.Alert(nil), alertSummary.Recent...)
 	}
+	universeSummary := at.currentUniverseSummary()
+	universePreview, universePreviewTruncated := previewUniverseSymbols(universeSummary.EffectiveSymbols)
 	shadowSummary := at.currentShadowSummary()
 
 	return map[string]interface{}{
@@ -2310,6 +2335,27 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 			"rejected_count":             executionSummary.RejectedCount,
 			"failed_count":               executionSummary.FailedCount,
 		},
+		"universe": map[string]interface{}{
+			"available":                   universeSummary.Available,
+			"instrument_type":             universeSummary.InstrumentType,
+			"selection_mode":              universeSummary.SelectionMode,
+			"configured_source":           universeSummary.ConfiguredSource,
+			"configured_symbols_count":    len(universeSummary.ConfiguredSymbols),
+			"effective_symbols_count":     len(universeSummary.EffectiveSymbols),
+			"trusted_symbols_file":        universeSummary.TrustedSymbolsFile,
+			"trusted_symbols_count":       universeSummary.TrustedSymbolsCount,
+			"benchmark_symbols":           append([]string(nil), universeSummary.BenchmarkSymbols...),
+			"manifest_path":               universeSummary.ManifestPath,
+			"manifest_persisted":          universeSummary.ManifestPersisted,
+			"manifest_last_error":         universeSummary.ManifestLastError,
+			"last_updated_at":             formatRFC3339(universeSummary.LastUpdatedAt),
+			"effective_symbols_preview":   universePreview,
+			"preview_truncated":           universePreviewTruncated,
+			"last_candidate_window":       append([]string(nil), universeSummary.LastCandidateWindow...),
+			"last_mandatory_symbols":      append([]string(nil), universeSummary.LastMandatory...),
+			"last_market_data_load_order": append([]string(nil), universeSummary.LastLoadOrder...),
+			"message":                     universeSummary.Message,
+		},
 		"execution_available":                  executionSummary.Available,
 		"execution_in_flight_count":            executionSummary.InFlightCount,
 		"execution_stale_count":                executionSummary.StaleCount,
@@ -2323,6 +2369,12 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 		"execution_filled_count":               executionSummary.FilledCount,
 		"execution_rejected_count":             executionSummary.RejectedCount,
 		"execution_failed_count":               executionSummary.FailedCount,
+		"universe_selection_mode":              universeSummary.SelectionMode,
+		"universe_configured_source":           universeSummary.ConfiguredSource,
+		"universe_configured_count":            len(universeSummary.ConfiguredSymbols),
+		"universe_effective_count":             len(universeSummary.EffectiveSymbols),
+		"universe_manifest_path":               universeSummary.ManifestPath,
+		"universe_message":                     universeSummary.Message,
 		"protection": map[string]interface{}{
 			"available":               protectionSummary.Available,
 			"pending_count":           protectionSummary.PendingCount,

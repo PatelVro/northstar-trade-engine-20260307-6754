@@ -317,6 +317,20 @@ func mergeSymbolsPreserveOrder(base, extra []string) []string {
 	return merged
 }
 
+func hasExplicitEquityUniverse(symbols []string) bool {
+	for _, raw := range symbols {
+		symbol := strings.ToUpper(strings.TrimSpace(strings.Trim(raw, "\"'")))
+		if symbol == "" {
+			continue
+		}
+		if strings.HasSuffix(symbol, "USDT") {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // Validate  Validate configuration fields
 func (c *Config) Validate() error {
 	if len(c.Traders) == 0 {
@@ -1093,6 +1107,9 @@ func (c *Config) Validate() error {
 		}
 		if trader.Mode == "replay" && trader.ReplayWarmupBars <= 0 {
 			trader.ReplayWarmupBars = 120
+		}
+		if trader.Enabled && trader.InstrumentType == "equity" && !hasExplicitEquityUniverse(c.DefaultCoins) {
+			return fmt.Errorf("trader[%d]: equity trading requires explicit non-USDT default_coins/default_coins_file symbols", i)
 		}
 
 		// Update trader in list with defaults

@@ -233,6 +233,37 @@ func TestPaperSessionTrackerCapturesExecutionSummary(t *testing.T) {
 	}
 }
 
+func TestPaperSessionTrackerCapturesUniverseSummary(t *testing.T) {
+	at := &AutoTrader{
+		id:   "paper_trader",
+		name: "Paper Trader",
+		config: AutoTraderConfig{
+			ID:                       "paper_trader",
+			Name:                     "Paper Trader",
+			Mode:                     "paper",
+			Broker:                   "ibkr",
+			StrategyMode:             "multi_factor",
+			InstrumentType:           "equity",
+			ConfiguredDefaultSymbols: []string{"AAPL", "MSFT", "NVDA"},
+		},
+	}
+	if err := at.initializeTradingUniverse(); err != nil {
+		t.Fatalf("initializeTradingUniverse failed: %v", err)
+	}
+	at.recordUniverseCycleSelection([]string{"AAPL", "MSFT"}, []string{"SPY"}, []string{"SPY", "AAPL", "MSFT"})
+
+	tracker := newPaperSessionTracker(at, time.Now())
+	if tracker.report.UniverseSelectionMode != "explicit_configured_equity" {
+		t.Fatalf("expected explicit universe mode, got %q", tracker.report.UniverseSelectionMode)
+	}
+	if tracker.report.UniverseConfiguredCount != 3 || tracker.report.UniverseEffectiveCount != 3 {
+		t.Fatalf("unexpected universe counts: configured=%d effective=%d", tracker.report.UniverseConfiguredCount, tracker.report.UniverseEffectiveCount)
+	}
+	if len(tracker.report.UniverseLastCandidateWindow) != 2 || tracker.report.UniverseLastCandidateWindow[0] != "AAPL" {
+		t.Fatalf("unexpected universe candidate window: %+v", tracker.report.UniverseLastCandidateWindow)
+	}
+}
+
 func TestApplyPaperSessionOrderReconciliationUsesDeltas(t *testing.T) {
 	report := PaperSessionReport{}
 	start := &orders.Summary{

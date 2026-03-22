@@ -77,6 +77,7 @@ func TestValidateLiveConfigFailsWhenNoEnabledLiveTraders(t *testing.T) {
 		"max_daily_loss": 0.02,
 		"max_drawdown": 0.10,
 		"stop_trading_minutes": 30,
+		"default_coins": ["AAPL", "MSFT", "NVDA"],
 		"traders": [
 			{
 				"id": "paper_only",
@@ -146,6 +147,7 @@ func TestValidateLiveConfigFailsWhenTraderValidationFails(t *testing.T) {
 		"max_daily_loss": 0.02,
 		"max_drawdown": 0.10,
 		"stop_trading_minutes": 30,
+		"default_coins": ["AAPL", "MSFT", "NVDA"],
 		"traders": [
 			{
 				"id": "live_ibkr",
@@ -220,6 +222,7 @@ func TestValidateLiveConfigPassesWhenChecksPass(t *testing.T) {
 		"max_daily_loss": 0.02,
 		"max_drawdown": 0.10,
 		"stop_trading_minutes": 30,
+		"default_coins": ["AAPL", "MSFT", "NVDA"],
 		"traders": [
 			{
 				"id": "live_ibkr",

@@ -140,6 +140,8 @@ func run(args []string) int {
 
 		err := traderManager.AddTrader(
 			traderCfg,
+			cfg.DefaultCoins,
+			cfg.DefaultCoinsFile,
 			cfg.CoinPoolAPIURL,
 			cfg.MaxDailyLoss,
 			cfg.MaxDrawdown,

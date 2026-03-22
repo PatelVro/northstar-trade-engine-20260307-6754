@@ -25,7 +25,7 @@ const (
 	SessionCompletionPartial   SessionCompletionStatus = "partial"
 )
 
-const sessionReportVersion = 11
+const sessionReportVersion = 12
 
 type SessionPortfolioRiskSnapshot struct {
 	EvaluatedAt time.Time             `json:"evaluated_at"`
@@ -50,6 +50,14 @@ type PaperSessionReport struct {
 	Mode                              string                        `json:"mode"`
 	Broker                            string                        `json:"broker"`
 	StrategyMode                      string                        `json:"strategy_mode"`
+	UniverseSelectionMode             string                        `json:"universe_selection_mode"`
+	UniverseConfiguredSource          string                        `json:"universe_configured_source"`
+	UniverseConfiguredCount           int                           `json:"universe_configured_count"`
+	UniverseEffectiveCount            int                           `json:"universe_effective_count"`
+	UniverseTrustedSymbolsCount       int                           `json:"universe_trusted_symbols_count"`
+	UniverseManifestPath              string                        `json:"universe_manifest_path,omitempty"`
+	UniverseLastCandidateWindow       []string                      `json:"universe_last_candidate_window,omitempty"`
+	UniverseLastMandatorySymbols      []string                      `json:"universe_last_mandatory_symbols,omitempty"`
 	GeneratedAt                       time.Time                     `json:"generated_at"`
 	SessionDate                       string                        `json:"session_date"`
 	SessionStart                      time.Time                     `json:"session_start"`
@@ -237,26 +245,35 @@ func (at *AutoTrader) ensurePaperSessionReportingForTime(now time.Time) {
 func newPaperSessionTracker(at *AutoTrader, now time.Time) *paperSessionTracker {
 	orderRecon := at.currentOrderReconciliationSummary()
 	positionRecon := at.currentPositionReconciliationSummary()
+	universe := at.currentUniverseSummary()
 	tracker := &paperSessionTracker{
 		report: PaperSessionReport{
-			ReportVersion:            sessionReportVersion,
-			TraderID:                 at.id,
-			TraderName:               at.name,
-			Mode:                     at.config.Mode,
-			Broker:                   at.config.Broker,
-			StrategyMode:             at.config.StrategyMode,
-			SessionDate:              now.Format("2006-01-02"),
-			SessionStart:             now,
-			StrategyInitialCapital:   at.initialBalance,
-			SymbolsTraded:            []string{},
-			DistinctRiskMessages:     []string{},
-			DistinctWarningMessages:  []string{},
-			DistinctErrorMessages:    []string{},
-			NotableRiskIncidents:     []string{},
-			IncidentTypesSeen:        []string{},
-			UnresolvedIncidentsAtEnd: []string{},
-			NotableIncidents:         []string{},
-			NotableEvents:            []string{},
+			ReportVersion:                sessionReportVersion,
+			TraderID:                     at.id,
+			TraderName:                   at.name,
+			Mode:                         at.config.Mode,
+			Broker:                       at.config.Broker,
+			StrategyMode:                 at.config.StrategyMode,
+			UniverseSelectionMode:        universe.SelectionMode,
+			UniverseConfiguredSource:     universe.ConfiguredSource,
+			UniverseConfiguredCount:      len(universe.ConfiguredSymbols),
+			UniverseEffectiveCount:       len(universe.EffectiveSymbols),
+			UniverseTrustedSymbolsCount:  universe.TrustedSymbolsCount,
+			UniverseManifestPath:         universe.ManifestPath,
+			UniverseLastCandidateWindow:  cloneUniverseStrings(universe.LastCandidateWindow),
+			UniverseLastMandatorySymbols: cloneUniverseStrings(universe.LastMandatory),
+			SessionDate:                  now.Format("2006-01-02"),
+			SessionStart:                 now,
+			StrategyInitialCapital:       at.initialBalance,
+			SymbolsTraded:                []string{},
+			DistinctRiskMessages:         []string{},
+			DistinctWarningMessages:      []string{},
+			DistinctErrorMessages:        []string{},
+			NotableRiskIncidents:         []string{},
+			IncidentTypesSeen:            []string{},
+			UnresolvedIncidentsAtEnd:     []string{},
+			NotableIncidents:             []string{},
+			NotableEvents:                []string{},
 		},
 		currentDate:      now.Format("2006-01-02"),
 		lastBroker:       at.brokerRuntimeStatus().State,
@@ -807,6 +824,15 @@ func (at *AutoTrader) writePaperSessionReport(tracker *paperSessionTracker, reas
 
 	endTime := time.Now().In(time.Local)
 	report := tracker.report
+	universe := at.currentUniverseSummary()
+	report.UniverseSelectionMode = universe.SelectionMode
+	report.UniverseConfiguredSource = universe.ConfiguredSource
+	report.UniverseConfiguredCount = len(universe.ConfiguredSymbols)
+	report.UniverseEffectiveCount = len(universe.EffectiveSymbols)
+	report.UniverseTrustedSymbolsCount = universe.TrustedSymbolsCount
+	report.UniverseManifestPath = universe.ManifestPath
+	report.UniverseLastCandidateWindow = cloneUniverseStrings(universe.LastCandidateWindow)
+	report.UniverseLastMandatorySymbols = cloneUniverseStrings(universe.LastMandatory)
 	report.GeneratedAt = endTime
 	report.SessionEnd = endTime
 	report.SessionDurationSeconds = int64(endTime.Sub(report.SessionStart).Seconds())

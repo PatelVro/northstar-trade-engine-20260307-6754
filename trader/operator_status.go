@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const operatorStatusSchemaVersion = 17
+const operatorStatusSchemaVersion = 18
 
 type OperatorRuntimeSummary struct {
 	IsRunning         bool    `json:"is_running"`
@@ -99,6 +99,28 @@ type OperatorProtectionSummary struct {
 	LastUpdatedAt         string                          `json:"last_updated_at"`
 	Message               string                          `json:"message"`
 	Pending               []OperatorPendingProtectionItem `json:"pending,omitempty"`
+}
+
+type OperatorUniverseSummary struct {
+	Available               bool     `json:"available"`
+	InstrumentType          string   `json:"instrument_type"`
+	SelectionMode           string   `json:"selection_mode"`
+	ConfiguredSource        string   `json:"configured_source"`
+	ConfiguredSymbolsCount  int      `json:"configured_symbols_count"`
+	EffectiveSymbolsCount   int      `json:"effective_symbols_count"`
+	TrustedSymbolsFile      string   `json:"trusted_symbols_file,omitempty"`
+	TrustedSymbolsCount     int      `json:"trusted_symbols_count"`
+	BenchmarkSymbols        []string `json:"benchmark_symbols,omitempty"`
+	ManifestPath            string   `json:"manifest_path,omitempty"`
+	ManifestPersisted       bool     `json:"manifest_persisted"`
+	ManifestLastError       string   `json:"manifest_last_error,omitempty"`
+	LastUpdatedAt           string   `json:"last_updated_at"`
+	EffectiveSymbolsPreview []string `json:"effective_symbols_preview,omitempty"`
+	PreviewTruncated        bool     `json:"preview_truncated"`
+	LastCandidateWindow     []string `json:"last_candidate_window,omitempty"`
+	LastMandatorySymbols    []string `json:"last_mandatory_symbols,omitempty"`
+	LastMarketDataLoadOrder []string `json:"last_market_data_load_order,omitempty"`
+	Message                 string   `json:"message"`
 }
 
 type OperatorShadowModeSummary struct {
@@ -335,6 +357,7 @@ type OperatorStatusSummary struct {
 	Promotion              OperatorPromotionSummary              `json:"promotion"`
 	RiskSupervisor         OperatorRiskSupervisorSummary         `json:"risk_supervisor"`
 	Execution              OperatorExecutionSummary              `json:"execution"`
+	Universe               OperatorUniverseSummary               `json:"universe"`
 	Protection             OperatorProtectionSummary             `json:"protection"`
 	ShadowMode             OperatorShadowModeSummary             `json:"shadow_mode"`
 	RestartRecovery        OperatorRestartRecoverySummary        `json:"restart_recovery"`
@@ -398,6 +421,13 @@ type OperatorStatusSummary struct {
 	ExecutionFilledCount            int                `json:"execution_filled_count"`
 	ExecutionRejectedCount          int                `json:"execution_rejected_count"`
 	ExecutionFailedCount            int                `json:"execution_failed_count"`
+	UniverseAvailable               bool               `json:"universe_available"`
+	UniverseSelectionMode           string             `json:"universe_selection_mode"`
+	UniverseConfiguredSource        string             `json:"universe_configured_source"`
+	UniverseConfiguredCount         int                `json:"universe_configured_count"`
+	UniverseEffectiveCount          int                `json:"universe_effective_count"`
+	UniverseManifestPath            string             `json:"universe_manifest_path"`
+	UniverseMessage                 string             `json:"universe_message"`
 	ProtectionPendingCount          int                `json:"protection_pending_count"`
 	ProtectionActiveCount           int                `json:"protection_active_protective_count"`
 	ProtectionMessage               string             `json:"protection_message"`
@@ -502,6 +532,7 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 	alertSummary := at.currentAlertsSummary()
 	incidentSummary := at.currentIncidentSummary()
 	executionState := at.currentExecutionSummary()
+	universeState := at.currentUniverseSummary()
 	shadowState := at.currentShadowSummary()
 	restartRecovery := at.currentRestartRecoverySummary()
 	brokerTruth := at.currentBrokerTruthSummary()
@@ -594,6 +625,28 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		FilledCount:              executionState.FilledCount,
 		RejectedCount:            executionState.RejectedCount,
 		FailedCount:              executionState.FailedCount,
+	}
+	universePreview, universePreviewTruncated := previewUniverseSymbols(universeState.EffectiveSymbols)
+	universeSummary := OperatorUniverseSummary{
+		Available:               universeState.Available,
+		InstrumentType:          universeState.InstrumentType,
+		SelectionMode:           universeState.SelectionMode,
+		ConfiguredSource:        universeState.ConfiguredSource,
+		ConfiguredSymbolsCount:  len(universeState.ConfiguredSymbols),
+		EffectiveSymbolsCount:   len(universeState.EffectiveSymbols),
+		TrustedSymbolsFile:      universeState.TrustedSymbolsFile,
+		TrustedSymbolsCount:     universeState.TrustedSymbolsCount,
+		BenchmarkSymbols:        append([]string(nil), universeState.BenchmarkSymbols...),
+		ManifestPath:            universeState.ManifestPath,
+		ManifestPersisted:       universeState.ManifestPersisted,
+		ManifestLastError:       universeState.ManifestLastError,
+		LastUpdatedAt:           formatRFC3339(universeState.LastUpdatedAt),
+		EffectiveSymbolsPreview: universePreview,
+		PreviewTruncated:        universePreviewTruncated,
+		LastCandidateWindow:     append([]string(nil), universeState.LastCandidateWindow...),
+		LastMandatorySymbols:    append([]string(nil), universeState.LastMandatory...),
+		LastMarketDataLoadOrder: append([]string(nil), universeState.LastLoadOrder...),
+		Message:                 universeState.Message,
 	}
 	protectionState := at.currentProtectionSummary()
 	protectionPending := make([]OperatorPendingProtectionItem, 0, len(protectionState.Pending))
@@ -859,6 +912,7 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		Promotion:                       promotionSummary,
 		RiskSupervisor:                  riskSupervisorSummary,
 		Execution:                       executionSummary,
+		Universe:                        universeSummary,
 		Protection:                      protectionSummary,
 		ShadowMode:                      shadowSummary,
 		RestartRecovery:                 restartRecoverySummary,
@@ -920,6 +974,13 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		ExecutionFilledCount:            executionSummary.FilledCount,
 		ExecutionRejectedCount:          executionSummary.RejectedCount,
 		ExecutionFailedCount:            executionSummary.FailedCount,
+		UniverseAvailable:               universeSummary.Available,
+		UniverseSelectionMode:           universeSummary.SelectionMode,
+		UniverseConfiguredSource:        universeSummary.ConfiguredSource,
+		UniverseConfiguredCount:         universeSummary.ConfiguredSymbolsCount,
+		UniverseEffectiveCount:          universeSummary.EffectiveSymbolsCount,
+		UniverseManifestPath:            universeSummary.ManifestPath,
+		UniverseMessage:                 universeSummary.Message,
 		ProtectionPendingCount:          protectionSummary.PendingCount,
 		ProtectionActiveCount:           protectionSummary.ActiveProtectiveCount,
 		ProtectionMessage:               protectionSummary.Message,
