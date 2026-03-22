@@ -1929,11 +1929,6 @@ func (at *AutoTrader) executeDecisionWithRecord(decision *decision.Decision, act
 }
 
 func (at *AutoTrader) cappedEntryNotional(requested float64) float64 {
-	notional := requested
-	if notional <= 0 {
-		return 0
-	}
-
 	equityCap := at.initialBalance
 	available := 0.0
 	if summary, err := at.GetAccountInfo(); err == nil && summary != nil {
@@ -1942,15 +1937,24 @@ func (at *AutoTrader) cappedEntryNotional(requested float64) float64 {
 			equityCap = sizingEquity
 		}
 	}
+	return capNotional(requested, equityCap, at.initialBalance, at.config.MaxPositionPct, available)
+}
+
+// capNotional applies position-size and available-balance caps to a requested
+// entry notional. Exported-via-lowercase for testability within the package.
+func capNotional(requested, equityCap, initialBalance, maxPositionPct, available float64) float64 {
+	notional := requested
+	if notional <= 0 {
+		return 0
+	}
 
 	if equityCap <= 0 {
-		equityCap = at.initialBalance
+		equityCap = initialBalance
 	}
 	if equityCap <= 0 {
 		return notional
 	}
 
-	maxPositionPct := at.config.MaxPositionPct
 	if maxPositionPct <= 0 {
 		maxPositionPct = 0.20
 	}
