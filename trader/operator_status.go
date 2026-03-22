@@ -8,11 +8,12 @@ import (
 	"northstar/orders"
 	"northstar/positions"
 	"northstar/risk"
+	"northstar/startup"
 	"strings"
 	"time"
 )
 
-const operatorStatusSchemaVersion = 14
+const operatorStatusSchemaVersion = 15
 
 type OperatorRuntimeSummary struct {
 	IsRunning         bool    `json:"is_running"`
@@ -136,6 +137,18 @@ type OperatorBrokerTruthSummary struct {
 	MarketDataCheckedAt string   `json:"market_data_checked_at"`
 	Message             string   `json:"message"`
 	BlockingReasons     []string `json:"blocking_reasons"`
+}
+
+type OperatorDeploymentValidationSummary struct {
+	Required            bool   `json:"required"`
+	Passed              bool   `json:"passed"`
+	Fresh               bool   `json:"fresh"`
+	ConfigMatches       bool   `json:"config_matches"`
+	ActiveConfigFile    string `json:"active_config_file"`
+	ValidatedConfigFile string `json:"validated_config_file"`
+	CheckedAt           string `json:"checked_at"`
+	Source              string `json:"source"`
+	Message             string `json:"message"`
 }
 
 type OperatorPromotionSummary struct {
@@ -298,6 +311,7 @@ type OperatorStatusSummary struct {
 	ShadowMode             OperatorShadowModeSummary             `json:"shadow_mode"`
 	RestartRecovery        OperatorRestartRecoverySummary        `json:"restart_recovery"`
 	BrokerTruth            OperatorBrokerTruthSummary            `json:"broker_truth"`
+	DeploymentValidation   OperatorDeploymentValidationSummary   `json:"deployment_validation"`
 	Session                OperatorSessionSummary                `json:"session"`
 	Runtime                OperatorRuntimeSummary                `json:"runtime"`
 	TradingGate            OperatorTradingGateSummary            `json:"trading_gate"`
@@ -376,6 +390,10 @@ type OperatorStatusSummary struct {
 	BrokerTruthVerified             bool               `json:"broker_truth_verified"`
 	BrokerTruthTradingBlocked       bool               `json:"broker_truth_trading_blocked"`
 	BrokerTruthMessage              string             `json:"broker_truth_message"`
+	DeploymentValidationRequired    bool               `json:"deployment_validation_required"`
+	DeploymentValidationPassed      bool               `json:"deployment_validation_passed"`
+	DeploymentValidationFresh       bool               `json:"deployment_validation_fresh"`
+	DeploymentValidationMessage     string             `json:"deployment_validation_message"`
 	LastSessionReportPath           string             `json:"last_session_report_path"`
 	LastSessionReportStatus         string             `json:"last_session_report_status"`
 	LastSessionReportAt             string             `json:"last_session_report_at"`
@@ -455,6 +473,7 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 	shadowState := at.currentShadowSummary()
 	restartRecovery := at.currentRestartRecoverySummary()
 	brokerTruth := at.currentBrokerTruthSummary()
+	deploymentValidation := startup.CurrentLiveValidationStatus("", strings.EqualFold(at.config.Mode, "live"), time.Now())
 
 	aiProvider := "DeepSeek"
 	if at.demoMode {
@@ -602,6 +621,17 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		MarketDataCheckedAt: formatRFC3339(brokerTruth.MarketDataCheckedAt),
 		Message:             brokerTruth.Message,
 		BlockingReasons:     append([]string(nil), brokerTruth.BlockingReasons...),
+	}
+	deploymentValidationSummary := OperatorDeploymentValidationSummary{
+		Required:            deploymentValidation.Required,
+		Passed:              deploymentValidation.Passed,
+		Fresh:               deploymentValidation.Fresh,
+		ConfigMatches:       deploymentValidation.ConfigMatches,
+		ActiveConfigFile:    deploymentValidation.ActiveConfigFile,
+		ValidatedConfigFile: deploymentValidation.ValidatedConfigFile,
+		CheckedAt:           formatRFC3339(deploymentValidation.CheckedAt),
+		Source:              deploymentValidation.Source,
+		Message:             deploymentValidation.Message,
 	}
 
 	brokerSummary := OperatorBrokerRuntimeSummary{
@@ -771,6 +801,7 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		ShadowMode:                      shadowSummary,
 		RestartRecovery:                 restartRecoverySummary,
 		BrokerTruth:                     brokerTruthSummary,
+		DeploymentValidation:            deploymentValidationSummary,
 		Session:                         sessionSummary,
 		Runtime:                         runtimeSummary,
 		TradingGate:                     tradingGate,
@@ -847,6 +878,10 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		BrokerTruthVerified:             brokerTruthSummary.Verified,
 		BrokerTruthTradingBlocked:       brokerTruthSummary.TradingBlocked,
 		BrokerTruthMessage:              brokerTruthSummary.Message,
+		DeploymentValidationRequired:    deploymentValidationSummary.Required,
+		DeploymentValidationPassed:      deploymentValidationSummary.Passed,
+		DeploymentValidationFresh:       deploymentValidationSummary.Fresh,
+		DeploymentValidationMessage:     deploymentValidationSummary.Message,
 		LastSessionReportPath:           sessionSummary.LastSessionReportPath,
 		LastSessionReportStatus:         sessionSummary.LastSessionReportStatus,
 		LastSessionReportAt:             sessionSummary.LastSessionReportAt,

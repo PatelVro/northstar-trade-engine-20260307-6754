@@ -7,6 +7,7 @@ import (
 	"northstar/incidents"
 	"northstar/orders"
 	"northstar/risk"
+	"northstar/startup"
 	"strings"
 	"testing"
 	"time"
@@ -119,6 +120,13 @@ func TestGetOperatorStatus_BrokerDegradedAppearsDistinctFromLiveness(t *testing.
 }
 
 func TestGetOperatorStatus_LivePromotionFailureAppearsInTradingGate(t *testing.T) {
+	now := time.Now()
+	t.Setenv(startup.EnvActiveConfigFile, `C:\repo\config_ibkr_live.json`)
+	t.Setenv(startup.EnvLiveValidationPassed, "true")
+	t.Setenv(startup.EnvLiveValidationConfig, `C:\repo\config_ibkr_live.json`)
+	t.Setenv(startup.EnvLiveValidationCheckedAt, now.UTC().Format(time.RFC3339Nano))
+	t.Setenv(startup.EnvLiveValidationSource, "run_ibkr_live.cmd")
+
 	at := &AutoTrader{
 		id:       "live_trader",
 		name:     "Live Trader",
@@ -136,12 +144,12 @@ func TestGetOperatorStatus_LivePromotionFailureAppearsInTradingGate(t *testing.T
 		},
 		initialBalance: 100000,
 		isRunning:      true,
-		startTime:      time.Now().Add(-25 * time.Minute),
+		startTime:      now.Add(-25 * time.Minute),
 	}
 	at.setReadinessSummary(ReadinessSummary{
 		Status:         ReadinessPass,
 		Message:        "startup readiness passed",
-		CheckedAt:      time.Now().Add(-10 * time.Minute),
+		CheckedAt:      now.Add(-10 * time.Minute),
 		TradingAllowed: true,
 		PassCount:      6,
 	})
@@ -177,6 +185,12 @@ func TestGetOperatorStatus_LivePromotionFailureAppearsInTradingGate(t *testing.T
 	}
 	if !status.Promotion.Required {
 		t.Fatalf("expected promotion to be required for live mode")
+	}
+	if !status.DeploymentValidation.Required {
+		t.Fatalf("expected deployment validation to be required for live mode")
+	}
+	if !status.DeploymentValidation.Passed {
+		t.Fatalf("expected deployment validation to be reported as passed")
 	}
 }
 

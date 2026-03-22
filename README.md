@@ -28,6 +28,7 @@ It supports multiple brokers/exchanges and both paper-style and live execution m
 - Config-level limits for daily loss and drawdown
 - Runtime stop windows after risk triggers
 - Deployment validation command: `northstar validate-live` checks release build identity, working tree cleanliness, live config validity, promotion status, readiness, and risk-limit presence before deployment
+- Live launcher enforcement: `run_ibkr_live.cmd` now runs `validate-live` itself and aborts immediately if that validation fails
 
 ## Requirements
 
@@ -349,6 +350,33 @@ Typical deployment flow:
 2. Ensure the repo working tree is clean.
 3. Run `northstar validate-live ...`.
 4. Only deploy/start live trading if the command exits with code `0`.
+
+The actual Windows live launcher now enforces that flow. `run_ibkr_live.cmd`:
+
+1. resolves the live config and account context
+2. runs `northstar validate-live <config>`
+3. aborts immediately on any non-zero validation exit code
+4. records a short-lived validation handoff for that exact config
+5. only then runs IBKR readiness and starts the live process
+
+Northstar live startup also fails closed inside the binary when enabled live traders are present but that validation handoff is missing, stale, or for a different config path. This means a direct `northstar.exe config_ibkr_live.json` start will no longer quietly bypass the stricter deployment validator.
+
+Launch-time failures now block live startup for conditions already checked by `validate-live`, including:
+
+- dirty working tree
+- non-release or dirty build identity
+- invalid live config
+- missing enabled live traders
+- failed readiness or promotion checks
+- stale or mismatched live-validation handoff
+
+What to do when live validation fails:
+
+1. read the `validate-live` failure lines printed by the launcher
+2. fix the blocking condition
+3. rerun `run_ibkr_live.cmd`
+
+Shadow, paper, demo, and replay launchers do not use this live-only handoff requirement.
 
 ## Execution management
 

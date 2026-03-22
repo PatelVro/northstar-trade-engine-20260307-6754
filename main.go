@@ -10,12 +10,18 @@ import (
 	"northstar/deployment"
 	"northstar/manager"
 	"northstar/pool"
+	"northstar/startup"
 	"northstar/trader"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 )
+
+var ensureLiveStartupValidation = func(configFile string, cfg *config.Config) (startup.LiveValidationStatus, error) {
+	return startup.EnsureValidatedLiveStartup(configFile, cfg.Traders, time.Now())
+}
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -59,6 +65,20 @@ func run(args []string) int {
 
 	log.Printf(" Config loaded successfully, %d traders participating", len(cfg.Traders))
 	fmt.Println()
+
+	liveValidationStatus, err := ensureLiveStartupValidation(configFile, cfg)
+	if err != nil {
+		log.Printf(" LIVE START BLOCK: %v", err)
+		return 1
+	}
+	if liveValidationStatus.Required {
+		log.Printf(
+			" Live deployment validation confirmed: source=%s checked_at=%s config=%s",
+			liveValidationStatus.Source,
+			liveValidationStatus.CheckedAt.Format(time.RFC3339),
+			liveValidationStatus.ValidatedConfigFile,
+		)
+	}
 
 	//  Safety Check: Ensure CONFIRM_LIVE_TRADING=true if any trader is in live mode
 	for _, traderCfg := range cfg.Traders {
