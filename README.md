@@ -30,6 +30,37 @@ It supports multiple brokers/exchanges and both paper-style and live execution m
 - Deployment validation command: `northstar validate-live` checks release build identity, working tree cleanliness, live config validity, promotion status, readiness, and risk-limit presence before deployment
 - Live launcher enforcement: `run_ibkr_live.cmd` now runs `validate-live` itself and aborts immediately if that validation fails
 
+## Green Test Discipline
+
+Northstar now has one canonical Go verification command for the active trading paths:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\run_green_checks.ps1
+```
+
+That script runs:
+
+```powershell
+go test -count=1 ./...
+```
+
+Why this is the enforced path:
+
+- it covers the current Go runtime, broker, execution, reconciliation, startup, deployment, and safety packages in one deterministic pass
+- `-count=1` avoids cached test results so local and CI runs reflect the current tree
+- it is the same command used by GitHub Actions in `.github/workflows/go-tests.yml`
+
+CI enforcement:
+
+- runs on `pull_request`
+- runs on pushes to `main`
+- fails the workflow immediately if the Go tree is not green
+
+Operator/developer rule:
+
+- do not treat a branch as deployment-ready unless `tools\run_green_checks.ps1` passes locally
+- do not treat `main` as healthy if the `Go Tests` workflow is red
+
 ## Requirements
 
 - Go 1.25+
