@@ -156,6 +156,35 @@ func TestReconcileLeavesMissingEntryOrderUnresolvedWithoutPositionEvidence(t *te
 	}
 }
 
+func TestPrimaryExecutionTruthIssuePrefersUnresolvedOverInferred(t *testing.T) {
+	issues := []Issue{
+		{
+			LocalID:     "local-inferred",
+			Message:     "execution inferred from position evidence",
+			Authority:   TruthAuthorityReconciliationInferred,
+			Confidence:  TruthConfidenceHigh,
+			NeedsReview: true,
+			Repaired:    true,
+		},
+		{
+			LocalID:     "local-unresolved",
+			Message:     "execution truth remains unresolved",
+			Authority:   TruthAuthorityUnresolved,
+			Confidence:  TruthConfidenceUnresolved,
+			NeedsReview: true,
+			Repaired:    false,
+		},
+	}
+
+	primary := PrimaryExecutionTruthIssue(issues)
+	if primary == nil {
+		t.Fatalf("expected primary issue")
+	}
+	if primary.LocalID != "local-unresolved" || primary.Authority != TruthAuthorityUnresolved {
+		t.Fatalf("expected unresolved issue to win, got %+v", primary)
+	}
+}
+
 func TestNormalizeBrokerStatus(t *testing.T) {
 	if got := NormalizeBrokerStatus("Submitted", 0, 10, 10); got != StatusAccepted {
 		t.Fatalf("expected accepted, got %s", got)

@@ -168,6 +168,55 @@ type Summary struct {
 	LastIssues              []Issue   `json:"last_issues,omitempty"`
 }
 
+func PrimaryExecutionTruthIssue(issues []Issue) *Issue {
+	if len(issues) == 0 {
+		return nil
+	}
+	bestIndex := -1
+	bestScore := -1
+	for idx, issue := range issues {
+		score := executionTruthIssueScore(issue)
+		if score > bestScore {
+			bestScore = score
+			bestIndex = idx
+		}
+	}
+	if bestIndex < 0 {
+		return nil
+	}
+	cloned := issues[bestIndex]
+	return &cloned
+}
+
+func executionTruthIssueScore(issue Issue) int {
+	score := 0
+	switch issue.Authority {
+	case TruthAuthorityUnresolved:
+		score += 100
+	case TruthAuthorityReconciliationInferred:
+		score += 50
+	case TruthAuthorityBrokerConfirmed:
+		score += 10
+	}
+	switch issue.Confidence {
+	case TruthConfidenceUnresolved:
+		score += 40
+	case TruthConfidenceHigh:
+		score += 30
+	case TruthConfidenceMedium:
+		score += 20
+	case TruthConfidenceConfirmed:
+		score += 10
+	}
+	if issue.NeedsReview {
+		score += 5
+	}
+	if !issue.Repaired {
+		score += 3
+	}
+	return score
+}
+
 const storeStateVersion = 1
 
 type StoreState struct {

@@ -78,6 +78,13 @@ func (t *restartStateTestTrader) LookupOrderRecord(localID, brokerOrderID string
 	return t.orderStore.Lookup(localID, brokerOrderID)
 }
 
+func (t *restartStateTestTrader) GetOrderReconciliationSummary() orders.Summary {
+	if t.orderStore == nil {
+		return orders.Summary{}
+	}
+	return t.orderStore.SnapshotSummary()
+}
+
 func newRestartStateTestAutoTrader(cfg AutoTraderConfig, tr *restartStateTestTrader) *AutoTrader {
 	at := &AutoTrader{
 		id:               cfg.ID,
@@ -276,5 +283,69 @@ func TestDurableRuntimeStatePreservesUnresolvedOrderTruth(t *testing.T) {
 	}
 	if record.TruthAuthority != orders.TruthAuthorityUnresolved || record.TruthConfidence != orders.TruthConfidenceUnresolved || !record.NeedsReview {
 		t.Fatalf("expected unresolved truth metadata after restore, got %+v", record)
+	}
+}
+
+func TestDurableRuntimeStatePreservesInferredOrderTruthRestriction(t *testing.T) {
+	cleanup := withTempWorkingDir(t)
+	defer cleanup()
+
+	cfg := AutoTraderConfig{ID: "inferred_restart", Name: "Inferred Restart", Mode: "paper", Broker: "ibkr", Exchange: "ibkr", StrategyMode: "momentum_only"}
+	trader := &restartStateTestTrader{orderStore: orders.NewStore()}
+	at := newRestartStateTestAutoTrader(cfg, trader)
+	localID := trader.orderStore.RegisterSubmitted(orders.IntentEntryLong, "AAPL", "BUY", "long", 10, time.Now().Add(-time.Minute).UTC())
+	state := trader.orderStore.SnapshotState()
+	for idx := range state.Orders {
+		if state.Orders[idx].LocalID != localID {
+			continue
+		}
+		state.Orders[idx].Status = orders.StatusFilled
+		state.Orders[idx].TruthAuthority = orders.TruthAuthorityReconciliationInferred
+		state.Orders[idx].TruthConfidence = orders.TruthConfidenceHigh
+		state.Orders[idx].TruthReason = "entry order inferred from broker position evidence"
+		state.Orders[idx].NeedsReview = true
+	}
+	state.Summary.CurrentInferredOrders = 1
+	state.Summary.ConfidenceDegraded = true
+	state.Summary.LastRunAt = time.Now().UTC()
+	state.Summary.LastSuccessAt = state.Summary.LastRunAt
+	state.Summary.LastSummary = "order reconciliation handled 1 mismatch(es): local_missing=1 unknown_broker=0 fill_mismatches=0 inferred=1 unresolved=0"
+	state.Summary.LastIssues = []orders.Issue{{
+		LocalID:     localID,
+		Message:     "entry order inferred from broker position evidence",
+		Authority:   orders.TruthAuthorityReconciliationInferred,
+		Confidence:  orders.TruthConfidenceHigh,
+		NeedsReview: true,
+		Repaired:    true,
+	}}
+	if err := trader.orderStore.RestoreState(state); err != nil {
+		t.Fatalf("RestoreState failed: %v", err)
+	}
+	at.persistDurableRuntimeState("test_inferred_truth")
+
+	restoredTrader := &restartStateTestTrader{orderStore: orders.NewStore()}
+	restored := newRestartStateTestAutoTrader(cfg, restoredTrader)
+	restored.positionReconSummary = freshPositionReconSummary(time.Now())
+	restored.setRuntimeAccountSnapshot(AccountSummary{
+		AccountingVersion:      accountingVersion,
+		StrategyInitialCapital: 100000,
+		StrategyEquity:         100000,
+		AccountEquity:          100000,
+		AvailableBalance:       100000,
+		PositionCount:          1,
+	}, []map[string]interface{}{})
+	restored.restoreDurableRuntimeState()
+	restored.resolveRestartRecoveryAfterBrokerReconciliation("test_restore")
+
+	record := restoredTrader.orderStore.Lookup(localID, "")
+	if record == nil {
+		t.Fatalf("expected inferred order to restore")
+	}
+	if record.TruthAuthority != orders.TruthAuthorityReconciliationInferred || record.TruthConfidence != orders.TruthConfidenceHigh || !record.NeedsReview {
+		t.Fatalf("expected inferred truth metadata after restore, got %+v", record)
+	}
+	gate := restored.currentTradingGateDecision(false, restored.currentLatestAccountSummary())
+	if !gate.TradingAllowed || gate.EntriesAllowed || !gate.ExitsAllowed || !gate.ReduceOnly {
+		t.Fatalf("expected restored inferred truth to restrict entries, got %+v", gate)
 	}
 }

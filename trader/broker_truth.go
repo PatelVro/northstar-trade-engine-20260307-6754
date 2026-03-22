@@ -2,6 +2,7 @@ package trader
 
 import (
 	"errors"
+	"northstar/orders"
 	"strings"
 	"time"
 )
@@ -12,7 +13,9 @@ type brokerTruthSummary struct {
 	BrokerManaged        bool
 	Verified             bool
 	TradingBlocked       bool
+	EntriesRestricted    bool
 	ConfidenceDegraded   bool
+	RestrictionReason    string
 	AccountRequired      bool
 	AccountVerified      bool
 	OrdersRequired       bool
@@ -27,6 +30,12 @@ type brokerTruthSummary struct {
 	MarketDataCheckedAt  time.Time
 	InferredOrderCount   int
 	UnresolvedOrderCount int
+	PrimaryIssueLocalID  string
+	PrimaryIssueBrokerID string
+	PrimaryAuthority     orders.TruthAuthority
+	PrimaryConfidence    orders.TruthConfidence
+	PrimaryReason        string
+	PrimaryNeedsReview   bool
 	Message              string
 	BlockingReasons      []string
 }
@@ -143,6 +152,14 @@ func (at *AutoTrader) currentBrokerTruthSummary() brokerTruthSummary {
 			summary.OrdersCheckedAt = orderRecon.LastRunAt
 			summary.InferredOrderCount = orderRecon.CurrentInferredOrders
 			summary.UnresolvedOrderCount = orderRecon.CurrentUnresolvedOrders
+			if issue := orders.PrimaryExecutionTruthIssue(orderRecon.LastIssues); issue != nil {
+				summary.PrimaryIssueLocalID = strings.TrimSpace(issue.LocalID)
+				summary.PrimaryIssueBrokerID = strings.TrimSpace(issue.BrokerOrderID)
+				summary.PrimaryAuthority = issue.Authority
+				summary.PrimaryConfidence = issue.Confidence
+				summary.PrimaryReason = strings.TrimSpace(issue.Message)
+				summary.PrimaryNeedsReview = issue.NeedsReview
+			}
 			lastError := strings.TrimSpace(orderRecon.LastError)
 			switch {
 			case orderRecon.LastRunAt.IsZero():
@@ -198,12 +215,24 @@ func (at *AutoTrader) currentBrokerTruthSummary() brokerTruthSummary {
 		summary.TradingBlocked = true
 		summary.BlockingReasons = append(summary.BlockingReasons, blocking...)
 		summary.Message = blocking[0]
+		if summary.UnresolvedOrderCount > 0 && summary.PrimaryReason != "" {
+			summary.Message = summary.PrimaryReason
+			if !containsString(summary.BlockingReasons, summary.PrimaryReason) {
+				summary.BlockingReasons = append(summary.BlockingReasons, summary.PrimaryReason)
+			}
+		}
 		return summary
 	}
 
 	summary.Verified = true
 	if summary.ConfidenceDegraded && summary.InferredOrderCount > 0 {
-		summary.Message = "broker truth verified with reconciliation-inferred execution outcomes; operator review recommended"
+		summary.EntriesRestricted = true
+		summary.RestrictionReason = "broker truth confidence is degraded by reconciliation-inferred execution outcomes; new entries are restricted pending clean reconciliation"
+		if summary.PrimaryAuthority == orders.TruthAuthorityReconciliationInferred && summary.PrimaryReason != "" {
+			summary.Message = summary.RestrictionReason + ": " + summary.PrimaryReason
+			return summary
+		}
+		summary.Message = summary.RestrictionReason
 		return summary
 	}
 	summary.Message = "broker/account/order/position/data truth verified for active mode"
@@ -252,6 +281,19 @@ func firstNonZeroTime(values ...time.Time) time.Time {
 		}
 	}
 	return time.Time{}
+}
+
+func containsString(values []string, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), target) {
+			return true
+		}
+	}
+	return false
 }
 
 func (at *AutoTrader) seedRuntimeAccountSnapshot(balance map[string]interface{}, rawPositions []map[string]interface{}) {

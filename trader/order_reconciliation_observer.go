@@ -89,7 +89,11 @@ func (at *AutoTrader) observeOrderReconciliationExecutionTruth(result orders.Rec
 		}
 		if issue := firstOrderIssueWithAuthority(result.Issues, orders.TruthAuthorityReconciliationInferred); issue != nil {
 			details["local_order_id"] = strings.TrimSpace(issue.LocalID)
+			details["broker_order_id"] = strings.TrimSpace(issue.BrokerOrderID)
+			details["authority"] = string(issue.Authority)
 			details["confidence"] = string(issue.Confidence)
+			details["needs_review"] = fmt.Sprintf("%t", issue.NeedsReview)
+			details["reason"] = strings.TrimSpace(issue.Message)
 		}
 		at.observeIncident(incidents.Signal{
 			IncidentType:  incidents.TypeOrderReconciliationInferredExecution,
@@ -123,7 +127,11 @@ func (at *AutoTrader) observeOrderReconciliationExecutionTruth(result orders.Rec
 		}
 		if issue := firstOrderIssueWithAuthority(result.Issues, orders.TruthAuthorityUnresolved); issue != nil {
 			details["local_order_id"] = strings.TrimSpace(issue.LocalID)
+			details["broker_order_id"] = strings.TrimSpace(issue.BrokerOrderID)
+			details["authority"] = string(issue.Authority)
 			details["confidence"] = string(issue.Confidence)
+			details["needs_review"] = fmt.Sprintf("%t", issue.NeedsReview)
+			details["reason"] = strings.TrimSpace(issue.Message)
 		}
 		at.observeIncident(incidents.Signal{
 			IncidentType:  incidents.TypeOrderReconciliationUnresolvedExecution,

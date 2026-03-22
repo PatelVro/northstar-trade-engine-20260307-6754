@@ -347,6 +347,27 @@ func (at *AutoTrader) currentTradingGateDecision(probeStrictLive bool, account *
 			Message:         fmt.Sprintf("trading blocked: %s", blockReason),
 		}
 	}
+	if brokerTruth.EntriesRestricted {
+		blockReason := strings.TrimSpace(brokerTruth.RestrictionReason)
+		if blockReason == "" {
+			blockReason = "broker truth confidence is degraded by reconciliation-inferred execution outcomes"
+		}
+		reasons := make([]string, 0, 2)
+		reasons = append(reasons, blockReason)
+		if reason := strings.TrimSpace(brokerTruth.PrimaryReason); reason != "" && !strings.EqualFold(reason, blockReason) {
+			reasons = append(reasons, reason)
+		}
+		return tradingGateDecision{
+			Mode:            risk.SupervisorModeReduceOnly,
+			TradingAllowed:  true,
+			EntriesAllowed:  false,
+			ExitsAllowed:    true,
+			ReduceOnly:      true,
+			BlockReason:     blockReason,
+			BlockingReasons: reasons,
+			Message:         fmt.Sprintf("trading restricted: %s", blockReason),
+		}
+	}
 
 	reasons := make([]string, 0, len(state.Incidents))
 	for _, incident := range state.Incidents {

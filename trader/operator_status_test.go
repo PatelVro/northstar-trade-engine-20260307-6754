@@ -222,6 +222,16 @@ func TestGetOperatorStatus_IncludesOrderReconciliationSummary(t *testing.T) {
 			CurrentUnresolvedOrders: 0,
 			ConfidenceDegraded:      true,
 			LastSummary:             "order reconciliation handled 2 mismatch(es): local_missing=1 unknown_broker=1 fill_mismatches=0 inferred=1 unresolved=0",
+			LastIssues: []orders.Issue{
+				{
+					LocalID:     "paper-local-1",
+					Message:     "entry order inferred from broker position evidence",
+					Authority:   orders.TruthAuthorityReconciliationInferred,
+					Confidence:  orders.TruthConfidenceMedium,
+					NeedsReview: true,
+					Repaired:    true,
+				},
+			},
 		},
 	}
 
@@ -262,6 +272,9 @@ func TestGetOperatorStatus_IncludesOrderReconciliationSummary(t *testing.T) {
 	}
 	if status.OrderReconciliation.TotalInferredOutcomes != 1 || !status.OrderReconciliation.ConfidenceDegraded {
 		t.Fatalf("expected inferred/degraded reconciliation summary, got %+v", status.OrderReconciliation)
+	}
+	if status.OrderReconciliation.PrimaryAuthority != string(orders.TruthAuthorityReconciliationInferred) || status.OrderReconciliation.PrimaryIssueLocalID != "paper-local-1" {
+		t.Fatalf("expected primary inferred issue in operator reconciliation summary, got %+v", status.OrderReconciliation)
 	}
 	if status.OrderReconciliationSummary == "" {
 		t.Fatalf("expected compatibility order reconciliation summary")

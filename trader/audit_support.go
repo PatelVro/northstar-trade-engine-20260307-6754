@@ -26,6 +26,7 @@ func (at *AutoTrader) logDecisionAndAudit(record *logger.DecisionRecord, ctx *de
 	if record == nil {
 		return nil
 	}
+	at.enrichDecisionRecordExecutionTruth(record)
 	if err := at.decisionLogger.LogDecision(record); err != nil {
 		return err
 	}
@@ -42,6 +43,27 @@ func (at *AutoTrader) logDecisionAndAudit(record *logger.DecisionRecord, ctx *de
 		}
 	}
 	return nil
+}
+
+func (at *AutoTrader) enrichDecisionRecordExecutionTruth(record *logger.DecisionRecord) {
+	if at == nil || record == nil || len(record.Decisions) == 0 {
+		return
+	}
+	lookup, ok := at.trader.(orderLookupSource)
+	if !ok || lookup == nil {
+		return
+	}
+	for idx := range record.Decisions {
+		action := &record.Decisions[idx]
+		order := lookup.LookupOrderRecord(action.LocalOrderID, action.BrokerOrderID)
+		if order == nil {
+			continue
+		}
+		action.ExecutionTruthAuthority = string(order.TruthAuthority)
+		action.ExecutionTruthConfidence = string(order.TruthConfidence)
+		action.ExecutionTruthReason = strings.TrimSpace(order.TruthReason)
+		action.ExecutionNeedsReview = order.NeedsReview
+	}
 }
 
 func (at *AutoTrader) buildDecisionAuditRecord(record *logger.DecisionRecord, ctx *decision.Context) audit.DecisionRecord {

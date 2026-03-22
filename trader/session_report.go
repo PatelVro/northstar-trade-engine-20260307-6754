@@ -141,6 +141,14 @@ type PaperSessionReport struct {
 	OrderReconciliationInferred       int                           `json:"order_reconciliation_inferred_outcomes"`
 	OrderReconciliationUnresolved     int                           `json:"order_reconciliation_unresolved_outcomes"`
 	OrderReconciliationDegraded       bool                          `json:"order_reconciliation_confidence_degraded"`
+	OrderReconciliationRestricted     bool                          `json:"order_reconciliation_entries_restricted"`
+	OrderReconciliationRestriction    string                        `json:"order_reconciliation_restriction_reason,omitempty"`
+	OrderReconciliationPrimaryLocalID string                        `json:"order_reconciliation_primary_local_order_id,omitempty"`
+	OrderReconciliationPrimaryBroker  string                        `json:"order_reconciliation_primary_broker_order_id,omitempty"`
+	OrderReconciliationPrimaryAuth    string                        `json:"order_reconciliation_primary_authority,omitempty"`
+	OrderReconciliationPrimaryConf    string                        `json:"order_reconciliation_primary_confidence,omitempty"`
+	OrderReconciliationPrimaryReason  string                        `json:"order_reconciliation_primary_reason,omitempty"`
+	OrderReconciliationNeedsReview    bool                          `json:"order_reconciliation_primary_needs_review"`
 	OrderReconciliationSummary        string                        `json:"order_reconciliation_summary"`
 	PositionReconciliationRuns        int                           `json:"position_reconciliation_runs"`
 	PositionReconciliationIncidents   int                           `json:"position_reconciliation_incidents"`
@@ -1048,6 +1056,21 @@ func applyPaperSessionOrderReconciliation(report *PaperSessionReport, start, end
 	report.OrderReconciliationInferred = maxInt(0, end.TotalInferredOutcomes-startInferred)
 	report.OrderReconciliationUnresolved = maxInt(0, end.TotalUnresolvedOutcomes-startUnresolved)
 	report.OrderReconciliationDegraded = end.ConfidenceDegraded
+	report.OrderReconciliationRestricted = end.CurrentInferredOrders > 0
+	if report.OrderReconciliationRestricted {
+		report.OrderReconciliationRestriction = "broker truth confidence degraded by reconciliation-inferred execution outcomes; new entries restricted pending clean reconciliation"
+	}
+	if issue := orders.PrimaryExecutionTruthIssue(end.LastIssues); issue != nil {
+		report.OrderReconciliationPrimaryLocalID = strings.TrimSpace(issue.LocalID)
+		report.OrderReconciliationPrimaryBroker = strings.TrimSpace(issue.BrokerOrderID)
+		report.OrderReconciliationPrimaryAuth = string(issue.Authority)
+		report.OrderReconciliationPrimaryConf = string(issue.Confidence)
+		report.OrderReconciliationPrimaryReason = strings.TrimSpace(issue.Message)
+		report.OrderReconciliationNeedsReview = issue.NeedsReview
+		if report.OrderReconciliationRestricted && report.OrderReconciliationPrimaryReason != "" {
+			report.OrderReconciliationRestriction = "broker truth confidence degraded by reconciliation-inferred execution outcomes; new entries restricted pending clean reconciliation: " + report.OrderReconciliationPrimaryReason
+		}
+	}
 	report.OrderReconciliationSummary = strings.TrimSpace(end.LastSummary)
 }
 
@@ -1102,6 +1125,9 @@ func classifyPaperSessionCompletion(report PaperSessionReport, hasStart, hasEnd,
 		return SessionCompletionDegraded
 	}
 	if report.OrderReconciliationUnresolved > 0 {
+		return SessionCompletionDegraded
+	}
+	if report.OrderReconciliationInferred > 0 {
 		return SessionCompletionDegraded
 	}
 	if report.SessionHadOperationalIncident && report.CriticalIncidentCount > 0 {

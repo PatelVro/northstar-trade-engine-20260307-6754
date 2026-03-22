@@ -479,9 +479,10 @@ When reconciliation has to repair a broker-missing order from position evidence,
 Operator-facing impact:
 
 - `/api/status.order_reconciliation` now exposes current confirmed, inferred, pending, and unresolved counts
+- `/api/status.order_reconciliation` and `/api/status.broker_truth` now expose the primary current execution-truth issue, including authority, confidence, and whether review is required
 - `/api/status.broker_truth` now shows when broker truth is verified but confidence is degraded by inferred outcomes
 - unresolved broker-missing outcomes open critical incidents/alerts and keep trading blocked through the broker-truth gate
-- inferred outcomes open warning incidents/alerts and remain visible in session reports and order audit records
+- inferred outcomes open warning incidents/alerts, restrict new entries until reconciliation is clean again, and remain visible in session reports, decision logs, and order audit records
 
 Protective orders are now also truth-driven:
 
@@ -493,9 +494,10 @@ Protective orders are now also truth-driven:
 Operator checks when broker-managed order truth is degraded:
 
 1. Inspect `/api/status.order_reconciliation` for `current_inferred_orders` and `current_unresolved_orders`
-2. Review `output/audit/orders/<trader_id>/` to see whether the lifecycle truth was broker-confirmed or reconciliation-inferred
-3. If `current_unresolved_orders > 0`, do not resume normal entries until reconciliation clears the ambiguity
-4. If only inferred outcomes remain, keep trading supervised and confirm the broker lifecycle catches up before treating the result as fully broker-confirmed
+2. Inspect `/api/status.broker_truth` for `entries_restricted`, `primary_issue_authority`, `primary_issue_confidence`, and the primary issue reason
+3. Review `output/audit/orders/<trader_id>/` to see whether the lifecycle truth was broker-confirmed or reconciliation-inferred
+4. If `current_unresolved_orders > 0`, do not resume normal entries until reconciliation clears the ambiguity
+5. If only inferred outcomes remain, keep trading in the restricted state and confirm the broker lifecycle catches up before treating the result as fully broker-confirmed
 
 ## Equity strategy modes
 

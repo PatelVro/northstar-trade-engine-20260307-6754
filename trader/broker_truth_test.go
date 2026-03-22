@@ -215,6 +215,16 @@ func TestBrokerTruthSummaryMarksInferredOrderTruthAsDegraded(t *testing.T) {
 			CurrentInferredOrders:  1,
 			ConfidenceDegraded:     true,
 			CurrentConfirmedOrders: 1,
+			LastIssues: []orders.Issue{
+				{
+					LocalID:     "local-inferred",
+					Message:     "entry order inferred from broker position evidence",
+					Authority:   orders.TruthAuthorityReconciliationInferred,
+					Confidence:  orders.TruthConfidenceHigh,
+					NeedsReview: true,
+					Repaired:    true,
+				},
+			},
 		},
 	}
 
@@ -251,6 +261,19 @@ func TestBrokerTruthSummaryMarksInferredOrderTruthAsDegraded(t *testing.T) {
 	}
 	if !summary.ConfidenceDegraded || summary.InferredOrderCount != 1 {
 		t.Fatalf("expected degraded inferred broker truth summary, got %+v", summary)
+	}
+	if !summary.EntriesRestricted {
+		t.Fatalf("expected inferred broker truth to restrict entries, got %+v", summary)
+	}
+	if summary.PrimaryAuthority != orders.TruthAuthorityReconciliationInferred || summary.PrimaryConfidence != orders.TruthConfidenceHigh {
+		t.Fatalf("expected inferred primary issue metadata, got %+v", summary)
+	}
+	gate := at.currentTradingGateDecision(false, at.currentLatestAccountSummary())
+	if !gate.TradingAllowed || gate.EntriesAllowed || !gate.ExitsAllowed || !gate.ReduceOnly {
+		t.Fatalf("expected inferred broker truth to put trading into reduce_only, got %+v", gate)
+	}
+	if !strings.Contains(strings.ToLower(gate.BlockReason), "reconciliation-inferred") {
+		t.Fatalf("expected inferred broker truth reason, got %q", gate.BlockReason)
 	}
 }
 
@@ -290,9 +313,21 @@ func TestGetOperatorStatus_IncludesBrokerTruthSummary(t *testing.T) {
 	now := time.Now()
 	trader := &brokerTruthTestTrader{
 		orderSummary: orders.Summary{
-			LastRunAt:     now,
-			LastSuccessAt: now,
-			LastSummary:   "order reconciliation clean",
+			LastRunAt:             now,
+			LastSuccessAt:         now,
+			LastSummary:           "order reconciliation handled 1 mismatch(es): local_missing=1 unknown_broker=0 fill_mismatches=0 inferred=1 unresolved=0",
+			CurrentInferredOrders: 1,
+			ConfidenceDegraded:    true,
+			LastIssues: []orders.Issue{
+				{
+					LocalID:     "status-local-order",
+					Message:     "entry order inferred from broker position evidence",
+					Authority:   orders.TruthAuthorityReconciliationInferred,
+					Confidence:  orders.TruthConfidenceMedium,
+					NeedsReview: true,
+					Repaired:    true,
+				},
+			},
 		},
 	}
 
@@ -317,15 +352,29 @@ func TestGetOperatorStatus_IncludesBrokerTruthSummary(t *testing.T) {
 	at.initializeBrokerRuntimeState()
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", TradingAllowed: true, CheckedAt: now})
 	at.positionReconSummary = freshPositionReconSummary(now)
+	at.setRuntimeAccountSnapshot(AccountSummary{
+		AccountingVersion:      accountingVersion,
+		StrategyInitialCapital: 100000,
+		StrategyEquity:         100000,
+		AccountEquity:          100000,
+		AvailableBalance:       100000,
+		PositionCount:          1,
+	}, []map[string]interface{}{})
 
 	status := at.GetOperatorStatus()
 	if !status.BrokerTruth.Available || !status.BrokerTruth.Required {
 		t.Fatalf("expected broker truth summary to be available and required, got %+v", status.BrokerTruth)
 	}
-	if !status.BrokerTruth.TradingBlocked {
-		t.Fatalf("expected broker truth summary to show blocked trading, got %+v", status.BrokerTruth)
+	if status.BrokerTruth.TradingBlocked {
+		t.Fatalf("expected inferred broker truth to restrict but not block, got %+v", status.BrokerTruth)
 	}
-	if status.BrokerTruthMessage == "" {
+	if !status.BrokerTruth.EntriesRestricted || status.BrokerTruth.PrimaryAuthority != string(orders.TruthAuthorityReconciliationInferred) {
+		t.Fatalf("expected operator status to expose inferred broker truth restriction, got %+v", status.BrokerTruth)
+	}
+	if status.BrokerTruth.PrimaryIssueLocalID != "status-local-order" || !status.BrokerTruth.PrimaryNeedsReview {
+		t.Fatalf("expected operator status to expose primary issue details, got %+v", status.BrokerTruth)
+	}
+	if status.BrokerTruthMessage == "" || status.BrokerTruthRestrictionReason == "" {
 		t.Fatalf("expected compatibility broker truth message to be populated")
 	}
 }

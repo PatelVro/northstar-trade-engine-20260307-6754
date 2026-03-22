@@ -83,34 +83,38 @@ func (s AccountSnapshot) EffectiveStrategyEquity() (float64, bool) {
 
 // DecisionAction documents an individual executed decision
 type DecisionAction struct {
-	Action                string            `json:"action"` // open_long, open_short, close_long, close_short
-	Symbol                string            `json:"symbol"` // Asset symbol
-	DecisionReasoning     string            `json:"decision_reasoning,omitempty"`
-	DecisionConfidence    int               `json:"decision_confidence,omitempty"`
-	DecisionPositionSize  float64           `json:"decision_position_size_usd,omitempty"`
-	DecisionStopLoss      float64           `json:"decision_stop_loss,omitempty"`
-	DecisionTakeProfit    float64           `json:"decision_take_profit,omitempty"`
-	Quantity              float64           `json:"quantity"` // Position quantity size
-	Leverage              int               `json:"leverage"` // Leverage application size
-	Price                 float64           `json:"price"`    // Execution price
-	FeesUSD               float64           `json:"fees_usd"` // Fees paid on this execution when known
-	RealizedPnL           float64           `json:"realized_pnl"`
-	OrderID               int64             `json:"order_id"` // Exchange Order ID
-	BrokerOrderID         string            `json:"broker_order_id,omitempty"`
-	LocalOrderID          string            `json:"local_order_id,omitempty"`
-	OrderStatus           string            `json:"order_status,omitempty"`
-	Timestamp             time.Time         `json:"timestamp"` // Execution timestamp
-	Success               bool              `json:"success"`   // Outcome flag
-	Error                 string            `json:"error"`     // Error message
-	RiskOutcome           string            `json:"risk_outcome,omitempty"`
-	RiskSummary           string            `json:"risk_summary,omitempty"`
-	RiskRequestedQuantity float64           `json:"risk_requested_quantity,omitempty"`
-	RiskRequestedNotional float64           `json:"risk_requested_notional,omitempty"`
-	RiskApprovedQuantity  float64           `json:"risk_approved_quantity,omitempty"`
-	RiskApprovedNotional  float64           `json:"risk_approved_notional,omitempty"`
-	RiskChecks            []RiskCheckResult `json:"risk_checks,omitempty"`
-	Pipeline              *PipelineDecision `json:"pipeline,omitempty"`
-	Shadow                *ShadowExecution  `json:"shadow,omitempty"`
+	Action                   string            `json:"action"` // open_long, open_short, close_long, close_short
+	Symbol                   string            `json:"symbol"` // Asset symbol
+	DecisionReasoning        string            `json:"decision_reasoning,omitempty"`
+	DecisionConfidence       int               `json:"decision_confidence,omitempty"`
+	DecisionPositionSize     float64           `json:"decision_position_size_usd,omitempty"`
+	DecisionStopLoss         float64           `json:"decision_stop_loss,omitempty"`
+	DecisionTakeProfit       float64           `json:"decision_take_profit,omitempty"`
+	Quantity                 float64           `json:"quantity"` // Position quantity size
+	Leverage                 int               `json:"leverage"` // Leverage application size
+	Price                    float64           `json:"price"`    // Execution price
+	FeesUSD                  float64           `json:"fees_usd"` // Fees paid on this execution when known
+	RealizedPnL              float64           `json:"realized_pnl"`
+	OrderID                  int64             `json:"order_id"` // Exchange Order ID
+	BrokerOrderID            string            `json:"broker_order_id,omitempty"`
+	LocalOrderID             string            `json:"local_order_id,omitempty"`
+	OrderStatus              string            `json:"order_status,omitempty"`
+	ExecutionTruthAuthority  string            `json:"execution_truth_authority,omitempty"`
+	ExecutionTruthConfidence string            `json:"execution_truth_confidence,omitempty"`
+	ExecutionTruthReason     string            `json:"execution_truth_reason,omitempty"`
+	ExecutionNeedsReview     bool              `json:"execution_needs_review,omitempty"`
+	Timestamp                time.Time         `json:"timestamp"` // Execution timestamp
+	Success                  bool              `json:"success"`   // Outcome flag
+	Error                    string            `json:"error"`     // Error message
+	RiskOutcome              string            `json:"risk_outcome,omitempty"`
+	RiskSummary              string            `json:"risk_summary,omitempty"`
+	RiskRequestedQuantity    float64           `json:"risk_requested_quantity,omitempty"`
+	RiskRequestedNotional    float64           `json:"risk_requested_notional,omitempty"`
+	RiskApprovedQuantity     float64           `json:"risk_approved_quantity,omitempty"`
+	RiskApprovedNotional     float64           `json:"risk_approved_notional,omitempty"`
+	RiskChecks               []RiskCheckResult `json:"risk_checks,omitempty"`
+	Pipeline                 *PipelineDecision `json:"pipeline,omitempty"`
+	Shadow                   *ShadowExecution  `json:"shadow,omitempty"`
 }
 
 type RiskCheckResult struct {

@@ -74,6 +74,17 @@ func TestClassifyPaperSessionCompletionDegraded(t *testing.T) {
 	}
 }
 
+func TestClassifyPaperSessionCompletionDegradedOnInferredOrderTruth(t *testing.T) {
+	report := PaperSessionReport{
+		TradingAllowedAtStart:       true,
+		DecisionCycles:              6,
+		OrderReconciliationInferred: 1,
+	}
+	if got := classifyPaperSessionCompletion(report, true, true, false); got != SessionCompletionDegraded {
+		t.Fatalf("expected inferred execution truth to degrade session status, got %s", got)
+	}
+}
+
 func TestWritePaperSessionReportWritesExpectedJSON(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "output", "session_reports", "paper_trader", "paper_trader_session_20260315_093000.json")
@@ -327,6 +338,17 @@ func TestApplyPaperSessionOrderReconciliationUsesDeltas(t *testing.T) {
 		TotalUnresolvedOutcomes: 1,
 		ConfidenceDegraded:      true,
 		LastSummary:             "order reconciliation handled 3 mismatch(es): local_missing=1 unknown_broker=1 fill_mismatches=1 inferred=2 unresolved=1",
+		LastIssues: []orders.Issue{
+			{
+				LocalID:       "session-local-1",
+				BrokerOrderID: "broker-123",
+				Message:       "execution truth remains unresolved",
+				Authority:     orders.TruthAuthorityUnresolved,
+				Confidence:    orders.TruthConfidenceUnresolved,
+				NeedsReview:   true,
+				Repaired:      false,
+			},
+		},
 	}
 
 	applyPaperSessionOrderReconciliation(&report, start, end)
@@ -351,6 +373,9 @@ func TestApplyPaperSessionOrderReconciliationUsesDeltas(t *testing.T) {
 	}
 	if report.OrderReconciliationInferred != 2 || report.OrderReconciliationUnresolved != 1 || !report.OrderReconciliationDegraded {
 		t.Fatalf("expected inferred/unresolved reconciliation deltas, got %+v", report)
+	}
+	if report.OrderReconciliationPrimaryLocalID != "session-local-1" || report.OrderReconciliationPrimaryAuth != string(orders.TruthAuthorityUnresolved) {
+		t.Fatalf("expected primary reconciliation issue details, got %+v", report)
 	}
 }
 

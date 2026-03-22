@@ -181,7 +181,9 @@ type OperatorBrokerTruthSummary struct {
 	BrokerManaged        bool     `json:"broker_managed"`
 	Verified             bool     `json:"verified"`
 	TradingBlocked       bool     `json:"trading_blocked"`
+	EntriesRestricted    bool     `json:"entries_restricted"`
 	ConfidenceDegraded   bool     `json:"confidence_degraded"`
+	RestrictionReason    string   `json:"restriction_reason"`
 	AccountRequired      bool     `json:"account_required"`
 	AccountVerified      bool     `json:"account_verified"`
 	OrdersRequired       bool     `json:"orders_required"`
@@ -196,6 +198,12 @@ type OperatorBrokerTruthSummary struct {
 	MarketDataCheckedAt  string   `json:"market_data_checked_at"`
 	InferredOrderCount   int      `json:"inferred_order_count"`
 	UnresolvedOrderCount int      `json:"unresolved_order_count"`
+	PrimaryIssueLocalID  string   `json:"primary_issue_local_order_id,omitempty"`
+	PrimaryIssueBrokerID string   `json:"primary_issue_broker_order_id,omitempty"`
+	PrimaryAuthority     string   `json:"primary_issue_authority,omitempty"`
+	PrimaryConfidence    string   `json:"primary_issue_confidence,omitempty"`
+	PrimaryReason        string   `json:"primary_issue_reason,omitempty"`
+	PrimaryNeedsReview   bool     `json:"primary_issue_needs_review"`
 	Message              string   `json:"message"`
 	BlockingReasons      []string `json:"blocking_reasons"`
 }
@@ -272,6 +280,12 @@ type OperatorOrderReconciliationSummary struct {
 	LastInferredAt          string         `json:"last_inferred_at"`
 	LastUnresolvedAt        string         `json:"last_unresolved_at"`
 	ConfidenceDegraded      bool           `json:"confidence_degraded"`
+	PrimaryIssueLocalID     string         `json:"primary_issue_local_order_id,omitempty"`
+	PrimaryIssueBrokerID    string         `json:"primary_issue_broker_order_id,omitempty"`
+	PrimaryAuthority        string         `json:"primary_issue_authority,omitempty"`
+	PrimaryConfidence       string         `json:"primary_issue_confidence,omitempty"`
+	PrimaryReason           string         `json:"primary_issue_reason,omitempty"`
+	PrimaryNeedsReview      bool           `json:"primary_issue_needs_review"`
 	LastSummary             string         `json:"last_summary"`
 	LastIssues              []orders.Issue `json:"last_issues,omitempty"`
 }
@@ -474,7 +488,9 @@ type OperatorStatusSummary struct {
 	BrokerTruthRequired             bool               `json:"broker_truth_required"`
 	BrokerTruthVerified             bool               `json:"broker_truth_verified"`
 	BrokerTruthTradingBlocked       bool               `json:"broker_truth_trading_blocked"`
+	BrokerTruthEntriesRestricted    bool               `json:"broker_truth_entries_restricted"`
 	BrokerTruthMessage              string             `json:"broker_truth_message"`
+	BrokerTruthRestrictionReason    string             `json:"broker_truth_restriction_reason"`
 	DeploymentValidationRequired    bool               `json:"deployment_validation_required"`
 	DeploymentValidationPassed      bool               `json:"deployment_validation_passed"`
 	DeploymentValidationFresh       bool               `json:"deployment_validation_fresh"`
@@ -564,6 +580,10 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 	brokerTruth := at.currentBrokerTruthSummary()
 	eventJournal := at.currentEventJournalSummary()
 	deploymentValidation := startup.CurrentLiveValidationStatus("", strings.EqualFold(at.config.Mode, "live"), time.Now())
+	var primaryOrderIssue *orders.Issue
+	if orderRecon != nil {
+		primaryOrderIssue = orders.PrimaryExecutionTruthIssue(orderRecon.LastIssues)
+	}
 
 	aiProvider := "DeepSeek"
 	if at.demoMode {
@@ -756,7 +776,9 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		BrokerManaged:        brokerTruth.BrokerManaged,
 		Verified:             brokerTruth.Verified,
 		TradingBlocked:       brokerTruth.TradingBlocked,
+		EntriesRestricted:    brokerTruth.EntriesRestricted,
 		ConfidenceDegraded:   brokerTruth.ConfidenceDegraded,
+		RestrictionReason:    brokerTruth.RestrictionReason,
 		AccountRequired:      brokerTruth.AccountRequired,
 		AccountVerified:      brokerTruth.AccountVerified,
 		OrdersRequired:       brokerTruth.OrdersRequired,
@@ -771,6 +793,12 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		MarketDataCheckedAt:  formatRFC3339(brokerTruth.MarketDataCheckedAt),
 		InferredOrderCount:   brokerTruth.InferredOrderCount,
 		UnresolvedOrderCount: brokerTruth.UnresolvedOrderCount,
+		PrimaryIssueLocalID:  brokerTruth.PrimaryIssueLocalID,
+		PrimaryIssueBrokerID: brokerTruth.PrimaryIssueBrokerID,
+		PrimaryAuthority:     string(brokerTruth.PrimaryAuthority),
+		PrimaryConfidence:    string(brokerTruth.PrimaryConfidence),
+		PrimaryReason:        brokerTruth.PrimaryReason,
+		PrimaryNeedsReview:   brokerTruth.PrimaryNeedsReview,
 		Message:              brokerTruth.Message,
 		BlockingReasons:      append([]string(nil), brokerTruth.BlockingReasons...),
 	}
@@ -833,6 +861,12 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 			LastInferredAt:          formatRFC3339(orderRecon.LastInferredAt),
 			LastUnresolvedAt:        formatRFC3339(orderRecon.LastUnresolvedAt),
 			ConfidenceDegraded:      orderRecon.ConfidenceDegraded,
+			PrimaryIssueLocalID:     strings.TrimSpace(primaryOrderIssueField(primaryOrderIssue, "local_id")),
+			PrimaryIssueBrokerID:    strings.TrimSpace(primaryOrderIssueField(primaryOrderIssue, "broker_id")),
+			PrimaryAuthority:        strings.TrimSpace(primaryOrderIssueField(primaryOrderIssue, "authority")),
+			PrimaryConfidence:       strings.TrimSpace(primaryOrderIssueField(primaryOrderIssue, "confidence")),
+			PrimaryReason:           strings.TrimSpace(primaryOrderIssueField(primaryOrderIssue, "message")),
+			PrimaryNeedsReview:      primaryOrderIssue != nil && primaryOrderIssue.NeedsReview,
 			LastSummary:             orderRecon.LastSummary,
 			LastIssues:              append([]orders.Issue(nil), orderRecon.LastIssues...),
 		}
@@ -1053,7 +1087,9 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		BrokerTruthRequired:             brokerTruthSummary.Required,
 		BrokerTruthVerified:             brokerTruthSummary.Verified,
 		BrokerTruthTradingBlocked:       brokerTruthSummary.TradingBlocked,
+		BrokerTruthEntriesRestricted:    brokerTruthSummary.EntriesRestricted,
 		BrokerTruthMessage:              brokerTruthSummary.Message,
+		BrokerTruthRestrictionReason:    brokerTruthSummary.RestrictionReason,
 		DeploymentValidationRequired:    deploymentValidationSummary.Required,
 		DeploymentValidationPassed:      deploymentValidationSummary.Passed,
 		DeploymentValidationFresh:       deploymentValidationSummary.Fresh,
@@ -1112,6 +1148,26 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		LatestIncidentSummary:           operatorIncidents.LatestIncidentSummary,
 		LatestIncidentSeverity:          string(operatorIncidents.LatestIncidentSeverity),
 		LatestIncidentRunbookHint:       operatorIncidents.LatestIncidentRunbookHint,
+	}
+}
+
+func primaryOrderIssueField(issue *orders.Issue, field string) string {
+	if issue == nil {
+		return ""
+	}
+	switch field {
+	case "local_id":
+		return issue.LocalID
+	case "broker_id":
+		return issue.BrokerOrderID
+	case "authority":
+		return string(issue.Authority)
+	case "confidence":
+		return string(issue.Confidence)
+	case "message":
+		return issue.Message
+	default:
+		return ""
 	}
 }
 
