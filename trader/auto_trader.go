@@ -278,6 +278,8 @@ type AutoTrader struct {
 	restartPersistMu                      sync.Mutex
 	eventJournalMu                        sync.Mutex
 	lastJournaledTradingGateKey           string
+	lastJournaledBrokerTruthKey           string
+	lastJournaledProtectionStateByKey     map[string]string
 	sessionReportMu                       sync.Mutex
 	sessionReportState                    *paperSessionTracker
 	lastSessionReportPath                 string

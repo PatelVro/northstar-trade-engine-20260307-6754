@@ -133,6 +133,15 @@ func TestJournalOrderAndReconciliationEventsPreserveTruthMetadata(t *testing.T) 
 	if events[1].Severity != JournalSeverityWarning {
 		t.Fatalf("expected reconciliation severity warning, got %q", events[1].Severity)
 	}
+	if events[1].TruthAuthority != string(orders.TruthAuthorityReconciliationInferred) {
+		t.Fatalf("expected reconciliation event to promote truth authority, got %q", events[1].TruthAuthority)
+	}
+	if events[1].TruthConfidence != string(orders.TruthConfidenceHigh) {
+		t.Fatalf("expected reconciliation event to promote truth confidence, got %q", events[1].TruthConfidence)
+	}
+	if events[1].LocalOrderID != "local-1" {
+		t.Fatalf("expected reconciliation event to surface local order id, got %q", events[1].LocalOrderID)
+	}
 }
 
 func TestNewJournalRestoresSummaryFromExistingFile(t *testing.T) {

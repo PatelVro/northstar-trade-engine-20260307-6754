@@ -127,12 +127,15 @@ func (at *AutoTrader) upsertPendingProtection(state pendingProtectionState) {
 		return
 	}
 
+	var previous *pendingProtectionState
 	at.protectionMu.Lock()
 	if at.pendingProtections == nil {
 		at.pendingProtections = make(map[string]pendingProtectionState)
 	}
 	state.UpdatedAt = time.Now().UTC()
 	if existing, ok := at.pendingProtections[pendingProtectionKey(state.Symbol, state.PositionSide)]; ok {
+		cloned := existing
+		previous = &cloned
 		if state.CreatedAt.IsZero() {
 			state.CreatedAt = existing.CreatedAt
 		}
@@ -149,26 +152,31 @@ func (at *AutoTrader) upsertPendingProtection(state pendingProtectionState) {
 	at.pendingProtections[pendingProtectionKey(state.Symbol, state.PositionSide)] = state
 	at.protectionLastUpdatedAt = state.UpdatedAt
 	at.protectionMu.Unlock()
+	at.journalProtectionState(state, previous)
 	at.persistDurableRuntimeState("pending_protection_update")
 }
 
 func (at *AutoTrader) clearPendingProtection(symbol, positionSide, reason string) {
 	key := pendingProtectionKey(symbol, positionSide)
+	var removed pendingProtectionState
 	at.protectionMu.Lock()
 	if at.pendingProtections == nil {
 		at.protectionMu.Unlock()
 		return
 	}
-	if _, exists := at.pendingProtections[key]; !exists {
+	existing, exists := at.pendingProtections[key]
+	if !exists {
 		at.protectionMu.Unlock()
 		return
 	}
+	removed = normalizePendingProtectionState(existing)
 	delete(at.pendingProtections, key)
 	at.protectionLastUpdatedAt = time.Now().UTC()
 	at.protectionMu.Unlock()
 	if strings.TrimSpace(reason) != "" {
 		log.Printf(" [%s] Cleared pending protection for %s %s: %s", at.name, strings.ToUpper(strings.TrimSpace(symbol)), strings.ToLower(strings.TrimSpace(positionSide)), strings.TrimSpace(reason))
 	}
+	at.journalProtectionCleared(removed, reason)
 	at.persistDurableRuntimeState("pending_protection_clear")
 }
 

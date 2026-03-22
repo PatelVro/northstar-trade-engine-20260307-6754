@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"northstar/audit"
+	"northstar/orders"
 	"os"
 	"path/filepath"
 	"testing"
@@ -55,11 +56,14 @@ func TestJournalTradingGateTransitionsAreDeduped(t *testing.T) {
 	at.journalTradingGateDecision("test", allowed)
 
 	events := readTraderJournalEvents(t, filepath.Join("output", "audit", "journal", at.id, "events.jsonl"))
-	if len(events) != 2 {
-		t.Fatalf("expected 2 gate journal events after dedupe, got %d", len(events))
+	gateEvents := 0
+	for _, event := range events {
+		if event.Type == "trading_gate_changed" {
+			gateEvents++
+		}
 	}
-	if events[0].Type != "trading_gate_changed" || events[1].Type != "trading_gate_changed" {
-		t.Fatalf("unexpected journal event types: %+v", events)
+	if gateEvents != 2 {
+		t.Fatalf("expected 2 gate journal events after dedupe, got %d in %+v", gateEvents, events)
 	}
 }
 
@@ -166,6 +170,80 @@ func TestOperatorStatusIncludesEventJournalSummary(t *testing.T) {
 	}
 	if status.EventJournal.LastEventType != "restart_state_restored" {
 		t.Fatalf("expected last event type restart_state_restored, got %q", status.EventJournal.LastEventType)
+	}
+}
+
+func TestJournalTradingGateTransitionsAlsoCaptureBrokerTruthState(t *testing.T) {
+	cleanup := withTempWorkingDir(t)
+	defer cleanup()
+
+	now := time.Now().UTC()
+	trader := &brokerTruthTestTrader{
+		orderSummary: orders.Summary{
+			LastRunAt:             now,
+			LastSuccessAt:         now,
+			LastSummary:           "order reconciliation handled 1 mismatch(es): local_missing=1 unknown_broker=0 fill_mismatches=0 inferred=1 unresolved=0",
+			CurrentInferredOrders: 1,
+			ConfidenceDegraded:    true,
+			LastIssues: []orders.Issue{{
+				LocalID:     "broker-local-1",
+				Message:     "entry order inferred from broker position evidence",
+				Authority:   orders.TruthAuthorityReconciliationInferred,
+				Confidence:  orders.TruthConfidenceHigh,
+				NeedsReview: true,
+				Repaired:    true,
+			}},
+		},
+	}
+	at := &AutoTrader{
+		id:       "journal_broker_truth",
+		name:     "Journal Broker Truth",
+		exchange: "ibkr",
+		trader:   trader,
+		config: AutoTraderConfig{
+			ID:           "journal_broker_truth",
+			Name:         "Journal Broker Truth",
+			Mode:         "paper",
+			Broker:       "ibkr",
+			StrategyMode: "momentum_only",
+			ScanInterval: 5 * time.Minute,
+		},
+		eventJournal: audit.NewJournal(filepath.Join("output", "audit"), audit.Metadata{
+			TraderID:     "journal_broker_truth",
+			TraderName:   "Journal Broker Truth",
+			Mode:         "paper",
+			Broker:       "ibkr",
+			StrategyMode: "momentum_only",
+		}),
+		isRunning: true,
+	}
+	at.initializeBrokerRuntimeState()
+	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "ready", CheckedAt: now, TradingAllowed: true})
+	at.positionReconSummary = freshPositionReconSummary(now)
+	at.setRuntimeAccountSnapshot(AccountSummary{
+		AccountingVersion:      accountingVersion,
+		StrategyInitialCapital: 100000,
+		StrategyEquity:         100000,
+		AccountEquity:          100000,
+		AvailableBalance:       100000,
+		PositionCount:          1,
+	}, []map[string]interface{}{})
+
+	at.journalTradingGateDecision("test", at.currentTradingGateDecision(false, at.currentLatestAccountSummary()))
+
+	events := readTraderJournalEvents(t, filepath.Join("output", "audit", "journal", at.id, "events.jsonl"))
+	found := false
+	for _, event := range events {
+		if event.Type != "broker_truth_restricted" {
+			continue
+		}
+		found = true
+		if event.TruthAuthority != string(orders.TruthAuthorityReconciliationInferred) || event.LocalOrderID != "broker-local-1" {
+			t.Fatalf("expected broker truth journal to preserve inferred primary issue, got %+v", event)
+		}
+	}
+	if !found {
+		t.Fatalf("expected broker_truth_restricted journal event, got %+v", events)
 	}
 }
 

@@ -222,15 +222,40 @@ func (j *Journal) OnReconciliation(result orders.ReconciliationResult) {
 	if result.UnresolvedOutcomes > 0 || result.TradingBlocked {
 		severity = JournalSeverityCritical
 	}
+	var (
+		symbol          string
+		localOrderID    string
+		brokerOrderID   string
+		truthAuthority  string
+		truthConfidence string
+		needsReview     bool
+		message         = journalFirstNonEmpty(strings.TrimSpace(result.Summary), "order reconciliation observed mismatches or repairs")
+	)
+	if issue := orders.PrimaryExecutionTruthIssue(result.Issues); issue != nil {
+		localOrderID = strings.TrimSpace(issue.LocalID)
+		brokerOrderID = strings.TrimSpace(issue.BrokerOrderID)
+		truthAuthority = string(issue.Authority)
+		truthConfidence = string(issue.Confidence)
+		needsReview = issue.NeedsReview
+		payload["primary_issue"] = issue
+		if trimmed := strings.TrimSpace(issue.Message); trimmed != "" {
+			message = trimmed
+		}
+	}
 	_ = j.Append(JournalEvent{
-		Timestamp:      result.RanAt,
-		Family:         "reconciliation",
-		Type:           "order_reconciliation",
-		Severity:       severity,
-		NeedsReview:    result.NeedsReview,
-		TradingBlocked: result.TradingBlocked,
-		Message:        journalFirstNonEmpty(strings.TrimSpace(result.Summary), "order reconciliation observed mismatches or repairs"),
-		Payload:        payload,
+		Timestamp:       result.RanAt,
+		Family:          "reconciliation",
+		Type:            "order_reconciliation",
+		Severity:        severity,
+		Symbol:          symbol,
+		LocalOrderID:    localOrderID,
+		BrokerOrderID:   brokerOrderID,
+		TruthAuthority:  truthAuthority,
+		TruthConfidence: truthConfidence,
+		NeedsReview:     result.NeedsReview || needsReview,
+		TradingBlocked:  result.TradingBlocked,
+		Message:         message,
+		Payload:         payload,
 	})
 }
 

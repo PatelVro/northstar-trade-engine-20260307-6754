@@ -269,15 +269,18 @@ This journal is intentionally narrow. It is not a giant all-events logging syste
 
 - execution lifecycle transitions observed through the local order lifecycle store
 - reconciliation runs that repair, infer, or leave broker-managed execution outcomes unresolved
+- explicit broker-truth state transitions such as verified, restricted, blocked, and recovered
 - trading-gate transitions that materially change whether trading, entries, or exits are allowed
 - kill-switch activation / clear / cancel-open-orders outcomes
 - restart-recovery restore / pending / failure / reconciled markers
+- protection-state transitions such as pending creation, submission pending, clear, and protection confirmed
 
 Important truth model:
 
 - broker-confirmed lifecycle truth stays distinct from reconciliation-inferred truth
 - inferred execution outcomes are preserved as inferred in the journal with authority/confidence fields
 - unresolved broker-missing outcomes remain explicit and safety-relevant
+- reconciliation events now promote the primary inferred/unresolved issue into explicit journal authority/confidence/order-id fields
 - the journal is append-only and survives restart because each event is appended and synced to disk
 
 Operator checks:

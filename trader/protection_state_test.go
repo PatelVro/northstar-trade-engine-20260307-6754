@@ -2,10 +2,12 @@ package trader
 
 import (
 	"fmt"
+	"northstar/audit"
 	"northstar/decision"
 	"northstar/execution"
 	"northstar/logger"
 	"northstar/orders"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -373,5 +375,76 @@ func TestOperatorStatusIncludesAcknowledgedExecutionAndPendingProtection(t *test
 	}
 	if status.Protection.Message == "" {
 		t.Fatalf("expected protection summary message to be populated")
+	}
+}
+
+func TestProtectionStateTransitionsWriteJournalEvents(t *testing.T) {
+	cleanup := withTempWorkingDir(t)
+	defer cleanup()
+
+	cfg := AutoTraderConfig{ID: "protect_journal", Name: "Protect Journal", Mode: "paper", Broker: "ibkr", Exchange: "ibkr", StrategyMode: "momentum_only"}
+	trader := &protectionTestTrader{orderStore: orders.NewStore()}
+	at := newProtectionTestAutoTrader(cfg, trader)
+	at.eventJournal = audit.NewJournal(filepath.Join("output", "audit"), audit.Metadata{
+		TraderID:     cfg.ID,
+		TraderName:   cfg.Name,
+		Mode:         cfg.Mode,
+		Broker:       cfg.Broker,
+		StrategyMode: cfg.StrategyMode,
+	})
+
+	at.handleEntryProtection(&decision.Decision{Symbol: "AAPL", StopLoss: 95, TakeProfit: 110}, &logger.DecisionAction{
+		Symbol:        "AAPL",
+		Quantity:      10,
+		OrderStatus:   string(execution.StatusAcknowledged),
+		LocalOrderID:  "local-1",
+		BrokerOrderID: "101",
+	}, "long", 10)
+
+	now := time.Now().UTC()
+	if err := trader.RestoreOrderStoreState(orders.StoreState{
+		Version: 1,
+		Orders: []orders.Record{
+			{
+				LocalID:         "local-1",
+				BrokerOrderID:   "101",
+				Intent:          orders.IntentEntryLong,
+				Symbol:          "AAPL",
+				Side:            "BUY",
+				PositionSide:    "long",
+				Status:          orders.StatusFilled,
+				RequestedQty:    10,
+				FilledQty:       10,
+				RemainingQty:    0,
+				TruthAuthority:  orders.TruthAuthorityBrokerConfirmed,
+				TruthConfidence: orders.TruthConfidenceConfirmed,
+				SubmittedAt:     now.Add(-10 * time.Second),
+				UpdatedAt:       now,
+				LastSeenAt:      now,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("RestoreOrderStoreState failed: %v", err)
+	}
+
+	at.processPendingProtections(&decision.Context{
+		Positions: []decision.PositionInfo{
+			{Symbol: "AAPL", Side: "long", Quantity: 10},
+		},
+	})
+
+	events := readTraderJournalEvents(t, filepath.Join("output", "audit", "journal", cfg.ID, "events.jsonl"))
+	hasPending := false
+	hasConfirmed := false
+	for _, event := range events {
+		switch event.Type {
+		case "protection_pending_created", "protection_pending_fill", "protection_submission_pending":
+			hasPending = true
+		case "protection_confirmed":
+			hasConfirmed = true
+		}
+	}
+	if !hasPending || !hasConfirmed {
+		t.Fatalf("expected protection journal to capture pending and confirmed states, got %+v", events)
 	}
 }
