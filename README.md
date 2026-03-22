@@ -172,6 +172,15 @@ Tracked live-like templates:
 
 - `config_ibkr_shadow.example.json`
 - `config_ibkr_paper_live.example.json`
+- `config_ibkr_shadow.openai.json`
+
+`run_ibkr_shadow.cmd` now picks the shadow config in this order:
+
+1. `config_ibkr_shadow.json`
+2. `config_ibkr_shadow.openai.json` when `NORTHSTAR_CUSTOM_API_KEY` or `OPENAI_API_KEY` is available
+3. `config_ibkr_shadow.example.json`
+
+If the launcher selects `config_ibkr_shadow.openai.json`, it will also map `OPENAI_API_KEY` into `NORTHSTAR_CUSTOM_API_KEY` automatically and set conservative defaults for `NORTHSTAR_CUSTOM_API_URL` and `NORTHSTAR_CUSTOM_MODEL_NAME` when they are not already set. Because that config intentionally swaps the model provider and uses the simulated broker, the launcher prints a parity warning and skips the strict live-baseline drift check instead of pretending it is exact live parity.
 
 The IBKR live-like launchers can also auto-resolve the local paper account ID and the current `x-sess-uuid` session cookie from the authenticated local gateway, so you do not need to export those values manually when IBeam is already healthy.
 
