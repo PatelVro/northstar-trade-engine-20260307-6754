@@ -136,6 +136,7 @@ func (tm *TraderManager) AddTrader(cfg config.TraderConfig, defaultSymbols []str
 		MinLiquidityUSD:                     cfg.MinLiquidityUSD,
 		MinDecisionConfidence:               cfg.MinDecisionConfidence,
 		ExecutionCommissionBps:              cfg.ExecutionCommissionBps,
+		ExecutionSpreadBps:                  cfg.ExecutionSpreadBps,
 		ExecutionSlippageBps:                cfg.ExecutionSlippageBps,
 		ExecutionImpactBps:                  cfg.ExecutionImpactBps,
 		MaxParticipationRate:                cfg.MaxParticipationRate,

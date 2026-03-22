@@ -25,7 +25,7 @@ const (
 	SessionCompletionPartial   SessionCompletionStatus = "partial"
 )
 
-const sessionReportVersion = 16
+const sessionReportVersion = 17
 
 type SessionPortfolioRiskSnapshot struct {
 	EvaluatedAt time.Time             `json:"evaluated_at"`
@@ -51,6 +51,7 @@ type PaperSessionReport struct {
 	Broker                            string                        `json:"broker"`
 	StrategyMode                      string                        `json:"strategy_mode"`
 	ModeParity                        ModeParitySummary             `json:"mode_parity"`
+	EvaluationCosts                   EvaluationCostSummary         `json:"evaluation_costs"`
 	UniverseSelectionMode             string                        `json:"universe_selection_mode"`
 	UniverseConfiguredSource          string                        `json:"universe_configured_source"`
 	UniverseConfiguredCount           int                           `json:"universe_configured_count"`
@@ -202,6 +203,7 @@ type paperSessionTracker struct {
 	criticalSeen     map[string]struct{}
 	incidentTypes    map[string]struct{}
 	notableIncidents map[string]struct{}
+	actualFeesUSD    float64
 }
 
 func (at *AutoTrader) paperSessionReportsEnabled() bool {
@@ -538,6 +540,9 @@ func (t *paperSessionTracker) observeDecisionRecord(record *logger.DecisionRecor
 			}
 		}
 		t.report.ActionableDecisions++
+		if action.FeesUSD > 0 {
+			t.actualFeesUSD += action.FeesUSD
+		}
 		if action.Shadow != nil && action.Shadow.Active {
 			t.report.ShadowModeActive = true
 			t.report.ShadowDecisionsTotal++
@@ -893,6 +898,7 @@ func (at *AutoTrader) writePaperSessionReport(tracker *paperSessionTracker, reas
 	report.EventJournalLastSeverity = string(journal.LastSeverity)
 	report.EventJournalLastError = journal.LastError
 	report.ModeParity = modeParity
+	report.EvaluationCosts = at.currentEvaluationCostSummary(tracker.actualFeesUSD)
 	status := at.GetOperatorStatus()
 	report.FinalRuntimeConditionState = string(status.RuntimeCondition.State)
 	report.FinalRuntimeConditionSeverity = string(status.RuntimeCondition.Severity)

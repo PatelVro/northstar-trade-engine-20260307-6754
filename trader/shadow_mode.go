@@ -25,40 +25,50 @@ type shadowPosition struct {
 }
 
 type shadowModeState struct {
-	Available                 bool
-	Active                    bool
-	LastDecisionAt            time.Time
-	LastDecisionSymbol        string
-	LastDecisionAction        string
-	LastDecisionStatus        string
-	TotalDecisions            int
-	WouldTradeCount           int
-	BlockedCount              int
-	OpenPositions             int
-	ClosedTrades              int
-	HypotheticalRealizedPnL   float64
-	HypotheticalUnrealizedPnL float64
-	LastBlockReason           string
-	RecentDecisions           []logger.ShadowExecution
-	Positions                 map[string]*shadowPosition
+	Available                    bool
+	Active                       bool
+	LastDecisionAt               time.Time
+	LastDecisionSymbol           string
+	LastDecisionAction           string
+	LastDecisionStatus           string
+	TotalDecisions               int
+	WouldTradeCount              int
+	BlockedCount                 int
+	OpenPositions                int
+	ClosedTrades                 int
+	HypotheticalRealizedPnL      float64
+	HypotheticalUnrealizedPnL    float64
+	ModeledCommissionUSD         float64
+	ModeledSpreadCostUSD         float64
+	ModeledSlippageCostUSD       float64
+	ModeledImpactCostUSD         float64
+	ModeledTotalExecutionCostUSD float64
+	LastBlockReason              string
+	RecentDecisions              []logger.ShadowExecution
+	Positions                    map[string]*shadowPosition
 }
 
 type shadowModeSummary struct {
-	Available                 bool
-	Active                    bool
-	LastDecisionAt            time.Time
-	LastDecisionSymbol        string
-	LastDecisionAction        string
-	LastDecisionStatus        string
-	TotalDecisions            int
-	WouldTradeCount           int
-	BlockedCount              int
-	OpenPositions             int
-	ClosedTrades              int
-	HypotheticalRealizedPnL   float64
-	HypotheticalUnrealizedPnL float64
-	LastBlockReason           string
-	RecentDecisions           []logger.ShadowExecution
+	Available                    bool
+	Active                       bool
+	LastDecisionAt               time.Time
+	LastDecisionSymbol           string
+	LastDecisionAction           string
+	LastDecisionStatus           string
+	TotalDecisions               int
+	WouldTradeCount              int
+	BlockedCount                 int
+	OpenPositions                int
+	ClosedTrades                 int
+	HypotheticalRealizedPnL      float64
+	HypotheticalUnrealizedPnL    float64
+	ModeledCommissionUSD         float64
+	ModeledSpreadCostUSD         float64
+	ModeledSlippageCostUSD       float64
+	ModeledImpactCostUSD         float64
+	ModeledTotalExecutionCostUSD float64
+	LastBlockReason              string
+	RecentDecisions              []logger.ShadowExecution
 }
 
 type shadowExecutionBroker struct {
@@ -86,20 +96,25 @@ func (at *AutoTrader) currentShadowSummary() shadowModeSummary {
 	defer at.shadowMu.RUnlock()
 
 	summary := shadowModeSummary{
-		Available:                 at.shadowState.Available,
-		Active:                    at.shadowState.Active,
-		LastDecisionAt:            at.shadowState.LastDecisionAt,
-		LastDecisionSymbol:        at.shadowState.LastDecisionSymbol,
-		LastDecisionAction:        at.shadowState.LastDecisionAction,
-		LastDecisionStatus:        at.shadowState.LastDecisionStatus,
-		TotalDecisions:            at.shadowState.TotalDecisions,
-		WouldTradeCount:           at.shadowState.WouldTradeCount,
-		BlockedCount:              at.shadowState.BlockedCount,
-		OpenPositions:             at.shadowState.OpenPositions,
-		ClosedTrades:              at.shadowState.ClosedTrades,
-		HypotheticalRealizedPnL:   at.shadowState.HypotheticalRealizedPnL,
-		HypotheticalUnrealizedPnL: at.shadowState.HypotheticalUnrealizedPnL,
-		LastBlockReason:           at.shadowState.LastBlockReason,
+		Available:                    at.shadowState.Available,
+		Active:                       at.shadowState.Active,
+		LastDecisionAt:               at.shadowState.LastDecisionAt,
+		LastDecisionSymbol:           at.shadowState.LastDecisionSymbol,
+		LastDecisionAction:           at.shadowState.LastDecisionAction,
+		LastDecisionStatus:           at.shadowState.LastDecisionStatus,
+		TotalDecisions:               at.shadowState.TotalDecisions,
+		WouldTradeCount:              at.shadowState.WouldTradeCount,
+		BlockedCount:                 at.shadowState.BlockedCount,
+		OpenPositions:                at.shadowState.OpenPositions,
+		ClosedTrades:                 at.shadowState.ClosedTrades,
+		HypotheticalRealizedPnL:      at.shadowState.HypotheticalRealizedPnL,
+		HypotheticalUnrealizedPnL:    at.shadowState.HypotheticalUnrealizedPnL,
+		ModeledCommissionUSD:         at.shadowState.ModeledCommissionUSD,
+		ModeledSpreadCostUSD:         at.shadowState.ModeledSpreadCostUSD,
+		ModeledSlippageCostUSD:       at.shadowState.ModeledSlippageCostUSD,
+		ModeledImpactCostUSD:         at.shadowState.ModeledImpactCostUSD,
+		ModeledTotalExecutionCostUSD: at.shadowState.ModeledTotalExecutionCostUSD,
+		LastBlockReason:              at.shadowState.LastBlockReason,
 	}
 	if len(at.shadowState.RecentDecisions) > 0 {
 		summary.RecentDecisions = append([]logger.ShadowExecution(nil), at.shadowState.RecentDecisions...)
@@ -121,11 +136,8 @@ func (at *AutoTrader) ensureShadowPipelineContext(ctx *decision.Context) error {
 	return nil
 }
 
-func (at *AutoTrader) shadowExecutionAdapter(actionRecord *logger.DecisionAction) execution.Broker {
-	price := 0.0
-	if actionRecord != nil {
-		price = actionRecord.Price
-	}
+func (at *AutoTrader) shadowExecutionAdapter(referencePrice float64) execution.Broker {
+	price := referencePrice
 	return &shadowExecutionBroker{at: at, price: price}
 }
 
@@ -162,6 +174,17 @@ func (b *shadowExecutionBroker) hypotheticalFill(action, symbol string, quantity
 	if fillQty <= 0 {
 		return nil, fmt.Errorf("shadow mode has no hypothetical quantity available for %s %s", symbol, action)
 	}
+	side := shadowSideForAction(action)
+	isOpen := strings.HasPrefix(strings.ToLower(strings.TrimSpace(action)), "open_")
+	model := ExecutionCostModel{}
+	if b.at != nil {
+		model = currentExecutionCostModel(b.at.config)
+	}
+	estimate := model.Estimate(price, fillQty, side, isOpen, 0, false)
+	fillPrice := estimate.EffectivePrice
+	if fillPrice <= 0 {
+		fillPrice = price
+	}
 
 	orderID := fmt.Sprintf("shadow-%s-%d", strings.ToLower(strings.TrimSpace(symbol)), time.Now().UTC().UnixNano())
 	return map[string]interface{}{
@@ -169,11 +192,11 @@ func (b *shadowExecutionBroker) hypotheticalFill(action, symbol string, quantity
 		"localOrderId":  orderID,
 		"brokerOrderId": orderID,
 		"filled_qty":    fillQty,
-		"price":         price,
+		"price":         fillPrice,
 	}, nil
 }
 
-func (at *AutoTrader) observeShadowExecution(decision *decision.Decision, actionRecord *logger.DecisionAction, intent execution.Intent, result execution.Result) {
+func (at *AutoTrader) observeShadowExecution(decision *decision.Decision, actionRecord *logger.DecisionAction, intent execution.Intent, result execution.Result, referencePrice float64) {
 	if !at.shadowModeEnabled() || actionRecord == nil {
 		return
 	}
@@ -181,6 +204,9 @@ func (at *AutoTrader) observeShadowExecution(decision *decision.Decision, action
 	price := result.AverageFillPrice
 	if price <= 0 {
 		price = actionRecord.Price
+	}
+	if referencePrice <= 0 {
+		referencePrice = price
 	}
 	qty := result.FillQuantity
 	if qty <= 0 {
@@ -191,15 +217,24 @@ func (at *AutoTrader) observeShadowExecution(decision *decision.Decision, action
 	}
 
 	entry := logger.ShadowExecution{
-		Active:               true,
-		RecordedAt:           time.Now().UTC(),
-		ReferencePrice:       price,
-		HypotheticalQuantity: qty,
-		HypotheticalNotional: qty * price,
+		Active:                true,
+		RecordedAt:            time.Now().UTC(),
+		ReferencePrice:        referencePrice,
+		HypotheticalFillPrice: price,
+		HypotheticalQuantity:  qty,
+		HypotheticalNotional:  qty * price,
 	}
 	if decision != nil {
 		entry.RecordedAt = time.Now().UTC()
 	}
+	isOpen := strings.HasPrefix(strings.ToLower(strings.TrimSpace(intent.ActionType)), "open_")
+	costEstimate := currentExecutionCostModel(at.config).Estimate(referencePrice, qty, shadowSideForAction(intent.ActionType), isOpen, 0, false)
+	entry.AppliedFrictionBps = costEstimate.AppliedFrictionBps
+	entry.ModeledCommissionUSD = costEstimate.CommissionUSD
+	entry.ModeledSpreadCostUSD = costEstimate.SpreadCostUSD
+	entry.ModeledSlippageCostUSD = costEstimate.SlippageCostUSD
+	entry.ModeledImpactCostUSD = costEstimate.ImpactCostUSD
+	entry.ModeledExecutionCostUSD = costEstimate.TotalModeledCostUSD
 
 	at.shadowMu.Lock()
 	at.shadowState.Available = true
@@ -221,8 +256,8 @@ func (at *AutoTrader) observeShadowExecution(decision *decision.Decision, action
 		at.shadowState.WouldTradeCount++
 		entry.Status = "would_trade"
 		entry.WouldTrade = true
-		entry.Message = "shadow mode recorded a hypothetical trade; no broker order was sent"
-		at.applyShadowPortfolioUpdateLocked(intent, price, qty, &entry)
+		entry.Message = "shadow mode recorded a hypothetical trade with modeled execution friction; no broker order was sent"
+		at.applyShadowPortfolioUpdateLocked(intent, price, qty, costEstimate, &entry)
 	}
 
 	at.shadowState.LastDecisionStatus = entry.Status
@@ -242,7 +277,7 @@ func (at *AutoTrader) observeShadowExecution(decision *decision.Decision, action
 	at.persistDurableRuntimeState("shadow_execution")
 }
 
-func (at *AutoTrader) applyShadowPortfolioUpdateLocked(intent execution.Intent, price, qty float64, entry *logger.ShadowExecution) {
+func (at *AutoTrader) applyShadowPortfolioUpdateLocked(intent execution.Intent, price, qty float64, costEstimate executionCostEstimate, entry *logger.ShadowExecution) {
 	if entry == nil {
 		return
 	}
@@ -276,6 +311,7 @@ func (at *AutoTrader) applyShadowPortfolioUpdateLocked(intent execution.Intent, 
 				pos.LastMarkedAt = time.Now().UTC()
 			}
 		}
+		at.shadowState.HypotheticalRealizedPnL -= costEstimate.CommissionUSD
 	case "close_long", "close_short":
 		pos := at.shadowState.Positions[key]
 		if pos == nil {
@@ -290,7 +326,7 @@ func (at *AutoTrader) applyShadowPortfolioUpdateLocked(intent execution.Intent, 
 			entry.Warnings = append(entry.Warnings, "close_without_positive_shadow_quantity")
 			return
 		}
-		realized := shadowRealizedPnL(pos.Side, pos.EntryPrice, price, closeQty)
+		realized := shadowRealizedPnL(pos.Side, pos.EntryPrice, price, closeQty) - costEstimate.CommissionUSD
 		entry.RealizedPnL = realized
 		at.shadowState.HypotheticalRealizedPnL += realized
 		pos.Quantity -= closeQty
@@ -304,6 +340,11 @@ func (at *AutoTrader) applyShadowPortfolioUpdateLocked(intent execution.Intent, 
 		pos.Notional = pos.Quantity * pos.EntryPrice
 		pos.UnrealizedPnL = shadowUnrealizedPnL(pos.Side, pos.EntryPrice, pos.CurrentPrice, pos.Quantity)
 	}
+	at.shadowState.ModeledCommissionUSD += costEstimate.CommissionUSD
+	at.shadowState.ModeledSpreadCostUSD += costEstimate.SpreadCostUSD
+	at.shadowState.ModeledSlippageCostUSD += costEstimate.SlippageCostUSD
+	at.shadowState.ModeledImpactCostUSD += costEstimate.ImpactCostUSD
+	at.shadowState.ModeledTotalExecutionCostUSD += costEstimate.TotalModeledCostUSD
 }
 
 func (at *AutoTrader) appendShadowDecisionLocked(entry logger.ShadowExecution) {

@@ -90,6 +90,7 @@ type TraderConfig struct {
 	MinDecisionConfidence               int     `json:"min_decision_confidence,omitempty"`                 // Drop low-confidence open signals
 	RegimeRiskScaling                   *bool   `json:"regime_risk_scaling,omitempty"`                     // Default true
 	ExecutionCommissionBps              float64 `json:"execution_commission_bps,omitempty"`                // Simulated commission per side (bps)
+	ExecutionSpreadBps                  float64 `json:"execution_spread_bps,omitempty"`                    // Simulated spread/friction proxy per side (bps)
 	ExecutionSlippageBps                float64 `json:"execution_slippage_bps,omitempty"`                  // Simulated slippage per side (bps)
 	ExecutionImpactBps                  float64 `json:"execution_impact_bps,omitempty"`                    // Extra slippage component scaled by bar participation
 	MaxParticipationRate                float64 `json:"max_participation_rate,omitempty"`                  // Max fill participation per bar in simulator (0-1]
@@ -409,6 +410,9 @@ func (c *Config) Validate() error {
 				if trader.ExecutionCommissionBps < 0 {
 					trader.ExecutionCommissionBps = 0
 				}
+				if trader.ExecutionSpreadBps < 0 {
+					trader.ExecutionSpreadBps = 0
+				}
 				if trader.ExecutionSlippageBps < 0 {
 					trader.ExecutionSlippageBps = 0
 				}
@@ -597,6 +601,9 @@ func (c *Config) Validate() error {
 			}
 			if trader.ExecutionCommissionBps < 0 {
 				trader.ExecutionCommissionBps = 0
+			}
+			if trader.ExecutionSpreadBps < 0 {
+				trader.ExecutionSpreadBps = 0
 			}
 			if trader.ExecutionSlippageBps < 0 {
 				trader.ExecutionSlippageBps = 0
@@ -791,6 +798,9 @@ func (c *Config) Validate() error {
 			}
 			if trader.ExecutionCommissionBps < 0 {
 				trader.ExecutionCommissionBps = 0
+			}
+			if trader.ExecutionSpreadBps < 0 {
+				trader.ExecutionSpreadBps = 0
 			}
 			if trader.ExecutionSlippageBps < 0 {
 				trader.ExecutionSlippageBps = 0
@@ -1016,6 +1026,9 @@ func (c *Config) Validate() error {
 			}
 			if trader.ExecutionCommissionBps < 0 {
 				return fmt.Errorf("trader[%d]: execution_commission_bps cannot be negative", i)
+			}
+			if trader.ExecutionSpreadBps < 0 {
+				return fmt.Errorf("trader[%d]: execution_spread_bps cannot be negative", i)
 			}
 			if trader.ExecutionSlippageBps < 0 {
 				return fmt.Errorf("trader[%d]: execution_slippage_bps cannot be negative", i)

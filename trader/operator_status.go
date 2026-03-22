@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const operatorStatusSchemaVersion = 23
+const operatorStatusSchemaVersion = 24
 
 type OperatorRuntimeSummary struct {
 	IsRunning         bool    `json:"is_running"`
@@ -239,6 +239,7 @@ type OperatorDeploymentValidationSummary struct {
 }
 
 type OperatorModeParitySummary = ModeParitySummary
+type OperatorEvaluationCostSummary = EvaluationCostSummary
 
 type OperatorPromotionSummary struct {
 	Status             PromotionStatus  `json:"status"`
@@ -423,6 +424,7 @@ type OperatorStatusSummary struct {
 	BrokerTruth            OperatorBrokerTruthSummary            `json:"broker_truth"`
 	DeploymentValidation   OperatorDeploymentValidationSummary   `json:"deployment_validation"`
 	ModeParity             OperatorModeParitySummary             `json:"mode_parity"`
+	EvaluationCosts        OperatorEvaluationCostSummary         `json:"evaluation_costs"`
 	Session                OperatorSessionSummary                `json:"session"`
 	EventJournal           OperatorEventJournalSummary           `json:"event_journal"`
 	Runtime                OperatorRuntimeSummary                `json:"runtime"`
@@ -529,6 +531,9 @@ type OperatorStatusSummary struct {
 	ModeParityProvenCount           int                `json:"mode_parity_proven_count"`
 	ModeParityGapCount              int                `json:"mode_parity_gap_count"`
 	ModeParityWarningCount          int                `json:"mode_parity_warning_count"`
+	EvaluationCostsAvailable        bool               `json:"evaluation_costs_available"`
+	EvaluationCostSummary           string             `json:"evaluation_cost_summary"`
+	EvaluationModeledTotalCostUSD   float64            `json:"evaluation_modeled_total_cost_usd"`
 	LastSessionReportPath           string             `json:"last_session_report_path"`
 	LastSessionReportStatus         string             `json:"last_session_report_status"`
 	LastSessionReportAt             string             `json:"last_session_report_at"`
@@ -615,6 +620,7 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 	eventJournal := at.currentEventJournalSummary()
 	deploymentValidation := startup.CurrentLiveValidationStatus("", strings.EqualFold(at.config.Mode, "live"), time.Now())
 	modeParity := at.currentModeParitySummary()
+	evaluationCosts := at.currentEvaluationCostSummary(0)
 	var primaryOrderIssue *orders.Issue
 	if orderRecon != nil {
 		primaryOrderIssue = orders.PrimaryExecutionTruthIssue(orderRecon.LastIssues)
@@ -1071,6 +1077,7 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		BrokerTruth:                     brokerTruthSummary,
 		DeploymentValidation:            deploymentValidationSummary,
 		ModeParity:                      modeParity,
+		EvaluationCosts:                 evaluationCosts,
 		Session:                         sessionSummary,
 		EventJournal:                    eventJournalSummary,
 		Runtime:                         runtimeSummary,
@@ -1175,6 +1182,9 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		ModeParityProvenCount:           modeParity.ProvenCount,
 		ModeParityGapCount:              modeParity.GapCount,
 		ModeParityWarningCount:          modeParity.WarningCount,
+		EvaluationCostsAvailable:        evaluationCosts.Available,
+		EvaluationCostSummary:           evaluationCosts.Summary,
+		EvaluationModeledTotalCostUSD:   evaluationCosts.Totals.ModeledTotalCostUSD,
 		LastSessionReportPath:           sessionSummary.LastSessionReportPath,
 		LastSessionReportStatus:         sessionSummary.LastSessionReportStatus,
 		LastSessionReportAt:             sessionSummary.LastSessionReportAt,

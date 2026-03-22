@@ -121,8 +121,10 @@ func (at *AutoTrader) submitExecutionIntent(d *decision.Decision, actionRecord *
 	at.journalTradingGateDecision("execution_submit", gate)
 	intent := at.buildExecutionIntent(d, actionRecord, quantity)
 	executionBroker := execution.Broker(at.trader)
+	shadowReferencePrice := 0.0
 	if at.shadowModeEnabled() {
-		executionBroker = at.shadowExecutionAdapter(actionRecord)
+		shadowReferencePrice = at.shadowReferencePrice(actionRecord, intent.Symbol)
+		executionBroker = at.shadowExecutionAdapter(shadowReferencePrice)
 	}
 	result := manager.Execute(intent, executionGateFromTradingGate(gate), executionBroker)
 	at.applyExecutionResult(actionRecord, result)
@@ -130,11 +132,23 @@ func (at *AutoTrader) submitExecutionIntent(d *decision.Decision, actionRecord *
 		at.invalidateRuntimeAccountSnapshot()
 	}
 	if at.shadowModeEnabled() {
-		at.observeShadowExecution(d, actionRecord, intent, result)
+		at.observeShadowExecution(d, actionRecord, intent, result, shadowReferencePrice)
 	} else {
 		at.persistDurableRuntimeState("execution_intent")
 	}
 	return result, executionResultError(result)
+}
+
+func (at *AutoTrader) shadowReferencePrice(actionRecord *logger.DecisionAction, symbol string) float64 {
+	if actionRecord != nil && actionRecord.Price > 0 {
+		return actionRecord.Price
+	}
+	if at != nil && at.trader != nil {
+		if marketPrice, err := at.trader.GetMarketPrice(symbol); err == nil && marketPrice > 0 {
+			return marketPrice
+		}
+	}
+	return 0
 }
 
 func (at *AutoTrader) applyExecutionResult(actionRecord *logger.DecisionAction, result execution.Result) {

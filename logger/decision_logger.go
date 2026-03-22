@@ -168,19 +168,26 @@ type PipelineDecision struct {
 }
 
 type ShadowExecution struct {
-	Active               bool      `json:"active"`
-	RecordedAt           time.Time `json:"recorded_at"`
-	Status               string    `json:"status"`
-	WouldTrade           bool      `json:"would_trade"`
-	Message              string    `json:"message,omitempty"`
-	ReferencePrice       float64   `json:"reference_price,omitempty"`
-	HypotheticalQuantity float64   `json:"hypothetical_quantity,omitempty"`
-	HypotheticalNotional float64   `json:"hypothetical_notional,omitempty"`
-	PositionKey          string    `json:"position_key,omitempty"`
-	RealizedPnL          float64   `json:"realized_pnl,omitempty"`
-	UnrealizedPnL        float64   `json:"unrealized_pnl,omitempty"`
-	BlockReason          string    `json:"block_reason,omitempty"`
-	Warnings             []string  `json:"warnings,omitempty"`
+	Active                  bool      `json:"active"`
+	RecordedAt              time.Time `json:"recorded_at"`
+	Status                  string    `json:"status"`
+	WouldTrade              bool      `json:"would_trade"`
+	Message                 string    `json:"message,omitempty"`
+	ReferencePrice          float64   `json:"reference_price,omitempty"`
+	HypotheticalFillPrice   float64   `json:"hypothetical_fill_price,omitempty"`
+	HypotheticalQuantity    float64   `json:"hypothetical_quantity,omitempty"`
+	HypotheticalNotional    float64   `json:"hypothetical_notional,omitempty"`
+	AppliedFrictionBps      float64   `json:"applied_friction_bps,omitempty"`
+	ModeledCommissionUSD    float64   `json:"modeled_commission_usd,omitempty"`
+	ModeledSpreadCostUSD    float64   `json:"modeled_spread_cost_usd,omitempty"`
+	ModeledSlippageCostUSD  float64   `json:"modeled_slippage_cost_usd,omitempty"`
+	ModeledImpactCostUSD    float64   `json:"modeled_impact_cost_usd,omitempty"`
+	ModeledExecutionCostUSD float64   `json:"modeled_execution_cost_usd,omitempty"`
+	PositionKey             string    `json:"position_key,omitempty"`
+	RealizedPnL             float64   `json:"realized_pnl,omitempty"`
+	UnrealizedPnL           float64   `json:"unrealized_pnl,omitempty"`
+	BlockReason             string    `json:"block_reason,omitempty"`
+	Warnings                []string  `json:"warnings,omitempty"`
 }
 
 // DecisionLogger records system decision workflows over time

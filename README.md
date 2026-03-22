@@ -297,6 +297,47 @@ Operator rule:
 2. Read `mode_parity.gaps` before inferring that paper proves live or shadow proves paper.
 3. If `mode_parity.warnings` is non-empty, treat the current evidence as degraded even if the mode profile itself is strong.
 
+## Execution Cost Realism
+
+Northstar now carries one canonical modeled execution-friction layer for evaluation artifacts.
+
+This is intentionally conservative and explicit. It improves honesty for replay, simulated paper, and shadow results, but it does **not** claim broker-precise live fee truth.
+
+Configured friction inputs:
+
+- `execution_commission_bps`
+- `execution_spread_bps`
+- `execution_slippage_bps`
+- `execution_impact_bps`
+- `max_participation_rate`
+
+Where it applies:
+
+- `replay` / `paper` with simulated execution
+  - costs are applied inside `SimTrader`
+  - `output/replay_summary.json` now includes:
+    - `execution_cost_summary`
+    - `execution_cost_model`
+    - `execution_cost_totals`
+- `shadow`
+  - hypothetical fills now apply modeled commission, spread proxy, and slippage
+  - participation-scaled impact is **not** applied in shadow because broker/bar participation truth is not available there
+  - `/api/status.evaluation_costs` and paper/shadow session reports now expose the same assumptions and totals
+
+What the totals mean:
+
+- `modeled_commission_usd`
+- `modeled_spread_cost_usd`
+- `modeled_slippage_cost_usd`
+- `modeled_impact_cost_usd`
+- `modeled_total_cost_usd`
+
+Operator rule:
+
+1. Treat replay and shadow PnL as net of a configured friction model only when `evaluation_costs.model_applied=true`.
+2. Treat `execution_costs` totals as modeled evaluation costs, not broker-confirmed live fees.
+3. If all configured friction inputs are zero, expect optimistic evaluation results and fix the config before trusting profitability claims.
+
 ## Operator Runtime Truth
 
 `/api/status` now carries a canonical `runtime_condition` summary so operators do not need to infer the real state by stitching together gate, incident, and broker fields manually.

@@ -22,26 +22,31 @@ type SimPosition struct {
 
 // SimTrader implements Trader interface but executes "paper fills" against the local provider.
 type SimTrader struct {
-	balance       float64
-	initialBal    float64
-	provider      market.BarsProvider
-	positions     map[string]*SimPosition
-	realizedPnL   float64
-	tradeCount    int
-	winCount      int
-	lossCount     int
-	maxDrawdown   float64
-	peakEquity    float64
-	equityCurve   []float64
-	tradePnLs     []float64
-	commissionBps float64
-	slippageBps   float64
-	impactBps     float64
-	maxPartRate   float64
-	maxImpactBps  float64
-	totalFeesUSD  float64
-	partialFills  int
-	rejectedFills int
+	balance               float64
+	initialBal            float64
+	provider              market.BarsProvider
+	positions             map[string]*SimPosition
+	realizedPnL           float64
+	tradeCount            int
+	winCount              int
+	lossCount             int
+	maxDrawdown           float64
+	peakEquity            float64
+	equityCurve           []float64
+	tradePnLs             []float64
+	commissionBps         float64
+	spreadBps             float64
+	slippageBps           float64
+	impactBps             float64
+	maxPartRate           float64
+	maxImpactBps          float64
+	totalFeesUSD          float64
+	totalSpreadCostUSD    float64
+	totalSlippageCostUSD  float64
+	totalImpactCostUSD    float64
+	totalExecutionCostUSD float64
+	partialFills          int
+	rejectedFills         int
 }
 
 // NewSimTrader creates a new simulated broker for testing
@@ -49,7 +54,7 @@ func NewSimTrader(initialBalance float64, provider market.BarsProvider) *SimTrad
 	os.MkdirAll("output", os.ModePerm)
 	// Initialize trades file headers
 	if f, err := os.Create(filepath.Join("output", "trades.csv")); err == nil {
-		f.WriteString("timestamp,symbol,action,quantity,entry_price,exit_price,realized_pnl,fees_usd,participation,slippage_bps,reason\n")
+		f.WriteString("timestamp,symbol,action,quantity,entry_price,exit_price,realized_pnl,fees_usd,participation,spread_bps,slippage_bps,impact_bps,spread_cost_usd,slippage_cost_usd,impact_cost_usd,total_execution_cost_usd,reason\n")
 		f.Close()
 	}
 	// Initialize equity curve headers
@@ -59,21 +64,26 @@ func NewSimTrader(initialBalance float64, provider market.BarsProvider) *SimTrad
 	}
 
 	return &SimTrader{
-		balance:       initialBalance,
-		initialBal:    initialBalance,
-		provider:      provider,
-		positions:     make(map[string]*SimPosition),
-		peakEquity:    initialBalance,
-		equityCurve:   []float64{initialBalance},
-		tradePnLs:     make([]float64, 0, 128),
-		commissionBps: 0,
-		slippageBps:   0,
-		impactBps:     0,
-		maxPartRate:   0.15,
-		maxImpactBps:  120.0,
-		totalFeesUSD:  0,
-		partialFills:  0,
-		rejectedFills: 0,
+		balance:               initialBalance,
+		initialBal:            initialBalance,
+		provider:              provider,
+		positions:             make(map[string]*SimPosition),
+		peakEquity:            initialBalance,
+		equityCurve:           []float64{initialBalance},
+		tradePnLs:             make([]float64, 0, 128),
+		commissionBps:         0,
+		spreadBps:             0,
+		slippageBps:           0,
+		impactBps:             0,
+		maxPartRate:           0.15,
+		maxImpactBps:          120.0,
+		totalFeesUSD:          0,
+		totalSpreadCostUSD:    0,
+		totalSlippageCostUSD:  0,
+		totalImpactCostUSD:    0,
+		totalExecutionCostUSD: 0,
+		partialFills:          0,
+		rejectedFills:         0,
 	}
 }
 
@@ -87,6 +97,22 @@ func (s *SimTrader) SetExecutionCosts(commissionBps, slippageBps float64) {
 	}
 	s.commissionBps = commissionBps
 	s.slippageBps = slippageBps
+}
+
+// SetExecutionCostModel configures the canonical simulated friction model.
+func (s *SimTrader) SetExecutionCostModel(model ExecutionCostModel) {
+	if s == nil {
+		return
+	}
+	s.commissionBps = sanitizeNonNegative(model.CommissionBps)
+	s.spreadBps = sanitizeNonNegative(model.SpreadBps)
+	s.slippageBps = sanitizeNonNegative(model.SlippageBps)
+	s.impactBps = sanitizeNonNegative(model.ImpactBps)
+	if model.MaxParticipationRate > 0 && model.MaxParticipationRate <= 1.0 {
+		s.maxPartRate = model.MaxParticipationRate
+	} else {
+		s.maxPartRate = 0.15
+	}
 }
 
 // SetExecutionImpactModel configures liquidity participation and impact slippage.
@@ -218,9 +244,10 @@ func (s *SimTrader) openPosition(symbol string, quantity float64, side string) (
 	if fillQty < quantity {
 		s.partialFills++
 	}
-	execPrice, slipBps := s.applySlippage(price, side, true, participation)
+	costEstimate := s.currentExecutionCostModel().Estimate(price, fillQty, side, true, participation, true)
+	execPrice := costEstimate.EffectivePrice
 	notional := fillQty * execPrice
-	fees := notional * (s.commissionBps / 10000.0)
+	fees := costEstimate.CommissionUSD
 	if notional <= 0 {
 		s.rejectedFills++
 		return nil, fmt.Errorf("order rejected for %s: invalid notional %.6f", symbol, notional)
@@ -236,11 +263,13 @@ func (s *SimTrader) openPosition(symbol string, quantity float64, side string) (
 		if reducedQty < fillQty {
 			fillQty = reducedQty
 			s.partialFills++
-			notional = fillQty * execPrice
-			fees = notional * (s.commissionBps / 10000.0)
 			if bar.Volume > 0 {
 				participation = fillQty / bar.Volume
 			}
+			costEstimate = s.currentExecutionCostModel().Estimate(price, fillQty, side, true, participation, true)
+			execPrice = costEstimate.EffectivePrice
+			notional = fillQty * execPrice
+			fees = costEstimate.CommissionUSD
 		}
 	}
 
@@ -266,6 +295,10 @@ func (s *SimTrader) openPosition(symbol string, quantity float64, side string) (
 	s.balance -= notional + fees
 	s.realizedPnL -= fees
 	s.totalFeesUSD += fees
+	s.totalSpreadCostUSD += costEstimate.SpreadCostUSD
+	s.totalSlippageCostUSD += costEstimate.SlippageCostUSD
+	s.totalImpactCostUSD += costEstimate.ImpactCostUSD
+	s.totalExecutionCostUSD += costEstimate.TotalModeledCostUSD
 
 	// Write trade log
 	f, err := os.OpenFile(filepath.Join("output", "trades.csv"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -286,21 +319,33 @@ func (s *SimTrader) openPosition(symbol string, quantity float64, side string) (
 			"0", // realized_pnl
 			fmt.Sprintf("%.4f", fees),
 			fmt.Sprintf("%.5f", participation),
-			fmt.Sprintf("%.4f", slipBps),
+			fmt.Sprintf("%.4f", costEstimate.SpreadBps),
+			fmt.Sprintf("%.4f", costEstimate.SlippageBps),
+			fmt.Sprintf("%.4f", costEstimate.ImpactBps),
+			fmt.Sprintf("%.4f", costEstimate.SpreadCostUSD),
+			fmt.Sprintf("%.4f", costEstimate.SlippageCostUSD),
+			fmt.Sprintf("%.4f", costEstimate.ImpactCostUSD),
+			fmt.Sprintf("%.4f", costEstimate.TotalModeledCostUSD),
 			fmt.Sprintf("AI Strategy Signal | requested_qty=%.4f", quantity),
 		})
 		writer.Flush()
 	}
 
 	return map[string]interface{}{
-		"orderId":       time.Now().UnixNano(),
-		"status":        "FILLED",
-		"price":         execPrice,
-		"fees":          fees,
-		"filled_qty":    fillQty,
-		"requested_qty": quantity,
-		"participation": participation,
-		"slippage_bps":  slipBps,
+		"orderId":                  time.Now().UnixNano(),
+		"status":                   "FILLED",
+		"price":                    execPrice,
+		"fees":                     fees,
+		"filled_qty":               fillQty,
+		"requested_qty":            quantity,
+		"participation":            participation,
+		"spread_bps":               costEstimate.SpreadBps,
+		"slippage_bps":             costEstimate.SlippageBps,
+		"impact_bps":               costEstimate.ImpactBps,
+		"spread_cost":              costEstimate.SpreadCostUSD,
+		"slippage_cost":            costEstimate.SlippageCostUSD,
+		"impact_cost":              costEstimate.ImpactCostUSD,
+		"total_execution_cost_usd": costEstimate.TotalModeledCostUSD,
 	}, nil
 }
 
@@ -330,7 +375,8 @@ func (s *SimTrader) closePosition(symbol string, quantity float64, side string) 
 	if quantity > 0 && qtyToClose < quantity {
 		s.partialFills++
 	}
-	execPrice, slipBps := s.applySlippage(price, side, false, participation)
+	costEstimate := s.currentExecutionCostModel().Estimate(price, qtyToClose, side, false, participation, true)
+	execPrice := costEstimate.EffectivePrice
 
 	// Calculate realized PnL and update balance
 	var realizedPnL float64
@@ -339,12 +385,16 @@ func (s *SimTrader) closePosition(symbol string, quantity float64, side string) 
 	} else {
 		realizedPnL = (pos.EntryPrice - execPrice) * qtyToClose
 	}
-	fees := (qtyToClose * execPrice) * (s.commissionBps / 10000.0)
+	fees := costEstimate.CommissionUSD
 	realizedPnLNet := realizedPnL - fees
 
 	s.balance += (pos.EntryPrice * qtyToClose) + realizedPnLNet // Return principal + net PnL
 	s.realizedPnL += realizedPnLNet
 	s.totalFeesUSD += fees
+	s.totalSpreadCostUSD += costEstimate.SpreadCostUSD
+	s.totalSlippageCostUSD += costEstimate.SlippageCostUSD
+	s.totalImpactCostUSD += costEstimate.ImpactCostUSD
+	s.totalExecutionCostUSD += costEstimate.TotalModeledCostUSD
 	s.tradePnLs = append(s.tradePnLs, realizedPnLNet)
 	pos.Quantity -= qtyToClose
 
@@ -378,44 +428,34 @@ func (s *SimTrader) closePosition(symbol string, quantity float64, side string) 
 			fmt.Sprintf("%.2f", realizedPnLNet),
 			fmt.Sprintf("%.4f", fees),
 			fmt.Sprintf("%.5f", participation),
-			fmt.Sprintf("%.4f", slipBps),
+			fmt.Sprintf("%.4f", costEstimate.SpreadBps),
+			fmt.Sprintf("%.4f", costEstimate.SlippageBps),
+			fmt.Sprintf("%.4f", costEstimate.ImpactBps),
+			fmt.Sprintf("%.4f", costEstimate.SpreadCostUSD),
+			fmt.Sprintf("%.4f", costEstimate.SlippageCostUSD),
+			fmt.Sprintf("%.4f", costEstimate.ImpactCostUSD),
+			fmt.Sprintf("%.4f", costEstimate.TotalModeledCostUSD),
 			"AI Strategy Signal",
 		})
 		writer.Flush()
 	}
 
 	return map[string]interface{}{
-		"orderId":       time.Now().UnixNano(),
-		"status":        "FILLED",
-		"price":         execPrice,
-		"pnl":           realizedPnLNet,
-		"fees":          fees,
-		"filled_qty":    qtyToClose,
-		"participation": participation,
-		"slippage_bps":  slipBps,
+		"orderId":                  time.Now().UnixNano(),
+		"status":                   "FILLED",
+		"price":                    execPrice,
+		"pnl":                      realizedPnLNet,
+		"fees":                     fees,
+		"filled_qty":               qtyToClose,
+		"participation":            participation,
+		"spread_bps":               costEstimate.SpreadBps,
+		"slippage_bps":             costEstimate.SlippageBps,
+		"impact_bps":               costEstimate.ImpactBps,
+		"spread_cost":              costEstimate.SpreadCostUSD,
+		"slippage_cost":            costEstimate.SlippageCostUSD,
+		"impact_cost":              costEstimate.ImpactCostUSD,
+		"total_execution_cost_usd": costEstimate.TotalModeledCostUSD,
 	}, nil
-}
-
-func (s *SimTrader) applySlippage(rawPrice float64, side string, isOpen bool, participation float64) (float64, float64) {
-	if rawPrice <= 0 {
-		return rawPrice, 0
-	}
-	impact := 0.0
-	if s.impactBps > 0 && participation > 0 {
-		impact = s.impactBps * math.Sqrt(math.Max(participation, 0))
-	}
-	impact = math.Min(impact, s.maxImpactBps)
-	totalBps := s.slippageBps + impact
-	if totalBps <= 0 {
-		return rawPrice, 0
-	}
-
-	isBuy := (isOpen && side == "long") || (!isOpen && side == "short")
-	slip := totalBps / 10000.0
-	if isBuy {
-		return rawPrice * (1.0 + slip), totalBps
-	}
-	return rawPrice * (1.0 - slip), totalBps
 }
 
 func (s *SimTrader) applyParticipationCap(quantity, barVolume float64) (float64, float64) {
@@ -530,24 +570,29 @@ func (s *SimTrader) ExportSummary() {
 	returnPct := ((totalEquity - s.initialBal) / s.initialBal) * 100
 	sharpe, sortino := computeSharpeSortino(s.equityCurve)
 	profitFactor, expectancy, avgWin, avgLoss := computeTradeMetrics(s.tradePnLs)
+	costSummary := s.currentEvaluationCostSummary()
 
 	summary := map[string]interface{}{
-		"total_trades":      s.tradeCount,
-		"win_rate_pct":      winRate,
-		"max_drawdown":      s.maxDrawdown * 100,
-		"final_equity":      totalEquity,
-		"return_pct":        returnPct,
-		"sharpe_ratio":      sharpe,
-		"sortino_ratio":     sortino,
-		"profit_factor":     profitFactor,
-		"expectancy_usd":    expectancy,
-		"avg_win_usd":       avgWin,
-		"avg_loss_usd":      avgLoss,
-		"total_fees_usd":    s.totalFeesUSD,
-		"partial_fills":     s.partialFills,
-		"rejected_fills":    s.rejectedFills,
-		"impact_bps_model":  s.impactBps,
-		"max_participation": s.maxPartRate,
+		"total_trades":            s.tradeCount,
+		"win_rate_pct":            winRate,
+		"max_drawdown":            s.maxDrawdown * 100,
+		"final_equity":            totalEquity,
+		"return_pct":              returnPct,
+		"sharpe_ratio":            sharpe,
+		"sortino_ratio":           sortino,
+		"profit_factor":           profitFactor,
+		"expectancy_usd":          expectancy,
+		"avg_win_usd":             avgWin,
+		"avg_loss_usd":            avgLoss,
+		"total_fees_usd":          s.totalFeesUSD,
+		"partial_fills":           s.partialFills,
+		"rejected_fills":          s.rejectedFills,
+		"impact_bps_model":        s.impactBps,
+		"max_participation":       s.maxPartRate,
+		"execution_cost_summary":  costSummary.Summary,
+		"execution_cost_model":    costSummary.Model,
+		"execution_cost_totals":   costSummary.Totals,
+		"execution_cost_warnings": costSummary.Warnings,
 	}
 
 	fmt.Println("\n===== REPLAY SUMMARY =====")
@@ -561,6 +606,7 @@ func (s *SimTrader) ExportSummary() {
 	fmt.Printf("Profit Factor: %.3f\n", profitFactor)
 	fmt.Printf("Expectancy (USD): %.2f\n", expectancy)
 	fmt.Printf("Total Fees (USD): %.2f\n", s.totalFeesUSD)
+	fmt.Printf("Modeled Execution Costs (USD): %.2f\n", costSummary.Totals.ModeledTotalCostUSD)
 	fmt.Printf("Partial Fills: %d\n", s.partialFills)
 	fmt.Printf("Rejected Fills: %d\n", s.rejectedFills)
 	fmt.Println("==========================")

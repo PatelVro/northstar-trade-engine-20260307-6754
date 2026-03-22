@@ -128,7 +128,7 @@ func TestRestartInterruptionValidationHarness(t *testing.T) {
 		at.setLatestAccountSummary(&AccountSummary{StrategyInitialCapital: 100000, StrategyEquity: 100000, AccountEquity: 100000, AvailableBalance: 100000, AccountingVersion: accountingVersion})
 
 		actionRecord := &logger.DecisionAction{Action: "open_long", Symbol: "AAPL", Price: 100, Quantity: 10}
-		at.observeShadowExecution(&decision.Decision{Symbol: "AAPL", Action: "open_long"}, actionRecord, execution.Intent{Symbol: "AAPL", ActionType: "open_long", Quantity: 10}, execution.Result{Status: execution.StatusFilled, AverageFillPrice: 100, FillQuantity: 10})
+		at.observeShadowExecution(&decision.Decision{Symbol: "AAPL", Action: "open_long"}, actionRecord, execution.Intent{Symbol: "AAPL", ActionType: "open_long", Quantity: 10}, execution.Result{Status: execution.StatusFilled, AverageFillPrice: 100, FillQuantity: 10}, 100)
 		at.persistDurableRuntimeState("harness_controlled_shadow_restart")
 
 		restoredTrader := &restartStateTestTrader{orderStore: orders.NewStore()}

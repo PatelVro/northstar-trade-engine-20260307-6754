@@ -125,6 +125,7 @@ type AutoTraderConfig struct {
 	MinLiquidityUSD                     float64
 	MinDecisionConfidence               int
 	ExecutionCommissionBps              float64
+	ExecutionSpreadBps                  float64
 	ExecutionSlippageBps                float64
 	ExecutionImpactBps                  float64
 	MaxParticipationRate                float64
@@ -379,6 +380,9 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 		}
 		if config.ExecutionCommissionBps < 0 {
 			config.ExecutionCommissionBps = 0
+		}
+		if config.ExecutionSpreadBps < 0 {
+			config.ExecutionSpreadBps = 0
 		}
 		if config.ExecutionSlippageBps < 0 {
 			config.ExecutionSlippageBps = 0
@@ -662,8 +666,7 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 	}
 
 	if sim, ok := trader.(*SimTrader); ok {
-		sim.SetExecutionCosts(config.ExecutionCommissionBps, config.ExecutionSlippageBps)
-		sim.SetExecutionImpactModel(config.ExecutionImpactBps, config.MaxParticipationRate)
+		sim.SetExecutionCostModel(currentExecutionCostModel(config))
 	}
 
 	var newsProvider news.Provider
@@ -2470,6 +2473,7 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 		"min_decision_confidence":               at.config.MinDecisionConfidence,
 		"regime_risk_scaling":                   at.config.RegimeRiskScaling,
 		"execution_commission_bps":              at.config.ExecutionCommissionBps,
+		"execution_spread_bps":                  at.config.ExecutionSpreadBps,
 		"execution_slippage_bps":                at.config.ExecutionSlippageBps,
 		"execution_impact_bps":                  at.config.ExecutionImpactBps,
 		"max_participation_rate":                at.config.MaxParticipationRate,
