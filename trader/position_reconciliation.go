@@ -317,6 +317,7 @@ func (at *AutoTrader) markPositionReconciliationHealthy(summary string, now time
 		at.positionReconSummary.LastIssues = []positions.Issue{}
 	}
 	at.positionReconMu.Unlock()
+	at.resolveRestartRecoveryAfterBrokerReconciliation("broker position reconciliation confirmed restored runtime state")
 	at.syncPositionReconciliationIncident(summary, nil, nil)
 }
 
@@ -380,8 +381,6 @@ func (at *AutoTrader) snapshotLocalPositions() []positions.Snapshot {
 
 func (at *AutoTrader) setLocalPositionSnapshots(snapshots []positions.Snapshot, source string, now time.Time) {
 	at.positionReconMu.Lock()
-	defer at.positionReconMu.Unlock()
-
 	at.localPositionSnapshots = make(map[string]positions.Snapshot, len(snapshots))
 	for _, snapshot := range snapshots {
 		snapshot = positions.NormalizeSnapshot(snapshot)
@@ -394,6 +393,8 @@ func (at *AutoTrader) setLocalPositionSnapshots(snapshots []positions.Snapshot, 
 		}
 		at.localPositionSnapshots[positions.Key(snapshot.Symbol, snapshot.Side)] = snapshot
 	}
+	at.positionReconMu.Unlock()
+	at.persistDurableRuntimeState("local_positions_snapshot")
 }
 
 func (at *AutoTrader) updateLocalPositionStateFromActions(actions []logger.DecisionAction) {
@@ -403,8 +404,6 @@ func (at *AutoTrader) updateLocalPositionStateFromActions(actions []logger.Decis
 
 	now := time.Now()
 	at.positionReconMu.Lock()
-	defer at.positionReconMu.Unlock()
-
 	if at.localPositionSnapshots == nil {
 		at.localPositionSnapshots = make(map[string]positions.Snapshot)
 	}
@@ -434,6 +433,8 @@ func (at *AutoTrader) updateLocalPositionStateFromActions(actions []logger.Decis
 			at.applyLocalPositionCloseLocked(symbol, "short", action.Quantity, now)
 		}
 	}
+	at.positionReconMu.Unlock()
+	at.persistDurableRuntimeState("local_positions_action_update")
 }
 
 func (at *AutoTrader) applyLocalPositionOpenLocked(symbol, side string, qty, entryPrice float64, now time.Time) {

@@ -129,6 +129,8 @@ func (at *AutoTrader) submitExecutionIntent(d *decision.Decision, actionRecord *
 	}
 	if at.shadowModeEnabled() {
 		at.observeShadowExecution(d, actionRecord, intent, result)
+	} else {
+		at.persistDurableRuntimeState("execution_intent")
 	}
 	return result, executionResultError(result)
 }

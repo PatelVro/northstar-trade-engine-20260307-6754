@@ -154,6 +154,7 @@ func TestLoadMomentumMarketDataDetectsGlobalFeedDelay(t *testing.T) {
 		name:     "data-test",
 		id:       "data_test",
 		provider: provider,
+		timeNow:  func() time.Time { return now },
 		config: AutoTraderConfig{
 			Mode:               "shadow",
 			Broker:             "sim",

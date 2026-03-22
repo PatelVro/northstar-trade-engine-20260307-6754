@@ -309,6 +309,23 @@ func (at *AutoTrader) currentTradingGateDecision(probeStrictLive bool, account *
 			Message:         "trading blocked: trader loop is not running",
 		}
 	}
+	restartRecovery := at.currentRestartRecoverySummary()
+	if restartRecovery.TradingBlocked {
+		blockReason := strings.TrimSpace(restartRecovery.Message)
+		if blockReason == "" {
+			blockReason = firstNonEmpty(restartRecovery.LastLoadError, restartRecovery.LastSaveError, "durable runtime state recovery is blocking trading")
+		}
+		return tradingGateDecision{
+			Mode:            state.Mode,
+			TradingAllowed:  false,
+			EntriesAllowed:  false,
+			ExitsAllowed:    false,
+			ReduceOnly:      false,
+			BlockReason:     blockReason,
+			BlockingReasons: []string{blockReason},
+			Message:         fmt.Sprintf("trading blocked: %s", blockReason),
+		}
+	}
 
 	reasons := make([]string, 0, len(state.Incidents))
 	for _, incident := range state.Incidents {

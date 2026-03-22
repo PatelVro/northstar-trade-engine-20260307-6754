@@ -84,18 +84,31 @@ type Result struct {
 }
 
 type Summary struct {
-	Available                 bool      `json:"available"`
-	InFlightCount             int       `json:"in_flight_count"`
-	StaleCount                int       `json:"stale_count"`
-	LastExecutionAt           time.Time `json:"last_execution_at"`
-	LastExecutionSymbol       string    `json:"last_execution_symbol"`
-	LastExecutionStatus       Status    `json:"last_execution_status"`
-	DuplicateSuppressedCount  int       `json:"duplicate_suppressed_count"`
-	BlockedExecutionCount     int       `json:"blocked_execution_count"`
-	SubmittedCount            int       `json:"submitted_count"`
-	FilledCount               int       `json:"filled_count"`
-	RejectedCount             int       `json:"rejected_count"`
-	FailedCount               int       `json:"failed_count"`
+	Available                bool      `json:"available"`
+	InFlightCount            int       `json:"in_flight_count"`
+	StaleCount               int       `json:"stale_count"`
+	LastExecutionAt          time.Time `json:"last_execution_at"`
+	LastExecutionSymbol      string    `json:"last_execution_symbol"`
+	LastExecutionStatus      Status    `json:"last_execution_status"`
+	DuplicateSuppressedCount int       `json:"duplicate_suppressed_count"`
+	BlockedExecutionCount    int       `json:"blocked_execution_count"`
+	SubmittedCount           int       `json:"submitted_count"`
+	FilledCount              int       `json:"filled_count"`
+	RejectedCount            int       `json:"rejected_count"`
+	FailedCount              int       `json:"failed_count"`
+}
+
+const managerStateVersion = 1
+
+type PersistedExecution struct {
+	Intent Intent `json:"intent"`
+	Result Result `json:"result"`
+}
+
+type ManagerState struct {
+	Version    int                  `json:"version"`
+	NextID     int64                `json:"next_id"`
+	Executions []PersistedExecution `json:"executions"`
 }
 
 type Config struct {

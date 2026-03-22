@@ -325,6 +325,7 @@ func (at *AutoTrader) reconcileIBKRRuntime() error {
 	}
 
 	at.refreshPositionState(positionInfoFromBrokerMaps(snapshot.Positions))
+	at.persistDurableRuntimeState("broker_runtime_reconcile")
 	return nil
 }
 

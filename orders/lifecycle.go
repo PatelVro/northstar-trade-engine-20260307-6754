@@ -1,8 +1,10 @@
 package orders
 
 import (
+	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +24,80 @@ func NewStore() *Store {
 		ordersByLocal: make(map[string]*Record),
 		localByBroker: make(map[string]string),
 	}
+}
+
+func (s *Store) SnapshotState() StoreState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	state := StoreState{
+		Version: storeStateVersion,
+		NextID:  s.nextID,
+		Orders:  make([]Record, 0, len(s.ordersByLocal)),
+		Summary: s.summary,
+	}
+	state.Summary.LastIssues = append([]Issue(nil), s.summary.LastIssues...)
+
+	keys := make([]string, 0, len(s.ordersByLocal))
+	for localID := range s.ordersByLocal {
+		keys = append(keys, localID)
+	}
+	sort.Strings(keys)
+	for _, localID := range keys {
+		record := s.ordersByLocal[localID]
+		if record == nil {
+			continue
+		}
+		state.Orders = append(state.Orders, *record)
+	}
+	return state
+}
+
+func (s *Store) RestoreState(state StoreState) error {
+	if state.Version == 0 {
+		return nil
+	}
+	if state.Version != storeStateVersion {
+		return fmt.Errorf("unsupported order lifecycle state version %d", state.Version)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.nextID = state.NextID
+	s.ordersByLocal = make(map[string]*Record, len(state.Orders))
+	s.localByBroker = make(map[string]string, len(state.Orders))
+
+	maxID := state.NextID
+	for _, record := range state.Orders {
+		record.LocalID = strings.TrimSpace(record.LocalID)
+		if record.LocalID == "" {
+			return errors.New("order lifecycle state contains a record with no local_id")
+		}
+		record.Intent = normalizeIntent(record.Intent)
+		record.Symbol = strings.ToUpper(strings.TrimSpace(record.Symbol))
+		record.Side = normalizeSide(record.Side)
+		record.PositionSide = normalizePositionSide(record.PositionSide)
+		record.SubmittedAt = normalizeTime(record.SubmittedAt)
+		record.UpdatedAt = normalizeTime(record.UpdatedAt)
+		if !record.LastSeenAt.IsZero() {
+			record.LastSeenAt = normalizeTime(record.LastSeenAt)
+		}
+		cloned := record
+		s.ordersByLocal[record.LocalID] = &cloned
+		if brokerID := strings.TrimSpace(record.BrokerOrderID); brokerID != "" {
+			s.localByBroker[brokerID] = record.LocalID
+		}
+		if parsed := parseOrderSequence(record.LocalID); parsed > maxID {
+			maxID = parsed
+		}
+	}
+
+	s.summary = state.Summary
+	s.summary.LastIssues = append([]Issue(nil), state.Summary.LastIssues...)
+	s.nextID = maxID
+	s.refreshSummaryCountsLocked(s.summary.BrokerOpenOrders)
+	return nil
 }
 
 func (s *Store) SetObserver(observer Observer) {
@@ -189,4 +265,21 @@ func newEvent(eventType EventType, record Record, previousStatus, currentStatus 
 		CurrentStatus:  currentStatus,
 		Record:         record,
 	}
+}
+
+func parseOrderSequence(localID string) int64 {
+	localID = strings.TrimSpace(localID)
+	switch {
+	case strings.HasPrefix(localID, "local-"):
+		localID = strings.TrimPrefix(localID, "local-")
+	case strings.HasPrefix(localID, "broker-"):
+		localID = strings.TrimPrefix(localID, "broker-")
+	default:
+		return 0
+	}
+	value, err := strconv.ParseInt(localID, 10, 64)
+	if err != nil || value < 0 {
+		return 0
+	}
+	return value
 }

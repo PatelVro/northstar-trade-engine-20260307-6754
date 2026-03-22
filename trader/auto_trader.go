@@ -265,6 +265,9 @@ type AutoTrader struct {
 	portfolioRiskState                    *portfolioRiskState
 	shadowMu                              sync.RWMutex
 	shadowState                           shadowModeState
+	restartRecoveryMu                     sync.RWMutex
+	restartRecoveryState                  restartRecoverySummary
+	restartPersistMu                      sync.Mutex
 	sessionReportMu                       sync.Mutex
 	sessionReportState                    *paperSessionTracker
 	lastSessionReportPath                 string
@@ -282,6 +285,7 @@ type AutoTrader struct {
 	brokerRecoveryActive                  bool
 	brokerLastStateLogKey                 string
 	brokerLastStateLogAt                  time.Time
+	timeNow                               func() time.Time
 }
 
 // NewAutoTrader Creates a new automatic trader
@@ -730,7 +734,14 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 	at.initializePositionReconciliationState()
 	at.initializeRiskSupervisorState()
 	at.initializeShadowModeState()
+	at.initializeRestartRecoveryState()
 	at.restoreStrategyAccountingState()
+	if lifecycleHookSetter, ok := trader.(interface{ SetLifecyclePersistenceHook(func()) }); ok {
+		lifecycleHookSetter.SetLifecyclePersistenceHook(func() {
+			at.persistDurableRuntimeState("order_lifecycle_reconcile")
+		})
+	}
+	at.restoreDurableRuntimeState()
 
 	return at, nil
 }
@@ -844,6 +855,7 @@ func (at *AutoTrader) Stop() {
 	} else {
 		at.finalizePaperSessionReport("stop")
 	}
+	at.persistDurableRuntimeState("stop")
 
 	log.Println(" Auto trading system stopped")
 }

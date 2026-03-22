@@ -8,10 +8,10 @@ import (
 )
 
 type testBroker struct {
-	order   map[string]interface{}
-	err     error
-	calls   int
-	lastOp  string
+	order  map[string]interface{}
+	err    error
+	calls  int
+	lastOp string
 }
 
 func (b *testBroker) OpenLong(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
@@ -113,10 +113,10 @@ func TestExitAllowedInBlockNewEntries(t *testing.T) {
 	manager := NewManager(Config{})
 	broker := &testBroker{
 		order: map[string]interface{}{
-			"status":    "FILLED",
-			"orderId":   int64(88),
+			"status":     "FILLED",
+			"orderId":    int64(88),
 			"filled_qty": 3.0,
-			"price":     101.5,
+			"price":      101.5,
 		},
 	}
 	intent := Intent{
@@ -243,6 +243,55 @@ func TestBlockedIntentDoesNotPoisonDuplicateSuppression(t *testing.T) {
 	}
 	if broker.calls != 1 {
 		t.Fatalf("expected broker call after gate cleared, got %d", broker.calls)
+	}
+}
+
+func TestManagerStateRoundTripPreservesDuplicateProtection(t *testing.T) {
+	manager := NewManager(Config{DedupeWindow: time.Minute, StaleAfter: 5 * time.Minute, MaxHistory: 10})
+	broker := &testBroker{
+		order: map[string]interface{}{
+			"status":       "submitted",
+			"localOrderId": "local-1",
+			"orderId":      int64(101),
+		},
+	}
+	intent := Intent{
+		TraderID:          "paper",
+		Symbol:            "AAPL",
+		Side:              "buy",
+		ActionType:        "open_long",
+		Quantity:          10,
+		OrderType:         "market",
+		CreatedAt:         time.Now().UTC(),
+		IncreasesExposure: true,
+	}
+	gate := Gate{Mode: "allow", TradingAllowed: true, EntriesAllowed: true, ExitsAllowed: true}
+
+	first := manager.Execute(intent, gate, broker)
+	if first.Status != StatusSubmitted {
+		t.Fatalf("expected submitted status before snapshot, got %s", first.Status)
+	}
+
+	state := manager.SnapshotState()
+	restored := NewManager(Config{DedupeWindow: time.Minute, StaleAfter: 5 * time.Minute, MaxHistory: 10})
+	if err := restored.RestoreState(state); err != nil {
+		t.Fatalf("RestoreState failed: %v", err)
+	}
+
+	second := restored.Execute(intent, gate, broker)
+	if second.Status != StatusDuplicateSuppressed {
+		t.Fatalf("expected duplicate suppression after restore, got %s", second.Status)
+	}
+	if broker.calls != 1 {
+		t.Fatalf("expected broker to be called once across restore, got %d", broker.calls)
+	}
+}
+
+func TestRestoreStateRejectsUnsupportedVersion(t *testing.T) {
+	manager := NewManager(Config{})
+	err := manager.RestoreState(ManagerState{Version: 99})
+	if err == nil {
+		t.Fatalf("expected unsupported version error")
 	}
 }
 

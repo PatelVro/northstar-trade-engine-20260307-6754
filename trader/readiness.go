@@ -130,6 +130,7 @@ func (at *AutoTrader) runReadinessChecks() ReadinessSummary {
 	builder.add(at.checkBrokerConfigReadiness())
 	builder.add(at.checkBrokerConnectivityReadiness())
 	builder.add(at.checkBrokerBootstrapReadiness())
+	builder.add(at.checkRestartRecoveryReadiness())
 
 	summary := builder.summary()
 	at.setReadinessSummary(summary)
@@ -258,7 +259,7 @@ func (at *AutoTrader) checkModeCompatibilityReadiness() ReadinessCheck {
 	}
 
 	switch mode {
-	case "paper", "live", "replay":
+	case "paper", "live", "replay", "shadow":
 	default:
 		return readinessFail("mode_compatibility", fmt.Sprintf("unsupported mode: %s", at.config.Mode))
 	}

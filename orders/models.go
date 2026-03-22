@@ -129,6 +129,15 @@ type Summary struct {
 	LastIssues           []Issue   `json:"last_issues,omitempty"`
 }
 
+const storeStateVersion = 1
+
+type StoreState struct {
+	Version int      `json:"version"`
+	NextID  int64    `json:"next_id"`
+	Orders  []Record `json:"orders"`
+	Summary Summary  `json:"summary"`
+}
+
 type EventType string
 
 const (

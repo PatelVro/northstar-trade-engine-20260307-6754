@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -39,6 +40,83 @@ func NewManager(cfg Config) *Manager {
 		historyByID: make(map[string]*trackedExecution),
 		latestByKey: make(map[string]string),
 	}
+}
+
+func (m *Manager) SnapshotState() ManagerState {
+	now := time.Now().UTC()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.sweepLocked(now)
+
+	state := ManagerState{
+		Version:    managerStateVersion,
+		NextID:     m.nextID,
+		Executions: make([]PersistedExecution, 0, len(m.history)),
+	}
+	for _, tracked := range m.history {
+		if tracked == nil {
+			continue
+		}
+		state.Executions = append(state.Executions, PersistedExecution{
+			Intent: tracked.Intent,
+			Result: tracked.Result,
+		})
+	}
+	return state
+}
+
+func (m *Manager) RestoreState(state ManagerState) error {
+	if state.Version == 0 {
+		return nil
+	}
+	if state.Version != managerStateVersion {
+		return fmt.Errorf("unsupported execution manager state version %d", state.Version)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.nextID = state.NextID
+	m.history = make([]*trackedExecution, 0, minInt(len(state.Executions), m.cfg.MaxHistory))
+	m.historyByID = make(map[string]*trackedExecution, len(state.Executions))
+	m.latestByKey = make(map[string]string)
+
+	maxID := state.NextID
+	start := 0
+	if len(state.Executions) > m.cfg.MaxHistory {
+		start = len(state.Executions) - m.cfg.MaxHistory
+	}
+	for _, persisted := range state.Executions[start:] {
+		intent := persisted.Intent
+		result := persisted.Result
+		intent.IntentID = strings.TrimSpace(intent.IntentID)
+		if intent.IntentID == "" {
+			intent.IntentID = strings.TrimSpace(result.IntentID)
+		}
+		if intent.IntentID == "" {
+			return errors.New("execution manager state contains an execution with no intent_id")
+		}
+		if strings.TrimSpace(result.IntentID) == "" {
+			result.IntentID = intent.IntentID
+		}
+		if strings.TrimSpace(result.DedupeKey) == "" {
+			result.DedupeKey = BuildDedupeKey(intent)
+		}
+		tracked := &trackedExecution{Intent: intent, Result: result}
+		m.history = append(m.history, tracked)
+		m.historyByID[intent.IntentID] = tracked
+		if shouldRegisterLatest(result.Status) {
+			m.latestByKey[result.DedupeKey] = intent.IntentID
+		}
+		if parsed := parseExecutionSequence(intent.IntentID); parsed > maxID {
+			maxID = parsed
+		}
+	}
+	m.nextID = maxID
+	m.sweepLocked(time.Now().UTC())
+	return nil
 }
 
 func (m *Manager) Execute(intent Intent, gate Gate, broker Broker) Result {
@@ -319,4 +397,23 @@ func toFloat(value interface{}) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func parseExecutionSequence(intentID string) int64 {
+	intentID = strings.TrimSpace(intentID)
+	if !strings.HasPrefix(intentID, "exec-") {
+		return 0
+	}
+	value, err := strconv.ParseInt(strings.TrimPrefix(intentID, "exec-"), 10, 64)
+	if err != nil || value < 0 {
+		return 0
+	}
+	return value
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

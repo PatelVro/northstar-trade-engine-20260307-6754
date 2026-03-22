@@ -3,8 +3,8 @@ package trader
 import (
 	"encoding/json"
 	"fmt"
-	"northstar/execution"
 	"log"
+	"northstar/execution"
 	"northstar/incidents"
 	"northstar/logger"
 	"northstar/orders"
@@ -25,7 +25,7 @@ const (
 	SessionCompletionPartial   SessionCompletionStatus = "partial"
 )
 
-const sessionReportVersion = 8
+const sessionReportVersion = 10
 
 type SessionPortfolioRiskSnapshot struct {
 	EvaluatedAt time.Time             `json:"evaluated_at"`
@@ -89,6 +89,19 @@ type PaperSessionReport struct {
 	ExecutionFilledCount              int                           `json:"execution_filled_count"`
 	ExecutionRejectedCount            int                           `json:"execution_rejected_count"`
 	ExecutionFailedCount              int                           `json:"execution_failed_count"`
+	ShadowModeActive                  bool                          `json:"shadow_mode_active"`
+	ShadowDecisionsTotal              int                           `json:"shadow_decisions_total"`
+	ShadowWouldTradeCount             int                           `json:"shadow_would_trade_count"`
+	ShadowBlockedCount                int                           `json:"shadow_blocked_count"`
+	ShadowOpenPositionsEnd            int                           `json:"shadow_open_positions_end"`
+	ShadowClosedTrades                int                           `json:"shadow_closed_trades"`
+	ShadowRealizedPnL                 float64                       `json:"shadow_realized_pnl"`
+	ShadowUnrealizedPnL               float64                       `json:"shadow_unrealized_pnl"`
+	ShadowLastDecisionAt              string                        `json:"shadow_last_decision_at"`
+	RestartRecoveryRestored           bool                          `json:"restart_recovery_restored"`
+	RestartRecoveryPending            bool                          `json:"restart_recovery_pending_reconciliation"`
+	RestartRecoveryBlocked            bool                          `json:"restart_recovery_blocked"`
+	RestartRecoveryMessage            string                        `json:"restart_recovery_message"`
 	OrdersSubmitted                   int                           `json:"orders_submitted"`
 	OrdersFilled                      int                           `json:"orders_filled"`
 	BuyFills                          int                           `json:"buy_fills"`
@@ -159,7 +172,7 @@ func (at *AutoTrader) paperSessionReportsEnabled() bool {
 	if at.backtestMode {
 		return false
 	}
-	return at.demoMode || strings.EqualFold(at.config.Mode, "paper")
+	return at.demoMode || strings.EqualFold(at.config.Mode, "paper") || at.shadowModeEnabled()
 }
 
 func (at *AutoTrader) currentTradingAllowed() bool {
@@ -366,10 +379,10 @@ func (at *AutoTrader) recordPaperSessionCycleStart() {
 
 func (at *AutoTrader) recordPaperSessionBlockedCycle(reason string) {
 	if !at.paperSessionReportsEnabled() {
-		at.alertTradingBlocked(reason)
+		at.emitBlockedCycleAlert(reason)
 		return
 	}
-	at.alertTradingBlocked(reason)
+	at.emitBlockedCycleAlert(reason)
 	at.sessionReportMu.Lock()
 	defer at.sessionReportMu.Unlock()
 	if tracker := at.sessionReportState; tracker != nil {
@@ -379,6 +392,21 @@ func (at *AutoTrader) recordPaperSessionBlockedCycle(reason string) {
 			tracker.addWarning(reason)
 		}
 	}
+}
+
+func (at *AutoTrader) emitBlockedCycleAlert(reason string) {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "trading blocked"
+	}
+	lower := strings.ToLower(reason)
+	if strings.Contains(lower, "market is closed") {
+		at.alertRuntimeInfo("market_closed", "market closed: "+reason, map[string]string{
+			"reason": reason,
+		})
+		return
+	}
+	at.alertTradingBlocked(reason)
 }
 
 func (at *AutoTrader) observePaperSessionDecisionRecord(record *logger.DecisionRecord) {
@@ -443,6 +471,18 @@ func (t *paperSessionTracker) observeDecisionRecord(record *logger.DecisionRecor
 			}
 		}
 		t.report.ActionableDecisions++
+		if action.Shadow != nil && action.Shadow.Active {
+			t.report.ShadowModeActive = true
+			t.report.ShadowDecisionsTotal++
+			if action.Shadow.WouldTrade {
+				t.report.ShadowWouldTradeCount++
+			} else {
+				t.report.ShadowBlockedCount++
+			}
+			if !action.Shadow.RecordedAt.IsZero() {
+				t.report.ShadowLastDecisionAt = action.Shadow.RecordedAt.Format(time.RFC3339)
+			}
+		}
 		t.report.OrderSubmitAttempts++
 		if trackedExecution {
 			t.report.ExecutionIntentsTotal++
@@ -823,6 +863,21 @@ func (at *AutoTrader) writePaperSessionReport(tracker *paperSessionTracker, reas
 	report.DistinctWarningMessages = append([]string(nil), tracker.report.DistinctWarningMessages...)
 	report.DistinctErrorMessages = append([]string(nil), tracker.report.DistinctErrorMessages...)
 	report.NotableEvents = append([]string(nil), tracker.report.NotableEvents...)
+	if shadow := at.currentShadowSummary(); shadow.Available {
+		report.ShadowModeActive = shadow.Active
+		report.ShadowOpenPositionsEnd = shadow.OpenPositions
+		report.ShadowClosedTrades = shadow.ClosedTrades
+		report.ShadowRealizedPnL = shadow.HypotheticalRealizedPnL
+		report.ShadowUnrealizedPnL = shadow.HypotheticalUnrealizedPnL
+		if report.ShadowLastDecisionAt == "" {
+			report.ShadowLastDecisionAt = formatRFC3339(shadow.LastDecisionAt)
+		}
+	}
+	restartRecovery := at.currentRestartRecoverySummary()
+	report.RestartRecoveryRestored = restartRecovery.Restored
+	report.RestartRecoveryPending = restartRecovery.PendingReconciliation
+	report.RestartRecoveryBlocked = restartRecovery.TradingBlocked
+	report.RestartRecoveryMessage = restartRecovery.Message
 
 	path := sessionReportPath(at.id, report.SessionStart, report.SessionDate)
 	if err := writePaperSessionReport(path, report); err != nil {

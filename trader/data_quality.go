@@ -48,10 +48,17 @@ func (at *AutoTrader) initializeDataQualityState() {
 
 func (at *AutoTrader) currentDataValidationOptions() dataquality.Options {
 	return dataquality.Options{
-		Now:            time.Now().UTC(),
+		Now:            at.currentTimeUTC(),
 		CheckStaleness: !at.backtestMode && !strings.EqualFold(at.config.Mode, "replay"),
 		InstrumentType: at.config.InstrumentType,
 	}
+}
+
+func (at *AutoTrader) currentTimeUTC() time.Time {
+	if at != nil && at.timeNow != nil {
+		return at.timeNow().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func (at *AutoTrader) getValidatedMarketData(symbol string) (*market.Data, error) {

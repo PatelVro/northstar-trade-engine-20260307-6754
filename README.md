@@ -199,6 +199,45 @@ IBKR portfolio readiness now performs a bounded warm-up before checking account-
 
 During active runtime, Northstar also reuses one short-lived canonical broker account snapshot for repeated balance/position reads within the same decision window, then invalidates it immediately after execution submission, broker degradation, or broker reconciliation. This keeps the runtime from hammering fragile IBKR portfolio endpoints multiple times per cycle while still failing closed once the snapshot goes stale.
 
+## Restart Recovery
+
+Northstar now persists the minimum critical runtime state needed for safer restarts at:
+
+- `output/state/<trader_id>/runtime_state.json`
+
+The checkpoint currently includes:
+
+- execution-manager history and duplicate-suppression state
+- local order lifecycle state when the active trader exposes the lifecycle store
+- local position snapshots used by position reconciliation
+- shadow-mode portfolio state and recent hypothetical decisions
+- the latest known account summary used for operator status
+
+Restart behavior is safety-first:
+
+- missing checkpoint: startup proceeds normally
+- corrupt or unreadable checkpoint: trading stays blocked until the operator fixes or removes it
+- restored broker-managed state with unresolved orders/positions: startup shows `restart_recovery` pending and trading stays blocked until broker reconciliation/position bootstrap clears the uncertainty
+- restored shadow state: shadow portfolio continuity is preserved without broker reconciliation
+
+What this guarantees:
+
+- duplicate suppression survives restart
+- in-flight local order awareness is not silently discarded
+- operator status exposes whether state was restored, whether it is partial, and whether reconciliation is still pending
+
+What it does not guarantee:
+
+- it is not a full durable OMS
+- it does not reconstruct broker truth without the broker
+- if the process dies between an order mutation and the next checkpoint write, the very latest state change can still be lost
+
+Operator checks after restart:
+
+1. Inspect `/api/status` and confirm `restart_recovery.trading_blocked=false`
+2. If `restart_recovery.pending_reconciliation=true`, wait for broker bootstrap / position reconciliation to clear it before trusting entries
+3. Confirm `order_reconciliation` and `position_reconciliation` are healthy before resuming normal supervision
+
 If IBKR starts returning `Chart data unavailable` or similar history-endpoint failures during a shadow or paper session, Northstar now treats that as a bounded market-data availability block instead of a generic runtime crash. Shadow cycles stay in the safe blocked path, a `market_data_validation_failed` incident is opened with runbook guidance, and the incident clears automatically once fresh history requests succeed again.
 
 Northstar now also runs a small liquid-symbol preflight before the full equity decision pipeline loads IBKR market data. If liquid probes like `AAPL`, `MSFT`, `NVDA`, `SPY`, or `QQQ` are delayed or unusable across the board, the runtime records one clear feed-delay state in `/api/status` and opens a `market_data_validation_failed` incident instead of spamming per-symbol failures for the whole candidate batch. This makes delayed or non-real-time IBKR sessions explicit and fail-safe.

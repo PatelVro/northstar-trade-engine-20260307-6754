@@ -25,6 +25,7 @@ type IBKRTrader struct {
 	Provider      *market.IBKRProvider
 	orderStore    *orders.Store
 	orderMu       sync.Mutex
+	lifecycleHook func()
 	balanceMu     sync.RWMutex
 	fallbackCash  float64
 	protectMu     sync.Mutex
@@ -96,6 +97,35 @@ func (t *IBKRTrader) LookupOrderRecord(localID, brokerOrderID string) *orders.Re
 		return nil
 	}
 	return t.orderStore.Lookup(localID, brokerOrderID)
+}
+
+func (t *IBKRTrader) SnapshotOrderStoreState() orders.StoreState {
+	if t.orderStore == nil {
+		return orders.StoreState{}
+	}
+	return t.orderStore.SnapshotState()
+}
+
+func (t *IBKRTrader) RestoreOrderStoreState(state orders.StoreState) error {
+	if t.orderStore == nil {
+		t.orderStore = orders.NewStore()
+	}
+	return t.orderStore.RestoreState(state)
+}
+
+func (t *IBKRTrader) SetLifecyclePersistenceHook(hook func()) {
+	t.orderMu.Lock()
+	t.lifecycleHook = hook
+	t.orderMu.Unlock()
+}
+
+func (t *IBKRTrader) notifyLifecyclePersistence() {
+	t.orderMu.Lock()
+	hook := t.lifecycleHook
+	t.orderMu.Unlock()
+	if hook != nil {
+		hook()
+	}
 }
 
 func (t *IBKRTrader) setFallbackCash(v float64) {
@@ -1032,6 +1062,7 @@ func (t *IBKRTrader) reconcileOrderLifecycle() error {
 		if t.orderStore != nil {
 			t.orderStore.RecordReconciliationError(err, time.Now())
 		}
+		t.notifyLifecyclePersistence()
 		return err
 	}
 	positions, err := t.GetPositions()
@@ -1039,6 +1070,7 @@ func (t *IBKRTrader) reconcileOrderLifecycle() error {
 		if t.orderStore != nil {
 			t.orderStore.RecordReconciliationError(err, time.Now())
 		}
+		t.notifyLifecyclePersistence()
 		return err
 	}
 	if t.orderStore == nil {
@@ -1051,6 +1083,7 @@ func (t *IBKRTrader) reconcileOrderLifecycle() error {
 			log.Printf(" IBKR order issue [%s]: %s", issue.Type, issue.Message)
 		}
 	}
+	t.notifyLifecyclePersistence()
 	return nil
 }
 
@@ -1074,6 +1107,7 @@ func (t *IBKRTrader) ReconcileBrokerState() (*IBKRBrokerSnapshot, error) {
 		t.orderStore = orders.NewStore()
 	}
 	t.orderStore.Reconcile(toBrokerOrders(openOrders, time.Now()), toOrderPositions(positions), time.Now())
+	t.notifyLifecyclePersistence()
 	log.Printf(" IBKR reconciliation refreshed account summary, %d positions, %d open orders", len(positions), len(openOrders))
 
 	return &IBKRBrokerSnapshot{

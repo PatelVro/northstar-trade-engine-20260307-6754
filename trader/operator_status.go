@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const operatorStatusSchemaVersion = 12
+const operatorStatusSchemaVersion = 13
 
 type OperatorRuntimeSummary struct {
 	IsRunning         bool    `json:"is_running"`
@@ -91,6 +91,29 @@ type OperatorShadowModeSummary struct {
 	HypotheticalUnrealizedPnL float64                  `json:"hypothetical_unrealized_pnl"`
 	LastBlockReason           string                   `json:"last_block_reason"`
 	RecentDecisions           []logger.ShadowExecution `json:"recent_decisions"`
+}
+
+type OperatorRestartRecoverySummary struct {
+	Available               bool   `json:"available"`
+	Status                  string `json:"status"`
+	StatePath               string `json:"state_path"`
+	StatePresent            bool   `json:"state_present"`
+	Restored                bool   `json:"restored"`
+	PendingReconciliation   bool   `json:"pending_reconciliation"`
+	TradingBlocked          bool   `json:"trading_blocked"`
+	Partial                 bool   `json:"partial"`
+	Corrupt                 bool   `json:"corrupt"`
+	Message                 string `json:"message"`
+	SavedAt                 string `json:"saved_at"`
+	RestoredAt              string `json:"restored_at"`
+	LastPersistedAt         string `json:"last_persisted_at"`
+	LastLoadError           string `json:"last_load_error"`
+	LastSaveError           string `json:"last_save_error"`
+	RestoredExecutionCount  int    `json:"restored_execution_count"`
+	RestoredInFlightCount   int    `json:"restored_in_flight_count"`
+	RestoredActiveOrders    int    `json:"restored_active_orders"`
+	RestoredLocalPositions  int    `json:"restored_local_positions"`
+	RestoredShadowPositions int    `json:"restored_shadow_positions"`
 }
 
 type OperatorPromotionSummary struct {
@@ -251,6 +274,7 @@ type OperatorStatusSummary struct {
 	RiskSupervisor         OperatorRiskSupervisorSummary         `json:"risk_supervisor"`
 	Execution              OperatorExecutionSummary              `json:"execution"`
 	ShadowMode             OperatorShadowModeSummary             `json:"shadow_mode"`
+	RestartRecovery        OperatorRestartRecoverySummary        `json:"restart_recovery"`
 	Session                OperatorSessionSummary                `json:"session"`
 	Runtime                OperatorRuntimeSummary                `json:"runtime"`
 	TradingGate            OperatorTradingGateSummary            `json:"trading_gate"`
@@ -401,6 +425,7 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 	incidentSummary := at.currentIncidentSummary()
 	executionState := at.currentExecutionSummary()
 	shadowState := at.currentShadowSummary()
+	restartRecovery := at.currentRestartRecoverySummary()
 
 	aiProvider := "DeepSeek"
 	if at.demoMode {
@@ -505,6 +530,28 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		HypotheticalUnrealizedPnL: shadowState.HypotheticalUnrealizedPnL,
 		LastBlockReason:           shadowState.LastBlockReason,
 		RecentDecisions:           append([]logger.ShadowExecution(nil), shadowState.RecentDecisions...),
+	}
+	restartRecoverySummary := OperatorRestartRecoverySummary{
+		Available:               restartRecovery.Available,
+		Status:                  restartRecovery.Status,
+		StatePath:               restartRecovery.StatePath,
+		StatePresent:            restartRecovery.StatePresent,
+		Restored:                restartRecovery.Restored,
+		PendingReconciliation:   restartRecovery.PendingReconciliation,
+		TradingBlocked:          restartRecovery.TradingBlocked,
+		Partial:                 restartRecovery.Partial,
+		Corrupt:                 restartRecovery.Corrupt,
+		Message:                 restartRecovery.Message,
+		SavedAt:                 formatRFC3339(restartRecovery.SavedAt),
+		RestoredAt:              formatRFC3339(restartRecovery.RestoredAt),
+		LastPersistedAt:         formatRFC3339(restartRecovery.LastPersistedAt),
+		LastLoadError:           restartRecovery.LastLoadError,
+		LastSaveError:           restartRecovery.LastSaveError,
+		RestoredExecutionCount:  restartRecovery.RestoredExecutionCount,
+		RestoredInFlightCount:   restartRecovery.RestoredInFlightCount,
+		RestoredActiveOrders:    restartRecovery.RestoredActiveOrders,
+		RestoredLocalPositions:  restartRecovery.RestoredLocalPositions,
+		RestoredShadowPositions: restartRecovery.RestoredShadowPositions,
 	}
 
 	brokerSummary := OperatorBrokerRuntimeSummary{
@@ -672,6 +719,7 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		RiskSupervisor:                  riskSupervisorSummary,
 		Execution:                       executionSummary,
 		ShadowMode:                      shadowSummary,
+		RestartRecovery:                 restartRecoverySummary,
 		Session:                         sessionSummary,
 		Runtime:                         runtimeSummary,
 		TradingGate:                     tradingGate,
