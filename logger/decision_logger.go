@@ -12,20 +12,27 @@ import (
 
 // DecisionRecord holds the log entry for an AI trading decision
 type DecisionRecord struct {
-	Timestamp      time.Time             `json:"timestamp"`    // Decision timestamp
-	CycleNumber    int                   `json:"cycle_number"` // Cycle number
-	ShadowMode     bool                  `json:"shadow_mode,omitempty"`
-	InputPrompt    string                `json:"input_prompt"`       // Input prompt sent to AI
-	CoTTrace       string                `json:"cot_trace"`          // AI chain of thought trace
-	DecisionJSON   string                `json:"decision_json"`      // Raw decision JSON
-	AccountState   AccountSnapshot       `json:"account_state"`      // Snapshot of account state
-	Positions      []PositionSnapshot    `json:"positions"`          // Snapshot of open positions
-	CandidateCoins []string              `json:"candidate_coins"`    // List of candidate coins
-	Pipeline       []PipelineObservation `json:"pipeline,omitempty"` // Canonical runtime decision-pipeline state per symbol
-	Decisions      []DecisionAction      `json:"decisions"`          // List of executed decisions
-	ExecutionLog   []string              `json:"execution_log"`      // Log of execution steps
-	Success        bool                  `json:"success"`            // Flag indicating success
-	ErrorMessage   string                `json:"error_message"`      // Error message if applicable
+	Timestamp              time.Time             `json:"timestamp"`    // Decision timestamp
+	CycleNumber            int                   `json:"cycle_number"` // Cycle number
+	ShadowMode             bool                  `json:"shadow_mode,omitempty"`
+	RuntimeState           string                `json:"runtime_state,omitempty"`
+	RuntimeSeverity        string                `json:"runtime_severity,omitempty"`
+	CycleTradable          bool                  `json:"cycle_tradable"`
+	ExpectedNonTradable    bool                  `json:"expected_non_tradable,omitempty"`
+	AwaitingReconciliation bool                  `json:"awaiting_reconciliation,omitempty"`
+	RuntimeReason          string                `json:"runtime_reason,omitempty"`
+	RuntimeCauses          []string              `json:"runtime_causes,omitempty"`
+	InputPrompt            string                `json:"input_prompt"`       // Input prompt sent to AI
+	CoTTrace               string                `json:"cot_trace"`          // AI chain of thought trace
+	DecisionJSON           string                `json:"decision_json"`      // Raw decision JSON
+	AccountState           AccountSnapshot       `json:"account_state"`      // Snapshot of account state
+	Positions              []PositionSnapshot    `json:"positions"`          // Snapshot of open positions
+	CandidateCoins         []string              `json:"candidate_coins"`    // List of candidate coins
+	Pipeline               []PipelineObservation `json:"pipeline,omitempty"` // Canonical runtime decision-pipeline state per symbol
+	Decisions              []DecisionAction      `json:"decisions"`          // List of executed decisions
+	ExecutionLog           []string              `json:"execution_log"`      // Log of execution steps
+	Success                bool                  `json:"success"`            // Flag indicating success
+	ErrorMessage           string                `json:"error_message"`      // Error message if applicable
 }
 
 // AccountSnapshot records account balance state

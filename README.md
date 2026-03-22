@@ -250,6 +250,36 @@ Operator checks before trusting a broker-backed paper/live session:
 2. Confirm `broker_truth.verified=true`
 3. Confirm `order_reconciliation` and `position_reconciliation` remain fresh and healthy
 
+## Operator Runtime Truth
+
+`/api/status` now carries a canonical `runtime_condition` summary so operators do not need to infer the real state by stitching together gate, incident, and broker fields manually.
+
+Runtime condition states:
+
+- `healthy`
+  - runtime is running normally and the current cycle is tradable
+- `degraded`
+  - runtime is up, but entries or cycle quality are reduced by restrictions or degraded dependencies
+- `blocked`
+  - runtime is up, but current conditions block trading
+- `halted`
+  - a hard safety control such as the kill switch or a hard halt is active
+- `awaiting_reconciliation`
+  - trading is blocked or entry-restricted pending broker/order/position truth cleanup
+- `market_closed`
+  - startup may still be healthy, but the current cycle is not tradable because the market is closed or otherwise expected to be non-tradable
+
+Severity semantics:
+
+- `info`
+  - expected non-tradable state such as market closed
+- `warning`
+  - degraded or restricted state that needs operator awareness
+- `critical`
+  - hard stop or unresolved safety-critical state
+
+Decision logs now also persist the current runtime condition and latest known account snapshot so blocked cycles are easier to interpret after the fact.
+
 ## Restart Recovery
 
 Northstar now persists the minimum critical runtime state needed for safer restarts at:

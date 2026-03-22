@@ -276,6 +276,8 @@ type AutoTrader struct {
 	restartRecoveryMu                     sync.RWMutex
 	restartRecoveryState                  restartRecoverySummary
 	restartPersistMu                      sync.Mutex
+	blockedCycleMu                        sync.RWMutex
+	lastBlockedCycle                      blockedCycleState
 	eventJournalMu                        sync.Mutex
 	lastJournaledTradingGateKey           string
 	lastJournaledBrokerTruthKey           string
@@ -1076,6 +1078,7 @@ func (at *AutoTrader) runDemoCycle() error {
 	if err := at.logDecisionAndAudit(record, nil, nil); err != nil {
 		return fmt.Errorf("failed to write demo decision record: %w", err)
 	}
+	at.clearBlockedCycle()
 
 	log.Printf(" Demo cycle #%d | equity=%.2f | pnl=%.2f (%.2f%%)",
 		at.callCount, at.demoEquity, totalPnL, (totalPnL/at.initialBalance)*100.0)
@@ -1537,6 +1540,7 @@ func (at *AutoTrader) runCycle() error {
 	if err := at.logDecisionAndAudit(record, ctx, fullDecision); err != nil {
 		log.Printf(" Failed to save decision record strings tracking permutations limits Limits Mapping string Maps tracking : %v", err)
 	}
+	at.clearBlockedCycle()
 
 	return nil
 }

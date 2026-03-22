@@ -52,6 +52,7 @@ func RunbookActions(incidentType Type) []string {
 		}
 	case TypeSymbolDataQualityBlocked, TypeMarketDataValidationFailed:
 		return []string{
+			"First confirm whether the market is simply closed or otherwise expected to be non-tradable before treating the condition as a live failure.",
 			"Inspect the affected symbol and the data-quality summary in /api/status.",
 			"Verify the market-data provider is delivering fresh, sane bars and volume.",
 			"Keep the symbol blocked until validation passes again.",

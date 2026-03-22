@@ -25,7 +25,7 @@ const (
 	SessionCompletionPartial   SessionCompletionStatus = "partial"
 )
 
-const sessionReportVersion = 14
+const sessionReportVersion = 15
 
 type SessionPortfolioRiskSnapshot struct {
 	EvaluatedAt time.Time             `json:"evaluated_at"`
@@ -75,6 +75,11 @@ type PaperSessionReport struct {
 	BrokerStateFinal                  string                        `json:"broker_state_final"`
 	BrokerDegradedEventsCount         int                           `json:"broker_degraded_events_count"`
 	BlockedCyclesCount                int                           `json:"blocked_cycles_count"`
+	ExpectedBlockedCyclesCount        int                           `json:"expected_blocked_cycles_count"`
+	UnexpectedBlockedCyclesCount      int                           `json:"unexpected_blocked_cycles_count"`
+	LastBlockedState                  string                        `json:"last_blocked_state,omitempty"`
+	LastBlockedSeverity               string                        `json:"last_blocked_severity,omitempty"`
+	LastBlockedExpected               bool                          `json:"last_blocked_expected"`
 	FinalRiskMode                     risk.SupervisorMode           `json:"final_risk_mode"`
 	RiskIncidentCount                 int                           `json:"risk_incident_count"`
 	CriticalRiskIncidentCount         int                           `json:"critical_risk_incident_count"`
@@ -82,6 +87,10 @@ type PaperSessionReport struct {
 	RiskSupervisorSummary             string                        `json:"risk_supervisor_summary"`
 	NotableRiskIncidents              []string                      `json:"notable_risk_incidents"`
 	SessionCompletionStatus           SessionCompletionStatus       `json:"session_completion_status"`
+	FinalRuntimeConditionState        string                        `json:"final_runtime_condition_state,omitempty"`
+	FinalRuntimeConditionSeverity     string                        `json:"final_runtime_condition_severity,omitempty"`
+	FinalRuntimeConditionReason       string                        `json:"final_runtime_condition_reason,omitempty"`
+	FinalCycleTradable                bool                          `json:"final_cycle_tradable"`
 	StrategyInitialCapital            float64                       `json:"strategy_initial_capital"`
 	StartingStrategyEquity            *float64                      `json:"starting_strategy_equity"`
 	EndingStrategyEquity              *float64                      `json:"ending_strategy_equity"`
@@ -420,6 +429,7 @@ func (at *AutoTrader) recordPaperSessionCycleStart() {
 }
 
 func (at *AutoTrader) recordPaperSessionBlockedCycle(reason string) {
+	classification := at.noteBlockedCycle(reason)
 	if !at.paperSessionReportsEnabled() {
 		at.emitBlockedCycleAlert(reason)
 		return
@@ -431,7 +441,20 @@ func (at *AutoTrader) recordPaperSessionBlockedCycle(reason string) {
 		tracker.report.BlockedCyclesCount++
 		if reason = strings.TrimSpace(reason); reason != "" {
 			tracker.report.LastBlockReason = reason
-			tracker.addWarning(reason)
+			tracker.report.LastBlockedState = string(classification.State)
+			tracker.report.LastBlockedSeverity = string(classification.Severity)
+			tracker.report.LastBlockedExpected = classification.ExpectedNonTradable
+			if classification.ExpectedNonTradable {
+				tracker.report.ExpectedBlockedCyclesCount++
+				tracker.addNotableEvent(reason)
+			} else {
+				tracker.report.UnexpectedBlockedCyclesCount++
+				if classification.Severity == incidents.SeverityCritical {
+					tracker.addError(reason)
+				} else {
+					tracker.addWarning(reason)
+				}
+			}
 		}
 	}
 }
@@ -441,8 +464,7 @@ func (at *AutoTrader) emitBlockedCycleAlert(reason string) {
 	if reason == "" {
 		reason = "trading blocked"
 	}
-	lower := strings.ToLower(reason)
-	if strings.Contains(lower, "market is closed") {
+	if isMarketClosedReason(reason) {
 		at.alertRuntimeInfo("market_closed", "market closed: "+reason, map[string]string{
 			"reason": reason,
 		})
@@ -658,7 +680,9 @@ func (t *paperSessionTracker) observeIncident(incident incidents.Incident) {
 	if incident.IncidentID == "" {
 		return
 	}
-	t.report.SessionHadOperationalIncident = true
+	if !expectedNonTradableIncident(incident) {
+		t.report.SessionHadOperationalIncident = true
+	}
 	if _, exists := t.incidents[incident.IncidentID]; !exists {
 		t.incidents[incident.IncidentID] = struct{}{}
 		t.report.IncidentCount++
@@ -864,6 +888,11 @@ func (at *AutoTrader) writePaperSessionReport(tracker *paperSessionTracker, reas
 	report.EventJournalLastEventType = journal.LastEventType
 	report.EventJournalLastSeverity = string(journal.LastSeverity)
 	report.EventJournalLastError = journal.LastError
+	status := at.GetOperatorStatus()
+	report.FinalRuntimeConditionState = string(status.RuntimeCondition.State)
+	report.FinalRuntimeConditionSeverity = string(status.RuntimeCondition.Severity)
+	report.FinalRuntimeConditionReason = strings.TrimSpace(status.RuntimeCondition.Reason)
+	report.FinalCycleTradable = status.RuntimeCondition.CycleTradable
 	report.GeneratedAt = endTime
 	report.SessionEnd = endTime
 	report.SessionDurationSeconds = int64(endTime.Sub(report.SessionStart).Seconds())
@@ -1133,7 +1162,7 @@ func classifyPaperSessionCompletion(report PaperSessionReport, hasStart, hasEnd,
 	if report.SessionHadOperationalIncident && report.CriticalIncidentCount > 0 {
 		return SessionCompletionDegraded
 	}
-	if report.BrokerDegradedEventsCount > 0 || report.BlockedCyclesCount > 0 {
+	if report.BrokerDegradedEventsCount > 0 || report.UnexpectedBlockedCyclesCount > 0 {
 		return SessionCompletionDegraded
 	}
 	finalState := strings.ToLower(strings.TrimSpace(report.BrokerStateFinal))

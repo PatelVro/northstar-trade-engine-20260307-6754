@@ -197,6 +197,24 @@ func TestLoadMomentumMarketDataDetectsGlobalFeedDelay(t *testing.T) {
 	}
 }
 
+func TestSyncMarketDataAvailabilityIncidentTreatsMarketClosedAsInfo(t *testing.T) {
+	at := &AutoTrader{
+		id:              "data_test",
+		name:            "Data Test",
+		incidentManager: incidents.NewManager("data_test"),
+	}
+
+	at.syncMarketDataAvailabilityIncident(true, "market is closed for equity session", nil)
+
+	summary := at.currentIncidentSummary()
+	if summary.OpenCount != 1 {
+		t.Fatalf("expected one open incident, got %d", summary.OpenCount)
+	}
+	if summary.InfoOpenCount != 1 || summary.CriticalOpenCount != 0 {
+		t.Fatalf("expected market-closed incident to be info-only, got %+v", summary)
+	}
+}
+
 func buildMarketBars(start time.Time, step time.Duration, count int, startPrice float64, volume float64) []market.Kline {
 	out := make([]market.Kline, 0, count)
 	price := startPrice

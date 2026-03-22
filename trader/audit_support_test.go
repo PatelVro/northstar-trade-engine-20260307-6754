@@ -8,7 +8,8 @@ import (
 )
 
 type auditSupportLookupTrader struct {
-	record *orders.Record
+	record  *orders.Record
+	summary orders.Summary
 }
 
 func (t *auditSupportLookupTrader) GetBalance() (map[string]interface{}, error) {
@@ -63,6 +64,10 @@ func (t *auditSupportLookupTrader) LookupOrderRecord(localID, brokerOrderID stri
 	return nil
 }
 
+func (t *auditSupportLookupTrader) GetOrderReconciliationSummary() orders.Summary {
+	return t.summary
+}
+
 func TestEnrichDecisionRecordExecutionTruthFromLifecycle(t *testing.T) {
 	now := time.Now().UTC()
 	at := &AutoTrader{
@@ -77,6 +82,21 @@ func TestEnrichDecisionRecordExecutionTruthFromLifecycle(t *testing.T) {
 				NeedsReview:     true,
 				SubmittedAt:     now.Add(-time.Minute),
 				UpdatedAt:       now,
+			},
+			summary: orders.Summary{
+				LastRunAt:             now,
+				LastSuccessAt:         now,
+				CurrentInferredOrders: 1,
+				ConfidenceDegraded:    true,
+				LastSummary:           "order reconciliation inferred 1 execution outcome from position evidence",
+				LastIssues: []orders.Issue{{
+					LocalID:     "local-123",
+					Message:     "entry order inferred from broker position evidence",
+					Authority:   orders.TruthAuthorityReconciliationInferred,
+					Confidence:  orders.TruthConfidenceHigh,
+					NeedsReview: true,
+					Repaired:    true,
+				}},
 			},
 		},
 	}
@@ -102,5 +122,94 @@ func TestEnrichDecisionRecordExecutionTruthFromLifecycle(t *testing.T) {
 	}
 	if action.ExecutionTruthReason == "" || !action.ExecutionNeedsReview {
 		t.Fatalf("expected truth reason and review flag, got %+v", action)
+	}
+}
+
+func TestEnrichDecisionRecordRuntimeTruthAddsConditionAndLatestAccount(t *testing.T) {
+	now := time.Now().UTC()
+	at := &AutoTrader{
+		isRunning: true,
+		trader: &auditSupportLookupTrader{
+			record: &orders.Record{
+				LocalID:         "local-123",
+				BrokerOrderID:   "broker-456",
+				Status:          orders.StatusUnknown,
+				TruthAuthority:  orders.TruthAuthorityReconciliationInferred,
+				TruthConfidence: orders.TruthConfidenceHigh,
+				TruthReason:     "entry order inferred from broker position evidence",
+				NeedsReview:     true,
+				SubmittedAt:     now.Add(-time.Minute),
+				UpdatedAt:       now,
+			},
+			summary: orders.Summary{
+				LastRunAt:             now,
+				LastSuccessAt:         now,
+				CurrentInferredOrders: 1,
+				ConfidenceDegraded:    true,
+				LastSummary:           "order reconciliation inferred 1 execution outcome from position evidence",
+				LastIssues: []orders.Issue{{
+					LocalID:     "local-123",
+					Message:     "entry order inferred from broker position evidence",
+					Authority:   orders.TruthAuthorityReconciliationInferred,
+					Confidence:  orders.TruthConfidenceHigh,
+					NeedsReview: true,
+					Repaired:    true,
+				}},
+			},
+		},
+		config: AutoTraderConfig{
+			Mode:           "paper",
+			Broker:         "ibkr",
+			Exchange:       "ibkr",
+			StrategyMode:   "momentum_only",
+			InstrumentType: "equity",
+			ScanInterval:   5 * time.Minute,
+		},
+		exchange: "ibkr",
+	}
+	at.initializeBrokerRuntimeState()
+	at.setReadinessSummary(ReadinessSummary{
+		Status:         ReadinessPass,
+		Message:        "startup readiness passed",
+		CheckedAt:      now,
+		TradingAllowed: true,
+	})
+	at.positionReconSummary = freshPositionReconSummary(now)
+	at.setRuntimeAccountSnapshot(AccountSummary{
+		AccountingVersion:      accountingVersion,
+		StrategyInitialCapital: 100000,
+		StrategyEquity:         100000,
+		AccountEquity:          100000,
+		AvailableBalance:       100000,
+	}, []map[string]interface{}{})
+	at.setLatestAccountSummary(&AccountSummary{
+		AccountingVersion:      accountingVersion,
+		StrategyInitialCapital: 100000,
+		StrategyEquity:         100000,
+		AccountEquity:          100000,
+		AvailableBalance:       100000,
+	})
+	record := &logger.DecisionRecord{
+		Decisions: []logger.DecisionAction{
+			{
+				Action:        "open_long",
+				Symbol:        "AAPL",
+				LocalOrderID:  "local-123",
+				BrokerOrderID: "broker-456",
+			},
+		},
+	}
+
+	at.enrichDecisionRecordExecutionTruth(record)
+	at.enrichDecisionRecordRuntimeTruth(record)
+
+	if record.RuntimeState != string(RuntimeConditionAwaitingReconciliation) {
+		t.Fatalf("expected awaiting reconciliation runtime state, got %+v", record)
+	}
+	if !record.AwaitingReconciliation || record.CycleTradable {
+		t.Fatalf("expected restricted runtime truth in decision record, got %+v", record)
+	}
+	if !record.AccountState.HasCanonicalAccounting() {
+		t.Fatalf("expected latest account snapshot to be backfilled into decision record")
 	}
 }

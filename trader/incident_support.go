@@ -129,7 +129,7 @@ func (at *AutoTrader) syncBrokerRuntimeIncident(state BrokerRuntimeState, reason
 func (at *AutoTrader) syncMarketDataFeedDelayIncident(delayed bool, summary string, details map[string]string) {
 	signal := incidents.Signal{
 		IncidentType:  incidents.TypeMarketDataValidationFailed,
-		Severity:      incidents.SeverityCritical,
+		Severity:      marketDataIncidentSeverity(summary),
 		Source:        "market_data_feed",
 		ExtraKey:      "feed_delay",
 		Summary:       strings.TrimSpace(summary),
@@ -349,7 +349,7 @@ func (at *AutoTrader) syncDataQualityIncident(symbol string, blocked bool, summa
 func (at *AutoTrader) syncMarketDataAvailabilityIncident(blocked bool, summary string, details map[string]string) {
 	signal := incidents.Signal{
 		IncidentType:  incidents.TypeMarketDataValidationFailed,
-		Severity:      incidents.SeverityCritical,
+		Severity:      marketDataIncidentSeverity(summary),
 		Source:        "market_data",
 		Summary:       strings.TrimSpace(summary),
 		CurrentStatus: strings.TrimSpace(summary),

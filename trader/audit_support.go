@@ -27,6 +27,7 @@ func (at *AutoTrader) logDecisionAndAudit(record *logger.DecisionRecord, ctx *de
 		return nil
 	}
 	at.enrichDecisionRecordExecutionTruth(record)
+	at.enrichDecisionRecordRuntimeTruth(record)
 	if err := at.decisionLogger.LogDecision(record); err != nil {
 		return err
 	}
@@ -63,6 +64,47 @@ func (at *AutoTrader) enrichDecisionRecordExecutionTruth(record *logger.Decision
 		action.ExecutionTruthConfidence = string(order.TruthConfidence)
 		action.ExecutionTruthReason = strings.TrimSpace(order.TruthReason)
 		action.ExecutionNeedsReview = order.NeedsReview
+	}
+}
+
+func (at *AutoTrader) enrichDecisionRecordRuntimeTruth(record *logger.DecisionRecord) {
+	if at == nil || record == nil {
+		return
+	}
+	status := at.GetOperatorStatus()
+	record.RuntimeState = string(status.RuntimeCondition.State)
+	record.RuntimeSeverity = string(status.RuntimeCondition.Severity)
+	record.CycleTradable = status.RuntimeCondition.CycleTradable
+	record.ExpectedNonTradable = status.RuntimeCondition.ExpectedNonTradable
+	record.AwaitingReconciliation = status.RuntimeCondition.AwaitingReconciliation
+	record.RuntimeReason = strings.TrimSpace(status.RuntimeCondition.Reason)
+	record.RuntimeCauses = append([]string(nil), status.RuntimeCondition.Causes...)
+
+	if record.AccountState.HasCanonicalAccounting() {
+		return
+	}
+	account := at.currentLatestAccountSummary()
+	if account == nil {
+		return
+	}
+	record.AccountState = logger.AccountSnapshot{
+		AccountingVersion:      account.AccountingVersion,
+		AccountCash:            account.AccountCash,
+		AccountEquity:          account.AccountEquity,
+		AvailableBalance:       account.AvailableBalance,
+		GrossMarketValue:       account.GrossMarketValue,
+		UnrealizedPnL:          account.UnrealizedPnL,
+		RealizedPnL:            account.RealizedPnL,
+		TotalPnL:               account.TotalPnL,
+		StrategyInitialCapital: account.StrategyInitialCapital,
+		StrategyEquity:         account.StrategyEquity,
+		StrategyReturnPct:      account.StrategyReturnPct,
+		DailyPnL:               account.DailyPnL,
+		PositionCount:          account.PositionCount,
+		MarginUsed:             account.MarginUsed,
+		MarginUsedPct:          account.MarginUsedPct,
+		TotalBalance:           account.AccountEquity,
+		TotalUnrealizedProfit:  account.UnrealizedPnL,
 	}
 }
 

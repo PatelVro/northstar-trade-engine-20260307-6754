@@ -65,12 +65,25 @@ func TestClassifyPaperSessionCompletionBlocked(t *testing.T) {
 
 func TestClassifyPaperSessionCompletionDegraded(t *testing.T) {
 	report := PaperSessionReport{
-		TradingAllowedAtStart:     true,
-		DecisionCycles:            6,
-		BrokerDegradedEventsCount: 1,
+		TradingAllowedAtStart:        true,
+		DecisionCycles:               6,
+		BrokerDegradedEventsCount:    1,
+		UnexpectedBlockedCyclesCount: 1,
 	}
 	if got := classifyPaperSessionCompletion(report, true, true, false); got != SessionCompletionDegraded {
 		t.Fatalf("expected degraded session status, got %s", got)
+	}
+}
+
+func TestClassifyPaperSessionCompletionDoesNotDegradeForExpectedBlockedCyclesAlone(t *testing.T) {
+	report := PaperSessionReport{
+		TradingAllowedAtStart:      true,
+		DecisionCycles:             6,
+		BlockedCyclesCount:         3,
+		ExpectedBlockedCyclesCount: 3,
+	}
+	if got := classifyPaperSessionCompletion(report, true, true, false); got != SessionCompletionCompleted {
+		t.Fatalf("expected expected-only blocked cycles not to degrade session status, got %s", got)
 	}
 }
 
@@ -535,5 +548,63 @@ func TestPaperSessionTrackerCapturesOperationalIncidents(t *testing.T) {
 	}
 	if len(sortedKeys(tracker.incidentTypes)) != 2 {
 		t.Fatalf("expected two incident types to be tracked")
+	}
+}
+
+func TestPaperSessionTrackerIgnoresExpectedNonTradableInfoIncidentAsOperational(t *testing.T) {
+	tracker := newPaperSessionTracker(&AutoTrader{
+		id:     "paper_trader",
+		name:   "Paper Trader",
+		config: AutoTraderConfig{Mode: "paper", Broker: "ibkr", StrategyMode: "multi_factor"},
+	}, time.Now())
+
+	tracker.observeIncident(incidents.Incident{
+		IncidentID:   "inc-expected-001",
+		IncidentType: incidents.TypeMarketDataValidationFailed,
+		Severity:     incidents.SeverityInfo,
+		Summary:      "market is closed for equity session",
+		Active:       true,
+	})
+
+	if tracker.report.SessionHadOperationalIncident {
+		t.Fatalf("expected market-closed info incident not to mark the session operationally degraded")
+	}
+	if tracker.report.IncidentCount != 1 {
+		t.Fatalf("expected the incident to remain visible in counts, got %d", tracker.report.IncidentCount)
+	}
+}
+
+func TestRecordPaperSessionBlockedCycleClassifiesExpectedVsUnexpected(t *testing.T) {
+	at := &AutoTrader{
+		id:        "paper_trader",
+		name:      "Paper Trader",
+		isRunning: true,
+		config: AutoTraderConfig{
+			ID:           "paper_trader",
+			Name:         "Paper Trader",
+			Mode:         "paper",
+			Broker:       "ibkr",
+			StrategyMode: "multi_factor",
+		},
+	}
+	at.ensurePaperSessionReportingForTime(time.Now())
+
+	at.recordPaperSessionBlockedCycle("market is closed for equity session")
+	at.recordPaperSessionBlockedCycle("broker runtime degraded")
+
+	at.sessionReportMu.Lock()
+	tracker := at.sessionReportState
+	at.sessionReportMu.Unlock()
+	if tracker == nil {
+		t.Fatalf("expected paper session tracker to exist")
+	}
+	if tracker.report.BlockedCyclesCount != 2 {
+		t.Fatalf("expected 2 blocked cycles, got %d", tracker.report.BlockedCyclesCount)
+	}
+	if tracker.report.ExpectedBlockedCyclesCount != 1 || tracker.report.UnexpectedBlockedCyclesCount != 1 {
+		t.Fatalf("unexpected blocked cycle classification counts: %+v", tracker.report)
+	}
+	if tracker.report.LastBlockedState != string(RuntimeConditionBlocked) {
+		t.Fatalf("expected last blocked state to reflect latest unexpected block, got %q", tracker.report.LastBlockedState)
 	}
 }

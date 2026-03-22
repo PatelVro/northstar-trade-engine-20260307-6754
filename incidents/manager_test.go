@@ -84,3 +84,35 @@ func TestManagerAttachesRunbookActions(t *testing.T) {
 		t.Fatalf("expected non-empty runbook hint")
 	}
 }
+
+func TestManagerSummaryCountsInfoWarningAndCriticalOpenIncidents(t *testing.T) {
+	manager := NewManager("paper_trader")
+	now := time.Now().UTC()
+
+	manager.Observe(Signal{
+		IncidentType: TypeMarketDataValidationFailed,
+		Severity:     SeverityInfo,
+		Source:       "market_data",
+		Summary:      "market is closed for equity session",
+		OccurredAt:   now,
+	})
+	manager.Observe(Signal{
+		IncidentType: TypeBrokerRuntimeDegraded,
+		Severity:     SeverityWarning,
+		Source:       "broker_runtime",
+		Summary:      "gateway reconnecting",
+		OccurredAt:   now.Add(time.Minute),
+	})
+	manager.Observe(Signal{
+		IncidentType: TypeKillSwitchActivated,
+		Severity:     SeverityCritical,
+		Source:       "kill_switch",
+		Summary:      "kill switch active",
+		OccurredAt:   now.Add(2 * time.Minute),
+	})
+
+	summary := manager.Summary()
+	if summary.InfoOpenCount != 1 || summary.WarningOpenCount != 1 || summary.CriticalOpenCount != 1 {
+		t.Fatalf("unexpected severity counts: %+v", summary)
+	}
+}

@@ -56,7 +56,7 @@ func TestGetOperatorStatus_ReadinessFailureBlocksTradingClearly(t *testing.T) {
 	if status.TradingBlockReason != "startup readiness failed" {
 		t.Fatalf("expected readiness block reason, got %q", status.TradingBlockReason)
 	}
-	if status.OperatorMessage != "trading blocked: startup readiness failed" {
+	if status.OperatorMessage != "startup readiness failed" {
 		t.Fatalf("unexpected operator message: %q", status.OperatorMessage)
 	}
 	if status.Readiness.Status != ReadinessFail {
@@ -668,6 +668,124 @@ func TestGetOperatorStatus_IncludesIncidentSummary(t *testing.T) {
 	}
 	if status.Incidents.LatestIncidentRunbookHint == "" {
 		t.Fatalf("expected runbook hint for known incident type")
+	}
+}
+
+func TestGetOperatorStatus_MarketClosedAppearsAsExpectedNonTradable(t *testing.T) {
+	at := &AutoTrader{
+		id:       "shadow_trader",
+		name:     "Shadow Trader",
+		aiModel:  "custom",
+		exchange: "ibkr",
+		config: AutoTraderConfig{
+			ID:             "shadow_trader",
+			Name:           "Shadow Trader",
+			Mode:           "shadow",
+			Broker:         "sim",
+			DataProvider:   "ibkr",
+			InstrumentType: "equity",
+			StrategyMode:   "momentum_only",
+			ScanInterval:   5 * time.Minute,
+		},
+		isRunning: true,
+		startTime: time.Now().Add(-10 * time.Minute),
+	}
+	at.setReadinessSummary(ReadinessSummary{
+		Status:         ReadinessPass,
+		Message:        "startup readiness passed",
+		CheckedAt:      time.Now().Add(-time.Minute),
+		TradingAllowed: true,
+		PassCount:      4,
+	})
+	at.initializeBrokerRuntimeState()
+	at.initializeDataQualityState()
+	at.recordPaperSessionBlockedCycle("market is closed for equity session")
+
+	status := at.GetOperatorStatus()
+	if status.RuntimeCondition.State != RuntimeConditionMarketClosed {
+		t.Fatalf("expected market_closed runtime condition, got %+v", status.RuntimeCondition)
+	}
+	if status.RuntimeCondition.Severity != incidents.SeverityInfo {
+		t.Fatalf("expected info severity, got %+v", status.RuntimeCondition)
+	}
+	if status.CycleTradable {
+		t.Fatalf("expected cycle to be non-tradable while market is closed")
+	}
+	if !status.ExpectedNonTradable {
+		t.Fatalf("expected market-closed condition to be marked expected")
+	}
+	if !strings.Contains(strings.ToLower(status.OperatorMessage), "market") {
+		t.Fatalf("expected operator message to mention market closure, got %q", status.OperatorMessage)
+	}
+}
+
+func TestGetOperatorStatus_InferredExecutionConfidenceShowsAwaitingReconciliation(t *testing.T) {
+	now := time.Now().UTC()
+	trader := &brokerTruthTestTrader{
+		orderSummary: orders.Summary{
+			LastRunAt:             now,
+			LastSuccessAt:         now,
+			CurrentInferredOrders: 1,
+			ConfidenceDegraded:    true,
+			LastSummary:           "order reconciliation inferred 1 execution outcome from position evidence",
+			LastIssues: []orders.Issue{{
+				LocalID:     "local-inferred-1",
+				Message:     "entry order inferred from broker position evidence",
+				Authority:   orders.TruthAuthorityReconciliationInferred,
+				Confidence:  orders.TruthConfidenceHigh,
+				NeedsReview: true,
+				Repaired:    true,
+			}},
+		},
+	}
+	at := &AutoTrader{
+		id:       "broker_truth_status",
+		name:     "Broker Truth Status",
+		aiModel:  "deepseek",
+		exchange: "ibkr",
+		trader:   trader,
+		config: AutoTraderConfig{
+			ID:             "broker_truth_status",
+			Name:           "Broker Truth Status",
+			Mode:           "paper",
+			Broker:         "ibkr",
+			StrategyMode:   "momentum_only",
+			ScanInterval:   5 * time.Minute,
+			InitialBalance: 100000,
+		},
+		initialBalance: 100000,
+		isRunning:      true,
+		startTime:      now.Add(-10 * time.Minute),
+	}
+	at.initializeBrokerRuntimeState()
+	at.setReadinessSummary(ReadinessSummary{
+		Status:         ReadinessPass,
+		Message:        "startup readiness passed",
+		CheckedAt:      now,
+		TradingAllowed: true,
+		PassCount:      4,
+	})
+	at.positionReconSummary = freshPositionReconSummary(now)
+	at.setRuntimeAccountSnapshot(AccountSummary{
+		AccountingVersion:      accountingVersion,
+		StrategyInitialCapital: 100000,
+		StrategyEquity:         100000,
+		AccountEquity:          100000,
+		AvailableBalance:       100000,
+	}, []map[string]interface{}{})
+
+	status := at.GetOperatorStatus()
+	if status.RuntimeCondition.State != RuntimeConditionAwaitingReconciliation {
+		t.Fatalf("expected awaiting_reconciliation runtime state, got %+v", status.RuntimeCondition)
+	}
+	if status.RuntimeCondition.Severity != incidents.SeverityWarning {
+		t.Fatalf("expected warning severity for inferred execution restriction, got %+v", status.RuntimeCondition)
+	}
+	if status.CycleTradable {
+		t.Fatalf("expected cycle to be non-tradable for new entries while awaiting reconciliation")
+	}
+	if !status.AwaitingReconciliation {
+		t.Fatalf("expected awaiting reconciliation compatibility field to be true")
 	}
 }
 

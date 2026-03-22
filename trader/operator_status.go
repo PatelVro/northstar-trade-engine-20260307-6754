@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const operatorStatusSchemaVersion = 20
+const operatorStatusSchemaVersion = 21
 
 type OperatorRuntimeSummary struct {
 	IsRunning         bool    `json:"is_running"`
@@ -28,6 +28,17 @@ type OperatorRuntimeSummary struct {
 	AIModel           string  `json:"ai_model"`
 	IsDemoMode        bool    `json:"is_demo_mode"`
 	DemoLastCycleTime string  `json:"demo_last_cycle_time"`
+}
+
+type OperatorRuntimeConditionSummary struct {
+	State                  RuntimeConditionState `json:"state"`
+	Severity               incidents.Severity    `json:"severity"`
+	CycleTradable          bool                  `json:"cycle_tradable"`
+	ExpectedNonTradable    bool                  `json:"expected_non_tradable"`
+	AwaitingReconciliation bool                  `json:"awaiting_reconciliation"`
+	Reason                 string                `json:"reason"`
+	Causes                 []string              `json:"causes"`
+	UpdatedAt              string                `json:"updated_at"`
 }
 
 type OperatorReadinessSummary struct {
@@ -348,6 +359,8 @@ type OperatorIncidentsSummary struct {
 	OpenCount                 int                  `json:"open_count"`
 	AcknowledgedCount         int                  `json:"acknowledged_count"`
 	CriticalOpenCount         int                  `json:"critical_open_count"`
+	WarningOpenCount          int                  `json:"warning_open_count"`
+	InfoOpenCount             int                  `json:"info_open_count"`
 	LatestIncidentAt          string               `json:"latest_incident_at"`
 	LatestIncidentSummary     string               `json:"latest_incident_summary"`
 	LatestIncidentSeverity    incidents.Severity   `json:"latest_incident_severity"`
@@ -388,6 +401,7 @@ type OperatorStatusSummary struct {
 	TradingBlockReason     string                                `json:"trading_block_reason"`
 	BlockingReasons        []string                              `json:"blocking_reasons"`
 	OperatorMessage        string                                `json:"operator_message"`
+	RuntimeCondition       OperatorRuntimeConditionSummary       `json:"runtime_condition"`
 	Readiness              OperatorReadinessSummary              `json:"readiness"`
 	BrokerRuntime          OperatorBrokerRuntimeSummary          `json:"broker_runtime"`
 	Promotion              OperatorPromotionSummary              `json:"promotion"`
@@ -424,6 +438,11 @@ type OperatorStatusSummary struct {
 	AIProvider                      string             `json:"ai_provider"`
 	IsDemoMode                      bool               `json:"is_demo_mode"`
 	DemoLastCycleTime               string             `json:"demo_last_cycle_time"`
+	RuntimeState                    string             `json:"runtime_state"`
+	RuntimeSeverity                 string             `json:"runtime_severity"`
+	CycleTradable                   bool               `json:"cycle_tradable"`
+	ExpectedNonTradable             bool               `json:"expected_non_tradable"`
+	AwaitingReconciliation          bool               `json:"awaiting_reconciliation"`
 	ReadinessStatus                 ReadinessStatus    `json:"readiness_status"`
 	ReadinessMessage                string             `json:"readiness_message"`
 	ReadinessCheckedAt              string             `json:"readiness_checked_at"`
@@ -950,6 +969,8 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		OpenCount:                 incidentSummary.OpenCount,
 		AcknowledgedCount:         incidentSummary.AcknowledgedCount,
 		CriticalOpenCount:         incidentSummary.CriticalOpenCount,
+		WarningOpenCount:          incidentSummary.WarningOpenCount,
+		InfoOpenCount:             incidentSummary.InfoOpenCount,
 		LatestIncidentAt:          formatRFC3339(incidentSummary.LatestIncidentAt),
 		LatestIncidentSummary:     incidentSummary.LatestIncidentSummary,
 		LatestIncidentSeverity:    incidentSummary.LatestIncidentSeverity,
@@ -973,6 +994,31 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		Message:         gate.Message,
 	}
 
+	runtimeCondition := at.currentRuntimeConditionState(
+		gate,
+		brokerTruth,
+		dataQuality,
+		positionRecon,
+		orderRecon,
+		restartRecovery,
+		killSwitch,
+		brokerStatus,
+	)
+	operatorMessage := gate.Message
+	if runtimeCondition.State != RuntimeConditionHealthy {
+		operatorMessage = firstNonEmpty(strings.TrimSpace(runtimeCondition.Reason), strings.TrimSpace(gate.Message), operatorMessage)
+	}
+	runtimeConditionSummary := OperatorRuntimeConditionSummary{
+		State:                  runtimeCondition.State,
+		Severity:               runtimeCondition.Severity,
+		CycleTradable:          runtimeCondition.CycleTradable,
+		ExpectedNonTradable:    runtimeCondition.ExpectedNonTradable,
+		AwaitingReconciliation: runtimeCondition.AwaitingReconciliation,
+		Reason:                 runtimeCondition.Reason,
+		Causes:                 append([]string(nil), runtimeCondition.Causes...),
+		UpdatedAt:              formatRFC3339(runtimeCondition.UpdatedAt),
+	}
+
 	return OperatorStatusSummary{
 		StatusSchemaVersion:             operatorStatusSchemaVersion,
 		TraderID:                        at.id,
@@ -988,7 +1034,8 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		ReduceOnly:                      gate.ReduceOnly,
 		TradingBlockReason:              gate.BlockReason,
 		BlockingReasons:                 append([]string(nil), gate.BlockingReasons...),
-		OperatorMessage:                 gate.Message,
+		OperatorMessage:                 operatorMessage,
+		RuntimeCondition:                runtimeConditionSummary,
 		Readiness:                       readinessSummary,
 		BrokerRuntime:                   brokerSummary,
 		Promotion:                       promotionSummary,
@@ -1023,6 +1070,11 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		AIProvider:                      runtimeSummary.AIProvider,
 		IsDemoMode:                      runtimeSummary.IsDemoMode,
 		DemoLastCycleTime:               runtimeSummary.DemoLastCycleTime,
+		RuntimeState:                    string(runtimeConditionSummary.State),
+		RuntimeSeverity:                 string(runtimeConditionSummary.Severity),
+		CycleTradable:                   runtimeConditionSummary.CycleTradable,
+		ExpectedNonTradable:             runtimeConditionSummary.ExpectedNonTradable,
+		AwaitingReconciliation:          runtimeConditionSummary.AwaitingReconciliation,
 		ReadinessStatus:                 readinessSummary.Status,
 		ReadinessMessage:                readinessSummary.Message,
 		ReadinessCheckedAt:              readinessSummary.CheckedAt,

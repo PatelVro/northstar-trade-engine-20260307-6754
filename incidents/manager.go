@@ -141,6 +141,8 @@ func (m *Manager) Summary() Summary {
 	open := make([]Incident, 0, len(m.records))
 	ackCount := 0
 	criticalCount := 0
+	warningCount := 0
+	infoCount := 0
 	var latest *Incident
 	var latestCritical *Incident
 	for _, record := range m.records {
@@ -158,6 +160,10 @@ func (m *Manager) Summary() Summary {
 				tmp := cloned
 				latestCritical = &tmp
 			}
+		} else if cloned.Severity == SeverityWarning {
+			warningCount++
+		} else {
+			infoCount++
 		}
 		if latest == nil || cloned.UpdatedAt.After(latest.UpdatedAt) {
 			tmp := cloned
@@ -183,6 +189,8 @@ func (m *Manager) Summary() Summary {
 		OpenCount:               countActive(m.records),
 		AcknowledgedCount:       ackCount,
 		CriticalOpenCount:       criticalCount,
+		WarningOpenCount:        warningCount,
+		InfoOpenCount:           infoCount,
 		OpenIncidents:           open,
 		RecentResolvedIncidents: recentResolved,
 	}

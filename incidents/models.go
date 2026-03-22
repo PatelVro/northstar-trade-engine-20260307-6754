@@ -81,6 +81,8 @@ type Summary struct {
 	OpenCount                 int        `json:"open_count"`
 	AcknowledgedCount         int        `json:"acknowledged_count"`
 	CriticalOpenCount         int        `json:"critical_open_count"`
+	WarningOpenCount          int        `json:"warning_open_count"`
+	InfoOpenCount             int        `json:"info_open_count"`
 	LatestIncidentAt          time.Time  `json:"latest_incident_at"`
 	LatestIncidentSummary     string     `json:"latest_incident_summary"`
 	LatestIncidentSeverity    Severity   `json:"latest_incident_severity"`
