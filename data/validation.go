@@ -22,6 +22,7 @@ const (
 	IssueZeroVolume       IssueType = "zero_volume"
 	IssueExtremePriceJump IssueType = "extreme_price_jump"
 	IssueMissingBars      IssueType = "missing_bars"
+	IssueMarketClosed     IssueType = "market_closed"
 )
 
 type Issue struct {
@@ -36,6 +37,7 @@ type Options struct {
 	StaleAfterBars        int
 	MaxPriceJumpPct       float64
 	MissingBarGapMultiple float64
+	InstrumentType        string
 }
 
 type Result struct {

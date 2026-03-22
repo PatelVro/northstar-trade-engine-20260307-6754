@@ -1,0 +1,34 @@
+{
+  "traders": [
+    {
+      "id": "ibkr_paper_live_trader",
+      "name": "Northstar IBKR Paper (Live Parity)",
+      "enabled": true,
+      "ai_model": "deepseek",
+      "exchange": "ibkr",
+      "data_provider": "ibkr",
+      "broker": "ibkr",
+      "ibkr_gateway_url": "https://127.0.0.1:5002/v1/api",
+      "ibkr_account_id": "${NORTHSTAR_IBKR_ACCOUNT_ID}",
+      "mode": "paper",
+      "instrument_type": "equity",
+      "order_sizing_mode": "notional",
+      "deepseek_key": "${NORTHSTAR_DEEPSEEK_API_KEY}",
+      "initial_balance": 100000.0,
+      "scan_interval_minutes": 15,
+      "candidate_batch_size": 10,
+      "max_gross_exposure": 0.10,
+      "max_position_pct": 0.02,
+      "max_daily_loss_pct": 0.01,
+      "ibkr_session_cookie": "${NORTHSTAR_IBKR_SESSION_COOKIE}"
+    }
+  ],
+  "use_default_coins": true,
+  "default_coins_file": "data/universe/us_companies.txt",
+  "default_coins": [
+    "AAPL",
+    "MSFT",
+    "NVDA"
+  ],
+  "api_server_port": 8080
+}

@@ -51,14 +51,9 @@ func (at *AutoTrader) evaluatePreTradeRisk(d *decision.Decision) (*preTradeRiskC
 		at.riskEngine = risk.NewEngine(buildRiskConfig(at.config))
 	}
 
-	positions, err := at.trader.GetPositions()
+	accountSummary, positions, err := at.snapshotAccountAndPositions()
 	if err != nil {
-		return nil, fmt.Errorf("risk evaluation positions fetch failed: %w", err)
-	}
-
-	balance, err := at.trader.GetBalance()
-	if err != nil {
-		return nil, fmt.Errorf("risk evaluation balance fetch failed: %w", err)
+		return nil, fmt.Errorf("risk evaluation account snapshot failed: %w", err)
 	}
 
 	marketData, err := at.getValidatedMarketData(d.Symbol)
@@ -66,7 +61,6 @@ func (at *AutoTrader) evaluatePreTradeRisk(d *decision.Decision) (*preTradeRiskC
 		return nil, fmt.Errorf("risk evaluation market data failed for %s: %w", d.Symbol, err)
 	}
 
-	accountSummary := at.buildAccountSummaryFromRaw(balance, positions)
 	orderRequest, err := at.buildRiskOrderRequest(d, positions, marketData)
 	if err != nil {
 		return nil, err

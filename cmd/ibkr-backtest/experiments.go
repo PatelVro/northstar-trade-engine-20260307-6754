@@ -3,7 +3,11 @@ package main
 import (
 	"flag"
 	"fmt"
+	"northstar/allocator"
+	"northstar/features"
+	"northstar/regime"
 	"northstar/research/experiments"
+	"northstar/selector"
 	"os"
 	"path/filepath"
 	"sort"
@@ -90,6 +94,10 @@ func buildExperimentResultMetadata(summary studySummary, results []profileResult
 		"ranking_eligible_profiles":  summary.RankingEligibleProfiles,
 		"requested_profiles":         summary.RequestedProfiles,
 		"top_profiles_under_sampled": summary.TopProfilesUnderSampled,
+		"feature_schema_version":     features.SchemaVersion,
+		"regime_detector_version":    regime.DetectorVersion,
+		"strategy_selector_version":  selector.SelectorVersion,
+		"allocator_version":          allocator.AllocatorVersion,
 	}
 	if len(results) > 0 {
 		metadata["top_profile_slug"] = results[0].ProfileSlug
@@ -124,7 +132,11 @@ func registerBacktestExperiment(runID, runRoot, workspaceRoot, dataDir, symbolsF
 		ResultFiles:    resultFiles,
 		ResultMetadata: buildExperimentResultMetadata(summary, results),
 		Notes: map[string]interface{}{
-			"reproducibility": "manifest includes redacted parameters, code fingerprint, dataset fingerprints, and result artifact hashes",
+			"reproducibility":           "manifest includes redacted parameters, code fingerprint, dataset fingerprints, result artifact hashes, and feature/regime/selector/allocator versions",
+			"feature_schema_version":    features.SchemaVersion,
+			"regime_detector_version":   regime.DetectorVersion,
+			"strategy_selector_version": selector.SelectorVersion,
+			"allocator_version":         allocator.AllocatorVersion,
 		},
 	})
 	return err

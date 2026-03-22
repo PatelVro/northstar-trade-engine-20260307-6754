@@ -1,6 +1,7 @@
 @echo off
 setlocal
 set "NORTHSTAR_BIN=northstar.exe"
+if not exist "%NORTHSTAR_BIN%" set "NORTHSTAR_BIN=nofx.exe"
 
 echo =========================================================
 echo   Live Dashboard Demo ^(Paper Synthetic Feed^)
@@ -23,9 +24,9 @@ echo Note: Start frontend in another terminal:
 echo       cd web ^&^& npm run dev
 
 if exist "%NORTHSTAR_BIN%" (
-  echo Using release binary: %NORTHSTAR_BIN%
+  echo Using binary: %NORTHSTAR_BIN%
   "%NORTHSTAR_BIN%" config.demo.json
 ) else (
-  echo Release binary not found, falling back to go run.
+  echo Binary not found, falling back to go run.
   go run main.go config.demo.json
 )

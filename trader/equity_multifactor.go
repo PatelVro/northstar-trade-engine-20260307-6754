@@ -1471,46 +1471,14 @@ func (at *AutoTrader) resolveEntryPrice(ctx *decision.Context, symbol string) fl
 }
 
 func (at *AutoTrader) suggestedPositionSizeUSD(ctx *decision.Context, symbol, action string, entryPrice, stopLoss float64) float64 {
-	decisionEquity := ctx.Account.DecisionSizingEquity()
-	if entryPrice <= 0 || stopLoss <= 0 || decisionEquity <= 0 {
+	if ctx == nil {
 		return 0
 	}
-
-	maxPositionValue := at.config.MaxPositionPct * decisionEquity
-	if maxPositionValue <= 0 {
-		maxPositionValue = decisionEquity * 0.20
-	}
-
-	if !at.config.DynamicPositionSizing {
-		basePct := at.config.FallbackPositionPct
-		if basePct <= 0 {
-			basePct = 0.10
-		}
-		notional := decisionEquity * basePct
-		notional = minFloat(notional, maxPositionValue)
-		notional = minFloat(notional, ctx.Account.AvailableBalance*0.95)
-		if notional < 100 {
-			return 0
-		}
-		return notional
-	}
-
-	riskPct := at.config.RiskPerTradePct
-	riskPct = at.effectiveRiskPerTradePct(ctx, action)
-	riskUSD := decisionEquity * riskPct
-	riskPerShare := math.Abs(entryPrice - stopLoss)
-	if riskPerShare <= 0 {
+	allocation := at.suggestAllocation(ctx, symbol, action, entryPrice, stopLoss)
+	if !allocation.AllowTrade {
 		return 0
 	}
-	qty := riskUSD / riskPerShare
-	notional := qty * entryPrice
-
-	notional = minFloat(notional, maxPositionValue)
-	notional = minFloat(notional, ctx.Account.AvailableBalance*0.95)
-	if notional < 100 {
-		return 0
-	}
-	return notional
+	return allocation.RecommendedNotional
 }
 
 func (at *AutoTrader) ensureStopsAndTargets(ctx *decision.Context, d decision.Decision, entryPrice float64) (float64, float64) {

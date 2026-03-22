@@ -114,6 +114,7 @@ type profileResult struct {
 	QualitySummary           string    `json:"quality_summary"`
 	RankingScore             float64   `json:"ranking_score"`
 	ReplaySummaryRel         string    `json:"replay_summary_rel"`
+	PipelineSummaryRel       string    `json:"pipeline_summary_rel"`
 	WorkDirRel               string    `json:"work_dir_rel"`
 }
 
@@ -582,6 +583,7 @@ func main() {
 			CustomAPIKey:             *customAPIKey,
 			CustomModelName:          *customModelName,
 		}
+		decisionLogDir := filepath.Join(profileDir, "decision_logs", atCfg.ID)
 
 		bt, err := trader.NewAutoTrader(atCfg)
 		if err != nil {
@@ -619,6 +621,19 @@ func main() {
 			tailRatio = equityTailRatio(points)
 		}
 		returnPerFee := returnPerFeeScore(summary.ReturnPct, summary.TotalFeesUSD, summary.FinalEquity)
+		pipelineSummaryPath := filepath.Join(profileDir, "output", "pipeline_summary.json")
+		pipelineAttributionCSVPath := filepath.Join(profileDir, "output", "pipeline_attribution.csv")
+		pipelineSummary, pipelineErr := analyzePipelineBacktest(decisionLogDir)
+		if pipelineErr != nil {
+			log.Printf("Profile %s failed to analyze pipeline backtest: %v", profileSlug, pipelineErr)
+		} else {
+			if err := writePipelineSummaryJSON(pipelineSummaryPath, pipelineSummary); err != nil {
+				log.Printf("Profile %s failed to write pipeline summary: %v", profileSlug, err)
+			}
+			if err := writePipelineAttributionCSV(pipelineAttributionCSVPath, pipelineSummary); err != nil {
+				log.Printf("Profile %s failed to write pipeline attribution csv: %v", profileSlug, err)
+			}
+		}
 		tradesPath := filepath.Join(profileDir, "output", "trades.csv")
 		tradeStats, tradeStatsErr := readTradeStudyStats(tradesPath)
 		mcP05, mcP50, mcWinPct := 0.0, 0.0, 0.0
@@ -659,6 +674,7 @@ func main() {
 		}
 
 		relSummary, _ := filepath.Rel(runRoot, summaryPath)
+		relPipelineSummary, _ := filepath.Rel(runRoot, pipelineSummaryPath)
 		relProfile, _ := filepath.Rel(runRoot, profileDir)
 		results = append(results, profileResult{
 			ProfileSlug:              profileSlug,
@@ -714,6 +730,7 @@ func main() {
 			AvgTradesPerActiveSymbol: avgTradesPerActiveSymbol,
 			DominantSymbolTradeShare: dominantSymbolTradeShare,
 			ReplaySummaryRel:         filepath.ToSlash(relSummary),
+			PipelineSummaryRel:       filepath.ToSlash(relPipelineSummary),
 			WorkDirRel:               filepath.ToSlash(relProfile),
 		})
 
@@ -1206,6 +1223,7 @@ func writeResultsCSV(path string, results []profileResult) error {
 		"avg_trades_per_active_symbol",
 		"dominant_symbol_trade_share",
 		"replay_summary_rel",
+		"pipeline_summary_rel",
 		"work_dir_rel",
 	}
 	if err := w.Write(header); err != nil {
@@ -1273,6 +1291,7 @@ func writeResultsCSV(path string, results []profileResult) error {
 			fmt.Sprintf("%.4f", r.AvgTradesPerActiveSymbol),
 			fmt.Sprintf("%.4f", r.DominantSymbolTradeShare),
 			r.ReplaySummaryRel,
+			r.PipelineSummaryRel,
 			r.WorkDirRel,
 		}
 		if err := w.Write(row); err != nil {
