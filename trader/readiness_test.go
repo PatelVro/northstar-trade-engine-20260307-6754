@@ -251,6 +251,9 @@ func TestRunReadinessChecks_IBKRSuccessRequiresBootstrapReconciliation(t *testin
 	if check := findReadinessCheck(summary, "broker_bootstrap"); check == nil || check.Status != ReadinessPass {
 		t.Fatalf("expected broker_bootstrap pass, got %+v", check)
 	}
+	if cached, _, ok := at.currentRuntimeAccountSnapshot(runtimeAccountSnapshotTTL); !ok || cached == nil || cached.AccountEquity != 100000.0 {
+		t.Fatalf("expected broker bootstrap to seed runtime account snapshot, got summary=%+v ok=%t", cached, ok)
+	}
 }
 
 func findReadinessCheck(summary ReadinessSummary, name string) *ReadinessCheck {

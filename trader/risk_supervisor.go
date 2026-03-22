@@ -326,6 +326,27 @@ func (at *AutoTrader) currentTradingGateDecision(probeStrictLive bool, account *
 			Message:         fmt.Sprintf("trading blocked: %s", blockReason),
 		}
 	}
+	brokerTruth := at.currentBrokerTruthSummary()
+	if brokerTruth.TradingBlocked {
+		blockReason := strings.TrimSpace(brokerTruth.Message)
+		if blockReason == "" {
+			blockReason = "broker truth is not verified for the active mode"
+		}
+		reasons := append([]string(nil), brokerTruth.BlockingReasons...)
+		if len(reasons) == 0 {
+			reasons = []string{blockReason}
+		}
+		return tradingGateDecision{
+			Mode:            risk.SupervisorModeHalted,
+			TradingAllowed:  false,
+			EntriesAllowed:  false,
+			ExitsAllowed:    false,
+			ReduceOnly:      false,
+			BlockReason:     blockReason,
+			BlockingReasons: reasons,
+			Message:         fmt.Sprintf("trading blocked: %s", blockReason),
+		}
+	}
 
 	reasons := make([]string, 0, len(state.Incidents))
 	for _, incident := range state.Incidents {

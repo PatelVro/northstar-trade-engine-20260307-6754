@@ -1202,6 +1202,11 @@ func (at *AutoTrader) runCycle() error {
 	log.Printf(" %s - AI Decision cycle #%d", time.Now().Format("2006-01-02 15:04:05"), at.callCount)
 	log.Println(strings.Repeat("=", 70))
 
+	if err := at.ensureBrokerTruthReadyForTrading(); err != nil {
+		at.recordPaperSessionBlockedCycle(err.Error())
+		log.Printf(" broker-truth gate active: %v", err)
+	}
+
 	// 0. Independent supervisory risk gate
 	initialGate := at.currentTradingGateDecision(true, at.currentLatestAccountSummary())
 	if !initialGate.ExitsAllowed {
@@ -2188,6 +2193,7 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 	portfolioRisk := at.currentPortfolioRiskState()
 	alertSummary := at.currentAlertsSummary()
 	executionSummary := at.currentExecutionSummary()
+	brokerTruth := at.currentBrokerTruthSummary()
 	brokerTradingAllowed := !at.managesIBKRBrokerRuntime() || brokerStatus.State == BrokerRuntimeHealthy
 	gate := at.currentTradingGateDecision(false, at.currentLatestAccountSummary())
 	riskSupervisorState := at.currentRiskSupervisorState()
@@ -2243,23 +2249,49 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 	shadowSummary := at.currentShadowSummary()
 
 	return map[string]interface{}{
-		"trader_id":                          at.id,
-		"trader_name":                        at.name,
-		"ai_model":                           at.aiModel,
-		"exchange":                           at.exchange,
-		"is_running":                         at.isRunning,
-		"start_time":                         at.startTime.Format(time.RFC3339),
-		"runtime_minutes":                    int(time.Since(at.startTime).Minutes()),
-		"broker_state":                       brokerStatus.State,
-		"broker_state_reason":                brokerStatus.Reason,
-		"broker_last_error":                  brokerStatus.LastError,
-		"broker_state_since":                 brokerStateSince,
-		"broker_last_healthy_at":             brokerLastHealthyAt,
-		"broker_last_reconciled_at":          brokerLastReconciledAt,
-		"broker_reconnect_attempts":          brokerStatus.ReconnectAttempts,
-		"broker_next_retry_at":               brokerNextRetryAt,
-		"broker_recovery_active":             brokerStatus.RecoveryActive,
-		"broker_trading_allowed":             brokerTradingAllowed,
+		"trader_id":                 at.id,
+		"trader_name":               at.name,
+		"ai_model":                  at.aiModel,
+		"exchange":                  at.exchange,
+		"is_running":                at.isRunning,
+		"start_time":                at.startTime.Format(time.RFC3339),
+		"runtime_minutes":           int(time.Since(at.startTime).Minutes()),
+		"broker_state":              brokerStatus.State,
+		"broker_state_reason":       brokerStatus.Reason,
+		"broker_last_error":         brokerStatus.LastError,
+		"broker_state_since":        brokerStateSince,
+		"broker_last_healthy_at":    brokerLastHealthyAt,
+		"broker_last_reconciled_at": brokerLastReconciledAt,
+		"broker_reconnect_attempts": brokerStatus.ReconnectAttempts,
+		"broker_next_retry_at":      brokerNextRetryAt,
+		"broker_recovery_active":    brokerStatus.RecoveryActive,
+		"broker_trading_allowed":    brokerTradingAllowed,
+		"broker_truth": map[string]interface{}{
+			"available":              brokerTruth.Available,
+			"required":               brokerTruth.Required,
+			"broker_managed":         brokerTruth.BrokerManaged,
+			"verified":               brokerTruth.Verified,
+			"trading_blocked":        brokerTruth.TradingBlocked,
+			"account_required":       brokerTruth.AccountRequired,
+			"account_verified":       brokerTruth.AccountVerified,
+			"orders_required":        brokerTruth.OrdersRequired,
+			"orders_verified":        brokerTruth.OrdersVerified,
+			"positions_required":     brokerTruth.PositionsRequired,
+			"positions_verified":     brokerTruth.PositionsVerified,
+			"market_data_required":   brokerTruth.MarketDataRequired,
+			"market_data_verified":   brokerTruth.MarketDataVerified,
+			"account_captured_at":    formatRFC3339(brokerTruth.AccountCapturedAt),
+			"orders_checked_at":      formatRFC3339(brokerTruth.OrdersCheckedAt),
+			"positions_checked_at":   formatRFC3339(brokerTruth.PositionsCheckedAt),
+			"market_data_checked_at": formatRFC3339(brokerTruth.MarketDataCheckedAt),
+			"message":                brokerTruth.Message,
+			"blocking_reasons":       append([]string(nil), brokerTruth.BlockingReasons...),
+		},
+		"broker_truth_available":             brokerTruth.Available,
+		"broker_truth_required":              brokerTruth.Required,
+		"broker_truth_verified":              brokerTruth.Verified,
+		"broker_truth_trading_blocked":       brokerTruth.TradingBlocked,
+		"broker_truth_message":               brokerTruth.Message,
 		"readiness_status":                   readiness.Status,
 		"readiness_message":                  readiness.Message,
 		"readiness_checked_at":               readinessCheckedAt,

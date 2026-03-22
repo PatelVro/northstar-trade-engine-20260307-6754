@@ -91,6 +91,13 @@ func TestGetOperatorStatus_BrokerDegradedAppearsDistinctFromLiveness(t *testing.
 		PassCount:      6,
 	})
 	at.initializeBrokerRuntimeState()
+	at.setRuntimeAccountSnapshot(AccountSummary{
+		AccountingVersion:      accountingVersion,
+		StrategyInitialCapital: 100000,
+		StrategyEquity:         100000,
+		AccountEquity:          100000,
+		AvailableBalance:       100000,
+	}, []map[string]interface{}{})
 	at.setBrokerRuntimeState(BrokerRuntimeDegraded, "gateway connection refused", errString("dial tcp 127.0.0.1:5002: connectex: connection refused"), true, now.Add(30*time.Second))
 
 	status := at.GetOperatorStatus()
@@ -139,6 +146,13 @@ func TestGetOperatorStatus_LivePromotionFailureAppearsInTradingGate(t *testing.T
 		PassCount:      6,
 	})
 	at.initializeBrokerRuntimeState()
+	at.setRuntimeAccountSnapshot(AccountSummary{
+		AccountingVersion:      accountingVersion,
+		StrategyInitialCapital: 100000,
+		StrategyEquity:         100000,
+		AccountEquity:          100000,
+		AvailableBalance:       100000,
+	}, []map[string]interface{}{})
 	at.setPromotionSummary(PromotionSummary{
 		Status:             PromotionFail,
 		Message:            "1 promotion check(s) failed",
@@ -410,6 +424,13 @@ func TestGetOperatorStatus_PositionReconciliationBlocksTrading(t *testing.T) {
 		PassCount:      6,
 	})
 	at.initializeBrokerRuntimeState()
+	at.setRuntimeAccountSnapshot(AccountSummary{
+		AccountingVersion:      accountingVersion,
+		StrategyInitialCapital: 100000,
+		StrategyEquity:         100000,
+		AccountEquity:          100000,
+		AvailableBalance:       100000,
+	}, []map[string]interface{}{})
 	at.positionReconSummary = positionReconciliationSummary{
 		Available:            true,
 		Status:               PositionReconciliationBlocked,

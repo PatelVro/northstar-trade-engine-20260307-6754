@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const operatorStatusSchemaVersion = 13
+const operatorStatusSchemaVersion = 14
 
 type OperatorRuntimeSummary struct {
 	IsRunning         bool    `json:"is_running"`
@@ -114,6 +114,28 @@ type OperatorRestartRecoverySummary struct {
 	RestoredActiveOrders    int    `json:"restored_active_orders"`
 	RestoredLocalPositions  int    `json:"restored_local_positions"`
 	RestoredShadowPositions int    `json:"restored_shadow_positions"`
+}
+
+type OperatorBrokerTruthSummary struct {
+	Available           bool     `json:"available"`
+	Required            bool     `json:"required"`
+	BrokerManaged       bool     `json:"broker_managed"`
+	Verified            bool     `json:"verified"`
+	TradingBlocked      bool     `json:"trading_blocked"`
+	AccountRequired     bool     `json:"account_required"`
+	AccountVerified     bool     `json:"account_verified"`
+	OrdersRequired      bool     `json:"orders_required"`
+	OrdersVerified      bool     `json:"orders_verified"`
+	PositionsRequired   bool     `json:"positions_required"`
+	PositionsVerified   bool     `json:"positions_verified"`
+	MarketDataRequired  bool     `json:"market_data_required"`
+	MarketDataVerified  bool     `json:"market_data_verified"`
+	AccountCapturedAt   string   `json:"account_captured_at"`
+	OrdersCheckedAt     string   `json:"orders_checked_at"`
+	PositionsCheckedAt  string   `json:"positions_checked_at"`
+	MarketDataCheckedAt string   `json:"market_data_checked_at"`
+	Message             string   `json:"message"`
+	BlockingReasons     []string `json:"blocking_reasons"`
 }
 
 type OperatorPromotionSummary struct {
@@ -275,6 +297,7 @@ type OperatorStatusSummary struct {
 	Execution              OperatorExecutionSummary              `json:"execution"`
 	ShadowMode             OperatorShadowModeSummary             `json:"shadow_mode"`
 	RestartRecovery        OperatorRestartRecoverySummary        `json:"restart_recovery"`
+	BrokerTruth            OperatorBrokerTruthSummary            `json:"broker_truth"`
 	Session                OperatorSessionSummary                `json:"session"`
 	Runtime                OperatorRuntimeSummary                `json:"runtime"`
 	TradingGate            OperatorTradingGateSummary            `json:"trading_gate"`
@@ -348,6 +371,11 @@ type OperatorStatusSummary struct {
 	BrokerNextRetryAt               string             `json:"broker_next_retry_at"`
 	BrokerRecoveryActive            bool               `json:"broker_recovery_active"`
 	BrokerTradingAllowed            bool               `json:"broker_trading_allowed"`
+	BrokerTruthAvailable            bool               `json:"broker_truth_available"`
+	BrokerTruthRequired             bool               `json:"broker_truth_required"`
+	BrokerTruthVerified             bool               `json:"broker_truth_verified"`
+	BrokerTruthTradingBlocked       bool               `json:"broker_truth_trading_blocked"`
+	BrokerTruthMessage              string             `json:"broker_truth_message"`
 	LastSessionReportPath           string             `json:"last_session_report_path"`
 	LastSessionReportStatus         string             `json:"last_session_report_status"`
 	LastSessionReportAt             string             `json:"last_session_report_at"`
@@ -426,6 +454,7 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 	executionState := at.currentExecutionSummary()
 	shadowState := at.currentShadowSummary()
 	restartRecovery := at.currentRestartRecoverySummary()
+	brokerTruth := at.currentBrokerTruthSummary()
 
 	aiProvider := "DeepSeek"
 	if at.demoMode {
@@ -552,6 +581,27 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		RestoredActiveOrders:    restartRecovery.RestoredActiveOrders,
 		RestoredLocalPositions:  restartRecovery.RestoredLocalPositions,
 		RestoredShadowPositions: restartRecovery.RestoredShadowPositions,
+	}
+	brokerTruthSummary := OperatorBrokerTruthSummary{
+		Available:           brokerTruth.Available,
+		Required:            brokerTruth.Required,
+		BrokerManaged:       brokerTruth.BrokerManaged,
+		Verified:            brokerTruth.Verified,
+		TradingBlocked:      brokerTruth.TradingBlocked,
+		AccountRequired:     brokerTruth.AccountRequired,
+		AccountVerified:     brokerTruth.AccountVerified,
+		OrdersRequired:      brokerTruth.OrdersRequired,
+		OrdersVerified:      brokerTruth.OrdersVerified,
+		PositionsRequired:   brokerTruth.PositionsRequired,
+		PositionsVerified:   brokerTruth.PositionsVerified,
+		MarketDataRequired:  brokerTruth.MarketDataRequired,
+		MarketDataVerified:  brokerTruth.MarketDataVerified,
+		AccountCapturedAt:   formatRFC3339(brokerTruth.AccountCapturedAt),
+		OrdersCheckedAt:     formatRFC3339(brokerTruth.OrdersCheckedAt),
+		PositionsCheckedAt:  formatRFC3339(brokerTruth.PositionsCheckedAt),
+		MarketDataCheckedAt: formatRFC3339(brokerTruth.MarketDataCheckedAt),
+		Message:             brokerTruth.Message,
+		BlockingReasons:     append([]string(nil), brokerTruth.BlockingReasons...),
 	}
 
 	brokerSummary := OperatorBrokerRuntimeSummary{
@@ -720,6 +770,7 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		Execution:                       executionSummary,
 		ShadowMode:                      shadowSummary,
 		RestartRecovery:                 restartRecoverySummary,
+		BrokerTruth:                     brokerTruthSummary,
 		Session:                         sessionSummary,
 		Runtime:                         runtimeSummary,
 		TradingGate:                     tradingGate,
@@ -791,6 +842,11 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		BrokerNextRetryAt:               brokerSummary.NextRetryAt,
 		BrokerRecoveryActive:            brokerSummary.RecoveryActive,
 		BrokerTradingAllowed:            brokerSummary.TradingAllowed,
+		BrokerTruthAvailable:            brokerTruthSummary.Available,
+		BrokerTruthRequired:             brokerTruthSummary.Required,
+		BrokerTruthVerified:             brokerTruthSummary.Verified,
+		BrokerTruthTradingBlocked:       brokerTruthSummary.TradingBlocked,
+		BrokerTruthMessage:              brokerTruthSummary.Message,
 		LastSessionReportPath:           sessionSummary.LastSessionReportPath,
 		LastSessionReportStatus:         sessionSummary.LastSessionReportStatus,
 		LastSessionReportAt:             sessionSummary.LastSessionReportAt,

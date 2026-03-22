@@ -116,6 +116,7 @@ func (at *AutoTrader) buildExecutionIntent(d *decision.Decision, actionRecord *l
 
 func (at *AutoTrader) submitExecutionIntent(d *decision.Decision, actionRecord *logger.DecisionAction, quantity float64) (execution.Result, error) {
 	manager := at.ensureExecutionManager()
+	_ = at.ensureBrokerTruthReadyForTrading()
 	gate := at.currentTradingGateDecision(true, at.currentLatestAccountSummary())
 	intent := at.buildExecutionIntent(d, actionRecord, quantity)
 	executionBroker := execution.Broker(at.trader)

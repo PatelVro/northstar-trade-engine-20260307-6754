@@ -423,6 +423,7 @@ func (at *AutoTrader) checkBrokerBootstrapReadiness() ReadinessCheck {
 		if snapshot != nil {
 			positions = len(snapshot.Positions)
 			openOrders = len(snapshot.OpenOrders)
+			at.seedRuntimeAccountSnapshot(snapshot.Balance, snapshot.Positions)
 		}
 		return readinessPass("broker_bootstrap", fmt.Sprintf("broker bootstrap reconciled account state (%d positions, %d open orders)", positions, openOrders))
 	}
@@ -440,9 +441,11 @@ func (at *AutoTrader) checkBrokerBootstrapReadiness() ReadinessCheck {
 		if err != nil {
 			return readinessFail("broker_bootstrap", fmt.Sprintf("startup open orders snapshot failed: %v", err))
 		}
+		at.seedRuntimeAccountSnapshot(balance, positions)
 		_ = balance
 		return readinessPass("broker_bootstrap", fmt.Sprintf("broker bootstrap loaded balance, %d positions, %d open orders", len(positions), len(orders)))
 	}
+	at.seedRuntimeAccountSnapshot(balance, positions)
 	_ = balance
 	return readinessPass("broker_bootstrap", fmt.Sprintf("broker bootstrap loaded balance and %d positions", len(positions)))
 }

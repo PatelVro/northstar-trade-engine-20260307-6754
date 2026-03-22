@@ -199,6 +199,25 @@ IBKR portfolio readiness now performs a bounded warm-up before checking account-
 
 During active runtime, Northstar also reuses one short-lived canonical broker account snapshot for repeated balance/position reads within the same decision window, then invalidates it immediately after execution submission, broker degradation, or broker reconciliation. This keeps the runtime from hammering fragile IBKR portfolio endpoints multiple times per cycle while still failing closed once the snapshot goes stale.
 
+Northstar now also enforces a hard broker-truth runtime gate before trading is allowed for active IBKR-backed modes. That gate is mode-aware:
+
+- broker-managed paper/live modes require fresh verified broker account truth, open-order truth, and position truth
+- shadow mode with simulated execution still requires live market-data truth when it is using IBKR data
+- demo/replay modes do not require the live broker-truth gate
+
+When Northstar cannot prove the required truth for the current mode, trading stays blocked instead of assuming the last known local state is safe. `/api/status` now includes a `broker_truth` section that shows which component is blocking:
+
+- `account_verified`
+- `orders_verified`
+- `positions_verified`
+- `market_data_verified`
+
+Operator checks before trusting a broker-backed paper/live session:
+
+1. Confirm `broker_truth.trading_blocked=false`
+2. Confirm `broker_truth.verified=true`
+3. Confirm `order_reconciliation` and `position_reconciliation` remain fresh and healthy
+
 ## Restart Recovery
 
 Northstar now persists the minimum critical runtime state needed for safer restarts at:
