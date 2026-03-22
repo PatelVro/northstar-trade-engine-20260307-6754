@@ -277,10 +277,8 @@ func (t *IBKRTrader) CreateOrder(symbol string, side string, intent orders.Inten
 
 	// Format Northstar long/short to IBKR BUY/SELL
 	ibkrSide := "BUY"
-	oppositeSide := "SELL"
 	if strings.EqualFold(strings.TrimSpace(side), "short") {
 		ibkrSide = "SELL"
-		oppositeSide = "BUY"
 	}
 
 	// Pre-submission Risk Validation
@@ -318,130 +316,16 @@ func (t *IBKRTrader) CreateOrder(symbol string, side string, intent orders.Inten
 		t.recordLocalOrderReject(entryLocalID, err)
 		return nil, fmt.Errorf("entry order failed: %w", err)
 	}
-	_ = t.reconcileOrderLifecycle()
-	result := map[string]interface{}{
-		"status":       "submitted",
-		"symbol":       symbol,
-		"quantity":     float64(qtyValue),
-		"leverage":     leverage,
-		"localOrderId": entryLocalID,
+	reconcileErr := t.reconcileOrderLifecycle()
+	if reconcileErr != nil {
+		log.Printf(" IBKR: order submitted for %s %s, but lifecycle reconciliation is still pending: %v", symbol, ibkrSide, reconcileErr)
 	}
-
-	// Phase 2 - Await Fill Confirmation
-	// Poll IBKR orders endpoint for up to 10 seconds to detect the fill
-	filled := false
-	log.Printf("IBKR: Waiting for fill confirmation on %s %s...", symbol, ibkrSide)
-	for i := 0; i < 5; i++ {
-		time.Sleep(2 * time.Second)
-		orders, err := t.GetLiveOrders()
-		if err != nil {
-			return nil, fmt.Errorf("failed to confirm entry fill for %s: %w", symbol, err)
-		}
-
-		// We check if the entry order evaporated from live open orders
-		// In IBKR, completely filled orders often drop from the active /orders list quickly
-		// This is a naive heuristic for the REST API (Phase 6 Reconciliation engine will harden this globally)
-		if len(orders) == 0 {
-			filled = true
-			break
-		}
-
-		// If there's an active order for this conid matching our side, it's still pending
-		stillPending := false
-		for _, o := range orders {
-			rawSide := strings.ToUpper(strings.TrimSpace(toString(o["side"])))
-			rawConid := toInt(o["conid"])
-			rawStatus := strings.ToUpper(strings.TrimSpace(toString(o["status"])))
-			if rawConid == cID && rawSide == ibkrSide &&
-				rawStatus != "FILLED" && rawStatus != "CANCELLED" && rawStatus != "CLOSED" {
-				stillPending = true
-				break
-			}
-		}
-		if !stillPending {
-			filled = true
-			break
-		}
+	result := t.localExecutionResult(entryLocalID, symbol, float64(qtyValue), leverage)
+	if strings.TrimSpace(takeProfit) != "" || strings.TrimSpace(stopLoss) != "" {
+		result["protection_pending"] = true
+		result["protection_message"] = "protective orders must wait for broker-confirmed entry fill"
 	}
-
-	if !filled {
-		log.Printf(" IBKR: Entry order on %s not filled within timeout. Brackets will not be placed to prevent orphan exposure.", symbol)
-		result["status"] = "pending"
-		return result, nil
-	}
-
-	log.Printf(" IBKR: Entry order for %s confirmed filled.", symbol)
-	result["status"] = "filled"
-
-	// Phase 3 & 4 - Submit OCA Brackets
-	if takeProfit != "" || stopLoss != "" {
-		var bracketOrders []interface{}
-		ocaGroup := fmt.Sprintf("Northstar_OCA_%d", time.Now().UnixNano())
-
-		if takeProfit != "" {
-			tpVal, err := strconv.ParseFloat(strings.TrimSpace(takeProfit), 64)
-			if err != nil {
-				return nil, fmt.Errorf("invalid takeProfit %q: %w", takeProfit, err)
-			}
-			bracketOrders = append(bracketOrders, map[string]interface{}{
-				"acctId":     t.AccountID,
-				"conid":      cID,
-				"secType":    "STK",
-				"orderType":  "LMT",
-				"price":      tpVal,
-				"tif":        "GTC",
-				"quantity":   qtyValue,
-				"side":       oppositeSide,
-				"outsideRTH": false,
-				"ocaGroup":   ocaGroup,
-			})
-		}
-
-		if stopLoss != "" {
-			slVal, err := strconv.ParseFloat(strings.TrimSpace(stopLoss), 64)
-			if err != nil {
-				return nil, fmt.Errorf("invalid stopLoss %q: %w", stopLoss, err)
-			}
-			bracketOrders = append(bracketOrders, map[string]interface{}{
-				"acctId":     t.AccountID,
-				"conid":      cID,
-				"secType":    "STK",
-				"orderType":  "STP",
-				"auxPrice":   slVal, // Stop Loss uses auxPrice in IBKR REST API
-				"tif":        "GTC",
-				"quantity":   qtyValue,
-				"side":       oppositeSide,
-				"outsideRTH": false,
-				"ocaGroup":   ocaGroup,
-			})
-		}
-
-		log.Printf("IBKR: Submitting OCA safety brackets (SL/TP) for %s...", symbol)
-		bracketLocalIDs := make([]string, 0, 2)
-		for _, orderType := range []struct {
-			active bool
-			intent orders.Intent
-		}{
-			{active: strings.TrimSpace(takeProfit) != "", intent: protectiveIntent(positionSide, "target")},
-			{active: strings.TrimSpace(stopLoss) != "", intent: protectiveIntent(positionSide, "stop")},
-		} {
-			if !orderType.active {
-				continue
-			}
-			bracketLocalIDs = append(bracketLocalIDs, t.registerLocalOrder(orderType.intent, symbol, oppositeSide, positionSide, float64(qtyValue), time.Now()))
-		}
-		if err := t.submitIBKROrders(bracketOrders); err != nil {
-			for _, localID := range bracketLocalIDs {
-				t.recordLocalOrderReject(localID, err)
-			}
-			log.Printf(" IBKR: Failed to submit brackets for %s: %v", symbol, err)
-			result["status"] = "filled_bracket_failed"
-			return result, err
-		}
-		_ = t.reconcileOrderLifecycle()
-		log.Printf(" IBKR: Safe Brackets secured.")
-	}
-
+	log.Printf(" IBKR: Entry order for %s %s submitted with status=%s; awaiting lifecycle/reconciliation truth before any fill-dependent action", symbol, ibkrSide, toString(result["status"]))
 	return result, nil
 }
 
@@ -1035,6 +919,38 @@ func (t *IBKRTrader) registerLocalOrder(intent orders.Intent, symbol, side, posi
 		t.orderStore = orders.NewStore()
 	}
 	return t.orderStore.RegisterSubmitted(intent, symbol, side, positionSide, qty, at)
+}
+
+func (t *IBKRTrader) localExecutionResult(localID, symbol string, quantity float64, leverage int) map[string]interface{} {
+	result := map[string]interface{}{
+		"status":       "submitted",
+		"symbol":       strings.ToUpper(strings.TrimSpace(symbol)),
+		"quantity":     quantity,
+		"leverage":     leverage,
+		"localOrderId": strings.TrimSpace(localID),
+	}
+	record := t.LookupOrderRecord(localID, "")
+	if record == nil {
+		return result
+	}
+	result["status"] = string(record.Status)
+	if strings.TrimSpace(record.BrokerOrderID) != "" {
+		result["brokerOrderId"] = strings.TrimSpace(record.BrokerOrderID)
+		result["orderId"] = strings.TrimSpace(record.BrokerOrderID)
+	}
+	if record.FilledQty > 0 {
+		result["filled_qty"] = record.FilledQty
+		result["filledQty"] = record.FilledQty
+	}
+	if record.AvgFillPrice > 0 {
+		result["avg_fill_price"] = record.AvgFillPrice
+		result["average_fill_price"] = record.AvgFillPrice
+		result["price"] = record.AvgFillPrice
+	}
+	if strings.TrimSpace(record.RawBrokerStatus) != "" {
+		result["order_status"] = strings.TrimSpace(record.RawBrokerStatus)
+	}
+	return result
 }
 
 func (t *IBKRTrader) recordLocalOrderReject(localID string, err error) {

@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const operatorStatusSchemaVersion = 16
+const operatorStatusSchemaVersion = 17
 
 type OperatorRuntimeSummary struct {
 	IsRunning         bool    `json:"is_running"`
@@ -71,9 +71,34 @@ type OperatorExecutionSummary struct {
 	DuplicateSuppressedCount int              `json:"duplicate_suppressed_count"`
 	BlockedExecutionCount    int              `json:"blocked_execution_count"`
 	SubmittedCount           int              `json:"submitted_count"`
+	AcknowledgedCount        int              `json:"acknowledged_count"`
 	FilledCount              int              `json:"filled_count"`
 	RejectedCount            int              `json:"rejected_count"`
 	FailedCount              int              `json:"failed_count"`
+}
+
+type OperatorPendingProtectionItem struct {
+	Symbol                string  `json:"symbol"`
+	PositionSide          string  `json:"position_side"`
+	EntryStatus           string  `json:"entry_status"`
+	Status                string  `json:"status"`
+	RequestedQuantity     float64 `json:"requested_quantity"`
+	ConfirmedQuantity     float64 `json:"confirmed_quantity"`
+	StopProtectedQuantity float64 `json:"stop_protected_quantity"`
+	TargetProtectedQty    float64 `json:"target_protected_quantity"`
+	StopPrice             float64 `json:"stop_price"`
+	TakeProfitPrice       float64 `json:"take_profit_price"`
+	Message               string  `json:"message"`
+	UpdatedAt             string  `json:"updated_at"`
+}
+
+type OperatorProtectionSummary struct {
+	Available             bool                            `json:"available"`
+	PendingCount          int                             `json:"pending_count"`
+	ActiveProtectiveCount int                             `json:"active_protective_count"`
+	LastUpdatedAt         string                          `json:"last_updated_at"`
+	Message               string                          `json:"message"`
+	Pending               []OperatorPendingProtectionItem `json:"pending,omitempty"`
 }
 
 type OperatorShadowModeSummary struct {
@@ -114,6 +139,7 @@ type OperatorRestartRecoverySummary struct {
 	RestoredInFlightCount   int    `json:"restored_in_flight_count"`
 	RestoredActiveOrders    int    `json:"restored_active_orders"`
 	RestoredLocalPositions  int    `json:"restored_local_positions"`
+	RestoredPendingProtect  int    `json:"restored_pending_protection"`
 	RestoredShadowPositions int    `json:"restored_shadow_positions"`
 }
 
@@ -309,6 +335,7 @@ type OperatorStatusSummary struct {
 	Promotion              OperatorPromotionSummary              `json:"promotion"`
 	RiskSupervisor         OperatorRiskSupervisorSummary         `json:"risk_supervisor"`
 	Execution              OperatorExecutionSummary              `json:"execution"`
+	Protection             OperatorProtectionSummary             `json:"protection"`
 	ShadowMode             OperatorShadowModeSummary             `json:"shadow_mode"`
 	RestartRecovery        OperatorRestartRecoverySummary        `json:"restart_recovery"`
 	BrokerTruth            OperatorBrokerTruthSummary            `json:"broker_truth"`
@@ -367,9 +394,13 @@ type OperatorStatusSummary struct {
 	ExecutionDuplicateSuppressed    int                `json:"execution_duplicate_suppressed_count"`
 	ExecutionBlockedCount           int                `json:"execution_blocked_count"`
 	ExecutionSubmittedCount         int                `json:"execution_submitted_count"`
+	ExecutionAcknowledgedCount      int                `json:"execution_acknowledged_count"`
 	ExecutionFilledCount            int                `json:"execution_filled_count"`
 	ExecutionRejectedCount          int                `json:"execution_rejected_count"`
 	ExecutionFailedCount            int                `json:"execution_failed_count"`
+	ProtectionPendingCount          int                `json:"protection_pending_count"`
+	ProtectionActiveCount           int                `json:"protection_active_protective_count"`
+	ProtectionMessage               string             `json:"protection_message"`
 	ShadowModeActive                bool               `json:"shadow_mode_active"`
 	ShadowDecisionCount             int                `json:"shadow_decision_count"`
 	ShadowWouldTradeCount           int                `json:"shadow_would_trade_count"`
@@ -559,9 +590,36 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		DuplicateSuppressedCount: executionState.DuplicateSuppressedCount,
 		BlockedExecutionCount:    executionState.BlockedExecutionCount,
 		SubmittedCount:           executionState.SubmittedCount,
+		AcknowledgedCount:        executionState.AcknowledgedCount,
 		FilledCount:              executionState.FilledCount,
 		RejectedCount:            executionState.RejectedCount,
 		FailedCount:              executionState.FailedCount,
+	}
+	protectionState := at.currentProtectionSummary()
+	protectionPending := make([]OperatorPendingProtectionItem, 0, len(protectionState.Pending))
+	for _, pending := range protectionState.Pending {
+		protectionPending = append(protectionPending, OperatorPendingProtectionItem{
+			Symbol:                pending.Symbol,
+			PositionSide:          pending.PositionSide,
+			EntryStatus:           pending.EntryStatus,
+			Status:                pending.Status,
+			RequestedQuantity:     pending.RequestedQuantity,
+			ConfirmedQuantity:     pending.ConfirmedQuantity,
+			StopProtectedQuantity: pending.StopProtectedQuantity,
+			TargetProtectedQty:    pending.TargetProtectedQty,
+			StopPrice:             pending.StopPrice,
+			TakeProfitPrice:       pending.TakeProfitPrice,
+			Message:               pending.Message,
+			UpdatedAt:             formatRFC3339(pending.UpdatedAt),
+		})
+	}
+	protectionSummary := OperatorProtectionSummary{
+		Available:             protectionState.Available,
+		PendingCount:          protectionState.PendingCount,
+		ActiveProtectiveCount: protectionState.ActiveProtectiveCount,
+		LastUpdatedAt:         formatRFC3339(protectionState.LastUpdatedAt),
+		Message:               protectionState.Message,
+		Pending:               protectionPending,
 	}
 	shadowSummary := OperatorShadowModeSummary{
 		Available:                 shadowState.Available,
@@ -600,6 +658,7 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		RestoredInFlightCount:   restartRecovery.RestoredInFlightCount,
 		RestoredActiveOrders:    restartRecovery.RestoredActiveOrders,
 		RestoredLocalPositions:  restartRecovery.RestoredLocalPositions,
+		RestoredPendingProtect:  restartRecovery.RestoredPendingProtect,
 		RestoredShadowPositions: restartRecovery.RestoredShadowPositions,
 	}
 	brokerTruthSummary := OperatorBrokerTruthSummary{
@@ -800,6 +859,7 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		Promotion:                       promotionSummary,
 		RiskSupervisor:                  riskSupervisorSummary,
 		Execution:                       executionSummary,
+		Protection:                      protectionSummary,
 		ShadowMode:                      shadowSummary,
 		RestartRecovery:                 restartRecoverySummary,
 		BrokerTruth:                     brokerTruthSummary,
@@ -856,9 +916,13 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 		ExecutionDuplicateSuppressed:    executionSummary.DuplicateSuppressedCount,
 		ExecutionBlockedCount:           executionSummary.BlockedExecutionCount,
 		ExecutionSubmittedCount:         executionSummary.SubmittedCount,
+		ExecutionAcknowledgedCount:      executionSummary.AcknowledgedCount,
 		ExecutionFilledCount:            executionSummary.FilledCount,
 		ExecutionRejectedCount:          executionSummary.RejectedCount,
 		ExecutionFailedCount:            executionSummary.FailedCount,
+		ProtectionPendingCount:          protectionSummary.PendingCount,
+		ProtectionActiveCount:           protectionSummary.ActiveProtectiveCount,
+		ProtectionMessage:               protectionSummary.Message,
 		ShadowModeActive:                shadowSummary.Active,
 		ShadowDecisionCount:             shadowSummary.DecisionCount,
 		ShadowWouldTradeCount:           shadowSummary.WouldTradeCount,

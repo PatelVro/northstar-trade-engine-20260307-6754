@@ -85,6 +85,43 @@ func TestDuplicateIntentSuppressedWithinWindow(t *testing.T) {
 	}
 }
 
+func TestBrokerAcceptedMapsToAcknowledged(t *testing.T) {
+	manager := NewManager(Config{})
+	broker := &testBroker{
+		order: map[string]interface{}{
+			"status":       "ACCEPTED",
+			"localOrderId": "local-accepted",
+			"orderId":      int64(303),
+		},
+	}
+	intent := Intent{
+		TraderID:          "paper",
+		Symbol:            "AAPL",
+		Side:              "buy",
+		ActionType:        "open_long",
+		Quantity:          5,
+		OrderType:         "market",
+		CreatedAt:         time.Now().UTC(),
+		IncreasesExposure: true,
+	}
+	gate := Gate{Mode: "allow", TradingAllowed: true, EntriesAllowed: true, ExitsAllowed: true}
+
+	result := manager.Execute(intent, gate, broker)
+	if result.Status != StatusAcknowledged {
+		t.Fatalf("expected acknowledged status, got %s", result.Status)
+	}
+	if result.FillQuantity != 0 {
+		t.Fatalf("expected no fill quantity on acknowledgement, got %.4f", result.FillQuantity)
+	}
+	summary := manager.Summary()
+	if summary.AcknowledgedCount != 1 {
+		t.Fatalf("expected acknowledged count 1, got %d", summary.AcknowledgedCount)
+	}
+	if summary.FilledCount != 0 {
+		t.Fatalf("expected no filled count for acknowledgement, got %d", summary.FilledCount)
+	}
+}
+
 func TestRestrictedModeBlocksExposureIncreasingExecution(t *testing.T) {
 	manager := NewManager(Config{})
 	broker := &testBroker{}

@@ -17,19 +17,20 @@ import (
 const durableRuntimeStateVersion = 1
 
 type durableRuntimeState struct {
-	Version        int                    `json:"version"`
-	TraderID       string                 `json:"trader_id"`
-	TraderName     string                 `json:"trader_name"`
-	Mode           string                 `json:"mode"`
-	Broker         string                 `json:"broker"`
-	Exchange       string                 `json:"exchange"`
-	ShadowMode     bool                   `json:"shadow_mode"`
-	SavedAt        time.Time              `json:"saved_at"`
-	Execution      execution.ManagerState `json:"execution"`
-	OrderLifecycle *orders.StoreState     `json:"order_lifecycle,omitempty"`
-	LocalPositions []positions.Snapshot   `json:"local_positions,omitempty"`
-	LatestAccount  *AccountSummary        `json:"latest_account,omitempty"`
-	ShadowState    *shadowModeState       `json:"shadow_state,omitempty"`
+	Version        int                      `json:"version"`
+	TraderID       string                   `json:"trader_id"`
+	TraderName     string                   `json:"trader_name"`
+	Mode           string                   `json:"mode"`
+	Broker         string                   `json:"broker"`
+	Exchange       string                   `json:"exchange"`
+	ShadowMode     bool                     `json:"shadow_mode"`
+	SavedAt        time.Time                `json:"saved_at"`
+	Execution      execution.ManagerState   `json:"execution"`
+	OrderLifecycle *orders.StoreState       `json:"order_lifecycle,omitempty"`
+	LocalPositions []positions.Snapshot     `json:"local_positions,omitempty"`
+	LatestAccount  *AccountSummary          `json:"latest_account,omitempty"`
+	PendingProtect []pendingProtectionState `json:"pending_protections,omitempty"`
+	ShadowState    *shadowModeState         `json:"shadow_state,omitempty"`
 }
 
 type restartRecoverySummary struct {
@@ -52,6 +53,7 @@ type restartRecoverySummary struct {
 	RestoredInFlightCount   int
 	RestoredActiveOrders    int
 	RestoredLocalPositions  int
+	RestoredPendingProtect  int
 	RestoredShadowPositions int
 }
 
@@ -149,6 +151,10 @@ func (at *AutoTrader) restoreDurableRuntimeState() {
 	if state.LatestAccount != nil {
 		at.setLatestAccountSummary(state.LatestAccount)
 	}
+	pendingProtect := 0
+	if len(state.PendingProtect) > 0 {
+		pendingProtect = at.restorePendingProtections(state.PendingProtect)
+	}
 	shadowPositions := 0
 	if state.ShadowState != nil {
 		at.restoreShadowStateFromState(*state.ShadowState)
@@ -158,7 +164,7 @@ func (at *AutoTrader) restoreDurableRuntimeState() {
 	executionCount := len(state.Execution.Executions)
 	inFlightExecutions := countInFlightExecutions(state.Execution)
 	localPositions := len(state.LocalPositions)
-	needsBrokerReconciliation := at.managesPositionReconciliation() && (inFlightExecutions > 0 || activeOrders > 0 || localPositions > 0)
+	needsBrokerReconciliation := at.managesPositionReconciliation() && (inFlightExecutions > 0 || activeOrders > 0 || localPositions > 0 || pendingProtect > 0)
 
 	message := "durable runtime state restored"
 	status := "restored"
@@ -191,6 +197,7 @@ func (at *AutoTrader) restoreDurableRuntimeState() {
 		RestoredInFlightCount:   inFlightExecutions,
 		RestoredActiveOrders:    activeOrders,
 		RestoredLocalPositions:  localPositions,
+		RestoredPendingProtect:  pendingProtect,
 		RestoredShadowPositions: shadowPositions,
 	}
 	at.restartRecoveryMu.Unlock()
@@ -285,6 +292,7 @@ func (at *AutoTrader) snapshotDurableRuntimeState() durableRuntimeState {
 	if account := at.currentLatestAccountSummary(); account != nil {
 		state.LatestAccount = account
 	}
+	state.PendingProtect = at.snapshotPendingProtections()
 	if shadow := at.snapshotShadowStateForPersistence(); shadow != nil {
 		state.ShadowState = shadow
 	}
@@ -383,7 +391,7 @@ func countInFlightExecutions(state execution.ManagerState) int {
 	count := 0
 	for _, persisted := range state.Executions {
 		switch persisted.Result.Status {
-		case execution.StatusPending, execution.StatusSubmitted, execution.StatusPartiallyFilled, execution.StatusStale:
+		case execution.StatusPending, execution.StatusSubmitted, execution.StatusAcknowledged, execution.StatusPartiallyFilled, execution.StatusStale:
 			count++
 		}
 	}

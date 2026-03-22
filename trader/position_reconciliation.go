@@ -413,7 +413,7 @@ func (at *AutoTrader) updateLocalPositionStateFromActions(actions []logger.Decis
 			continue
 		}
 		status := strings.ToLower(strings.TrimSpace(action.OrderStatus))
-		if status == "submitted" || status == "accepted" || status == "pending" {
+		if status == "submitted" || status == "accepted" || status == "acknowledged" || status == "pending" {
 			continue
 		}
 

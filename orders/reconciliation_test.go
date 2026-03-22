@@ -36,7 +36,7 @@ func TestReconcileImportsUnknownBrokerOrder(t *testing.T) {
 func TestReconcileRepairsMissingEntryOrderToFilled(t *testing.T) {
 	store := NewStore()
 	now := time.Now()
-	store.RegisterSubmitted(IntentEntryLong, "AAPL", "BUY", "long", 10, now.Add(-5*time.Second))
+	store.RegisterSubmitted(IntentEntryLong, "AAPL", "BUY", "long", 10, now.Add(-(missingBrokerInferenceGraceWindow + 5*time.Second)))
 
 	result := store.Reconcile(nil, []PositionSnapshot{
 		{Symbol: "AAPL", Side: "long", Quantity: 10},
@@ -48,6 +48,28 @@ func TestReconcileRepairsMissingEntryOrderToFilled(t *testing.T) {
 	active := store.ActiveOrders()
 	if len(active) != 0 {
 		t.Fatalf("expected no active orders after fill repair, got %d", len(active))
+	}
+}
+
+func TestReconcileKeepsFreshSubmissionPendingWhenBrokerOpenOrdersLag(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+	localID := store.RegisterSubmitted(IntentEntryLong, "AAPL", "BUY", "long", 10, now.Add(-2*time.Second))
+
+	result := store.Reconcile(nil, nil, now)
+
+	if result.LocalMissingAtBroker != 0 {
+		t.Fatalf("expected no local-missing mismatch during broker grace window, got %d", result.LocalMissingAtBroker)
+	}
+	record := store.Lookup(localID, "")
+	if record == nil {
+		t.Fatalf("expected local order record to remain available")
+	}
+	if record.Status != StatusSubmitted {
+		t.Fatalf("expected fresh missing order to remain submitted, got %s", record.Status)
+	}
+	if len(store.ActiveOrders()) != 1 {
+		t.Fatalf("expected fresh missing order to remain active")
 	}
 }
 

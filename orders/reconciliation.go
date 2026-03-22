@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	matchWindow  = 30 * time.Second
-	qtyTolerance = 0.02
-	issueCap     = 12
+	matchWindow                       = 30 * time.Second
+	missingBrokerInferenceGraceWindow = 15 * time.Second
+	qtyTolerance                      = 0.02
+	issueCap                          = 12
 )
 
 func (s *Store) Reconcile(openOrders []BrokerOrder, positions []PositionSnapshot, now time.Time) ReconciliationResult {
@@ -127,7 +128,7 @@ func (s *Store) Reconcile(openOrders []BrokerOrder, positions []PositionSnapshot
 			continue
 		}
 
-		repairState, repairedQty, repairedMsg := inferMissingBrokerState(record, positions)
+		repairState, repairedQty, repairedMsg := inferMissingBrokerState(record, positions, now)
 		if repairState == "" {
 			continue
 		}
@@ -313,7 +314,10 @@ func applyBrokerTruth(record *Record, brokerOrder BrokerOrder, now time.Time) (b
 	return changed, fillMismatch
 }
 
-func inferMissingBrokerState(record *Record, positions []PositionSnapshot) (Status, float64, string) {
+func inferMissingBrokerState(record *Record, positions []PositionSnapshot, now time.Time) (Status, float64, string) {
+	if missingBrokerInferenceStillWaiting(record, now) {
+		return "", 0, ""
+	}
 	positionQty := quantityForIntentPosition(record, positions)
 	switch record.Intent {
 	case IntentEntryLong, IntentEntryShort:
@@ -341,6 +345,25 @@ func inferMissingBrokerState(record *Record, positions []PositionSnapshot) (Stat
 		return StatusCancelled, 0, fmt.Sprintf("protective order %s missing at broker active list while position remains; marked cancelled", record.LocalID)
 	default:
 		return StatusCancelled, 0, fmt.Sprintf("order %s missing at broker active list; marked cancelled", record.LocalID)
+	}
+}
+
+func missingBrokerInferenceStillWaiting(record *Record, now time.Time) bool {
+	if record == nil {
+		return false
+	}
+	reference := record.LastSeenAt
+	if reference.IsZero() {
+		reference = record.SubmittedAt
+	}
+	if reference.IsZero() {
+		return false
+	}
+	switch record.Status {
+	case StatusSubmitted, StatusAccepted, StatusPartiallyFilled:
+		return now.Sub(reference) <= missingBrokerInferenceGraceWindow
+	default:
+		return false
 	}
 }
 

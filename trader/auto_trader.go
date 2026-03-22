@@ -263,6 +263,9 @@ type AutoTrader struct {
 	localPositionSnapshots                map[string]positions.Snapshot
 	portfolioRiskMu                       sync.RWMutex
 	portfolioRiskState                    *portfolioRiskState
+	protectionMu                          sync.RWMutex
+	pendingProtections                    map[string]pendingProtectionState
+	protectionLastUpdatedAt               time.Time
 	shadowMu                              sync.RWMutex
 	shadowState                           shadowModeState
 	restartRecoveryMu                     sync.RWMutex
@@ -733,6 +736,7 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 	at.initializeDataQualityState()
 	at.initializePositionReconciliationState()
 	at.initializeRiskSupervisorState()
+	at.initializePendingProtectionState()
 	at.initializeShadowModeState()
 	at.initializeRestartRecoveryState()
 	at.restoreStrategyAccountingState()
@@ -1258,6 +1262,7 @@ func (at *AutoTrader) runCycle() error {
 		return err
 	}
 	at.refreshPositionState(ctx.Positions)
+	at.processPendingProtections(ctx)
 	if ctx.Account.StrategyEquity > at.peakEquitySeen {
 		at.peakEquitySeen = ctx.Account.StrategyEquity
 	}
@@ -1974,21 +1979,11 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *decision.Decision, act
 
 	log.Printf("   Execution accepted for %s long entry, status=%s, broker_order_id=%s, quantity=%.4f", decision.Symbol, result.Status, result.BrokerOrderID, actionRecord.Quantity)
 
-	if at.shadowModeEnabled() {
-		log.Printf("   Shadow mode active for %s: protective broker orders were not placed", decision.Symbol)
-	} else if executionStatusHasImmediateFill(actionRecord.OrderStatus) {
+	if executionStatusHasImmediateFill(actionRecord.OrderStatus) {
 		posKey := decision.Symbol + "_long"
 		at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
-
-		if err := at.trader.SetStopLoss(decision.Symbol, "LONG", actionRecord.Quantity, decision.StopLoss); err != nil {
-			log.Printf("   Failed to set stop loss limitations: %v", err)
-		}
-		if err := at.trader.SetTakeProfit(decision.Symbol, "LONG", actionRecord.Quantity, decision.TakeProfit); err != nil {
-			log.Printf("   Failed to set take profit limitations: %v", err)
-		}
-	} else {
-		log.Printf("   Skipping protective order setup for %s until execution is filled; current status=%s", decision.Symbol, result.Status)
 	}
+	at.handleEntryProtection(decision, actionRecord, "long", quantity)
 
 	return nil
 }
@@ -2054,21 +2049,11 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *decision.Decision, ac
 
 	log.Printf("   Execution accepted for %s short entry, status=%s, broker_order_id=%s, quantity=%.4f", decision.Symbol, result.Status, result.BrokerOrderID, actionRecord.Quantity)
 
-	if at.shadowModeEnabled() {
-		log.Printf("   Shadow mode active for %s: protective broker orders were not placed", decision.Symbol)
-	} else if executionStatusHasImmediateFill(actionRecord.OrderStatus) {
+	if executionStatusHasImmediateFill(actionRecord.OrderStatus) {
 		posKey := decision.Symbol + "_short"
 		at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
-
-		if err := at.trader.SetStopLoss(decision.Symbol, "SHORT", actionRecord.Quantity, decision.StopLoss); err != nil {
-			log.Printf("   Failed to set stop loss maps lists Mapper Target Maps parameters Variables limitations Mapping strings Target configurations arrays map Arrays array Map strings limitations maps strings bounds combinations: %v", err)
-		}
-		if err := at.trader.SetTakeProfit(decision.Symbol, "SHORT", actionRecord.Quantity, decision.TakeProfit); err != nil {
-			log.Printf("   Failed to set take profit parameter: %v", err)
-		}
-	} else {
-		log.Printf("   Skipping protective order setup for %s until execution is filled; current status=%s", decision.Symbol, result.Status)
 	}
+	at.handleEntryProtection(decision, actionRecord, "short", quantity)
 
 	return nil
 }
@@ -2191,6 +2176,7 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 	portfolioRisk := at.currentPortfolioRiskState()
 	alertSummary := at.currentAlertsSummary()
 	executionSummary := at.currentExecutionSummary()
+	protectionSummary := at.currentProtectionSummary()
 	brokerTruth := at.currentBrokerTruthSummary()
 	brokerTradingAllowed := !at.managesIBKRBrokerRuntime() || brokerStatus.State == BrokerRuntimeHealthy
 	gate := at.currentTradingGateDecision(false, at.currentLatestAccountSummary())
@@ -2319,6 +2305,7 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 			"duplicate_suppressed_count": executionSummary.DuplicateSuppressedCount,
 			"blocked_execution_count":    executionSummary.BlockedExecutionCount,
 			"submitted_count":            executionSummary.SubmittedCount,
+			"acknowledged_count":         executionSummary.AcknowledgedCount,
 			"filled_count":               executionSummary.FilledCount,
 			"rejected_count":             executionSummary.RejectedCount,
 			"failed_count":               executionSummary.FailedCount,
@@ -2332,9 +2319,21 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 		"execution_duplicate_suppressed_count": executionSummary.DuplicateSuppressedCount,
 		"execution_blocked_count":              executionSummary.BlockedExecutionCount,
 		"execution_submitted_count":            executionSummary.SubmittedCount,
+		"execution_acknowledged_count":         executionSummary.AcknowledgedCount,
 		"execution_filled_count":               executionSummary.FilledCount,
 		"execution_rejected_count":             executionSummary.RejectedCount,
 		"execution_failed_count":               executionSummary.FailedCount,
+		"protection": map[string]interface{}{
+			"available":               protectionSummary.Available,
+			"pending_count":           protectionSummary.PendingCount,
+			"active_protective_count": protectionSummary.ActiveProtectiveCount,
+			"last_updated_at":         formatRFC3339(protectionSummary.LastUpdatedAt),
+			"message":                 protectionSummary.Message,
+			"pending":                 protectionSummary.Pending,
+		},
+		"protection_pending_count":           protectionSummary.PendingCount,
+		"protection_active_protective_count": protectionSummary.ActiveProtectiveCount,
+		"protection_message":                 protectionSummary.Message,
 		"shadow": map[string]interface{}{
 			"available":                   shadowSummary.Available,
 			"active":                      shadowSummary.Active,

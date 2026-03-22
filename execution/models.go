@@ -9,6 +9,7 @@ const (
 	StatusBlocked             Status = "blocked"
 	StatusDuplicateSuppressed Status = "duplicate_suppressed"
 	StatusSubmitted           Status = "submitted"
+	StatusAcknowledged        Status = "acknowledged"
 	StatusPartiallyFilled     Status = "partially_filled"
 	StatusFilled              Status = "filled"
 	StatusCancelled           Status = "cancelled"
@@ -93,6 +94,7 @@ type Summary struct {
 	DuplicateSuppressedCount int       `json:"duplicate_suppressed_count"`
 	BlockedExecutionCount    int       `json:"blocked_execution_count"`
 	SubmittedCount           int       `json:"submitted_count"`
+	AcknowledgedCount        int       `json:"acknowledged_count"`
 	FilledCount              int       `json:"filled_count"`
 	RejectedCount            int       `json:"rejected_count"`
 	FailedCount              int       `json:"failed_count"`

@@ -230,6 +230,7 @@ The checkpoint currently includes:
 - execution-manager history and duplicate-suppression state
 - local order lifecycle state when the active trader exposes the lifecycle store
 - local position snapshots used by position reconciliation
+- pending protective-order requirements for broker-managed positions
 - shadow-mode portfolio state and recent hypothetical decisions
 - the latest known account summary used for operator status
 
@@ -391,7 +392,7 @@ What this adds:
 - explicit execution intents for trader actions
 - bounded duplicate suppression so equivalent in-flight or very recent intents are not blindly resubmitted
 - conservative final-gate checks at submit time
-- honest immediate execution statuses such as `blocked`, `duplicate_suppressed`, `submitted`, `filled`, `rejected`, and `stale`
+- honest immediate execution statuses such as `blocked`, `duplicate_suppressed`, `submitted`, `acknowledged`, `partially_filled`, `filled`, `rejected`, and `stale`
 - bounded execution summaries in `GET /api/status` and paper session reports
 
 Important scope notes:
@@ -399,6 +400,19 @@ Important scope notes:
 - this is not a full OMS/EMS or smart-routing system
 - ambiguous broker-submit outcomes are not auto-retried
 - broker truth for later fills and terminal states still comes from order lifecycle tracking and reconciliation
+
+Northstar no longer treats IBKR submit acknowledgement or disappearance from the open-orders list as fill truth. For IBKR:
+
+- `submitted` means Northstar transmitted the intent locally, but broker lifecycle truth is still incomplete
+- `acknowledged` means broker/open-order lifecycle has confirmed the order is working, but there is still no fill truth yet
+- `partially_filled` and `filled` only come from broker-confirmed lifecycle or later reconciliation evidence
+
+Protective orders are now also truth-driven:
+
+- Northstar does not claim protection is active just because an entry submit succeeded
+- if an entry is not yet filled, protection stays in a durable `pending` state
+- once lifecycle or reconciliation confirms fill quantity, Northstar submits only the protective quantity that is actually confirmed
+- after restart, unresolved pending protection is restored and trading stays blocked until reconciliation clears the uncertainty
 
 ## Equity strategy modes
 

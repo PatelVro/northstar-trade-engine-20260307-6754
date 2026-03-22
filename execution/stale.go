@@ -31,8 +31,8 @@ func mapBrokerPayloadStatus(payload map[string]interface{}, requestedQty float64
 		return StatusCancelled, rawStatus, fillQty, avgFillPrice
 	case "REJECTED":
 		return StatusRejected, rawStatus, fillQty, avgFillPrice
-	case "ACCEPTED":
-		return StatusSubmitted, rawStatus, fillQty, avgFillPrice
+	case "ACCEPTED", "PRESUBMITTED", "PRE_SUBMITTED":
+		return StatusAcknowledged, rawStatus, fillQty, avgFillPrice
 	case "SUBMITTED", "PENDING", "PENDING_SUBMIT":
 		return StatusSubmitted, rawStatus, fillQty, avgFillPrice
 	}
@@ -59,7 +59,7 @@ func mapOrderRecordStatus(record *orders.Record) (Status, bool) {
 	case orders.StatusRejected:
 		return StatusRejected, true
 	case orders.StatusAccepted:
-		return StatusSubmitted, true
+		return StatusAcknowledged, true
 	case orders.StatusSubmitted:
 		return StatusSubmitted, true
 	default:
@@ -153,6 +153,10 @@ func (m *Manager) refreshTrackedFromLookupLocked(tracked *trackedExecution, now 
 		tracked.Result.Status = StatusPartiallyFilled
 		tracked.Result.Success = true
 		tracked.Result.Stale = false
+	case StatusAcknowledged:
+		tracked.Result.Status = StatusAcknowledged
+		tracked.Result.Success = true
+		tracked.Result.Stale = false
 	case StatusCancelled:
 		tracked.Result.Status = StatusCancelled
 		tracked.Result.Success = false
@@ -168,10 +172,9 @@ func (m *Manager) refreshTrackedFromLookupLocked(tracked *trackedExecution, now 
 			tracked.Result.CompletedAt = chooseEventTime(record.UpdatedAt, record.LastSeenAt, now)
 		}
 	case StatusSubmitted:
-		if tracked.Result.Status == StatusPending {
-			tracked.Result.Status = StatusSubmitted
-			tracked.Result.Success = true
-		}
+		tracked.Result.Status = StatusSubmitted
+		tracked.Result.Success = true
+		tracked.Result.Stale = false
 	}
 }
 

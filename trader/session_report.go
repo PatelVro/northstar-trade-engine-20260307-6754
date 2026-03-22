@@ -25,7 +25,7 @@ const (
 	SessionCompletionPartial   SessionCompletionStatus = "partial"
 )
 
-const sessionReportVersion = 10
+const sessionReportVersion = 11
 
 type SessionPortfolioRiskSnapshot struct {
 	EvaluatedAt time.Time             `json:"evaluated_at"`
@@ -86,6 +86,7 @@ type PaperSessionReport struct {
 	DuplicateSuppressedCount          int                           `json:"duplicate_suppressed_count"`
 	StaleExecutionCount               int                           `json:"stale_execution_count"`
 	ExecutionSubmittedCount           int                           `json:"execution_submitted_count"`
+	ExecutionAcknowledgedCount        int                           `json:"execution_acknowledged_count"`
 	ExecutionFilledCount              int                           `json:"execution_filled_count"`
 	ExecutionRejectedCount            int                           `json:"execution_rejected_count"`
 	ExecutionFailedCount              int                           `json:"execution_failed_count"`
@@ -495,6 +496,9 @@ func (t *paperSessionTracker) observeDecisionRecord(record *logger.DecisionRecor
 				t.report.StaleExecutionCount++
 			case execution.StatusSubmitted:
 				t.report.ExecutionSubmittedCount++
+			case execution.StatusAcknowledged:
+				t.report.ExecutionSubmittedCount++
+				t.report.ExecutionAcknowledgedCount++
 			case execution.StatusPartiallyFilled:
 				t.report.ExecutionSubmittedCount++
 				t.report.ExecutionFilledCount++
@@ -517,6 +521,8 @@ func (t *paperSessionTracker) observeDecisionRecord(record *logger.DecisionRecor
 		if trackedExecution {
 			switch execution.Status(status) {
 			case execution.StatusSubmitted:
+				t.report.OrdersSubmitted++
+			case execution.StatusAcknowledged:
 				t.report.OrdersSubmitted++
 			case execution.StatusPartiallyFilled, execution.StatusFilled:
 				t.report.OrdersSubmitted++

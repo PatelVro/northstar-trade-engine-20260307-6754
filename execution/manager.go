@@ -163,7 +163,7 @@ func (m *Manager) Execute(intent Intent, gate Gate, broker Broker) Result {
 		if tracked := m.historyByID[existingID]; tracked != nil {
 			m.refreshTrackedFromLookupLocked(tracked, now)
 			switch tracked.Result.Status {
-			case StatusPending, StatusSubmitted, StatusPartiallyFilled:
+			case StatusPending, StatusSubmitted, StatusAcknowledged, StatusPartiallyFilled:
 				result.Status = StatusDuplicateSuppressed
 				result.DuplicateSuppressed = true
 				result.Error = "equivalent execution intent already in flight"
@@ -258,7 +258,7 @@ func (m *Manager) Summary() Summary {
 			summary.LastExecutionStatus = result.Status
 		}
 		switch result.Status {
-		case StatusPending, StatusSubmitted, StatusPartiallyFilled:
+		case StatusPending, StatusSubmitted, StatusAcknowledged, StatusPartiallyFilled:
 			summary.InFlightCount++
 		case StatusStale:
 			summary.StaleCount++
@@ -273,7 +273,10 @@ func (m *Manager) Summary() Summary {
 		case StatusFailed, StatusCancelled:
 			summary.FailedCount++
 		}
-		if result.Status == StatusSubmitted || result.Status == StatusPartiallyFilled || result.Status == StatusFilled {
+		if result.Status == StatusAcknowledged {
+			summary.AcknowledgedCount++
+		}
+		if result.Status == StatusSubmitted || result.Status == StatusAcknowledged || result.Status == StatusPartiallyFilled || result.Status == StatusFilled {
 			summary.SubmittedCount++
 		}
 	}

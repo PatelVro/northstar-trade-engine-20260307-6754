@@ -56,7 +56,7 @@ func executionActionIncreasesExposure(action string) bool {
 
 func executionStatusHasImmediateFill(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "", "filled", "partially_filled":
+	case "filled", "partially_filled":
 		return true
 	default:
 		return false
@@ -65,7 +65,7 @@ func executionStatusHasImmediateFill(status string) bool {
 
 func executionResultMutatesBrokerSnapshot(result execution.Result) bool {
 	switch result.Status {
-	case execution.StatusSubmitted, execution.StatusPartiallyFilled, execution.StatusFilled, execution.StatusCancelled:
+	case execution.StatusSubmitted, execution.StatusAcknowledged, execution.StatusPartiallyFilled, execution.StatusFilled, execution.StatusCancelled:
 		return true
 	default:
 		return false
@@ -81,7 +81,7 @@ func actionHasImmediatePositionEffect(action logger.DecisionAction) bool {
 
 func isTrackedExecutionStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "blocked", "duplicate_suppressed", "submitted", "partially_filled", "filled", "cancelled", "rejected", "stale", "failed":
+	case "blocked", "duplicate_suppressed", "submitted", "acknowledged", "partially_filled", "filled", "cancelled", "rejected", "stale", "failed":
 		return true
 	default:
 		return false
@@ -176,7 +176,7 @@ func (at *AutoTrader) applyExecutionResult(actionRecord *logger.DecisionAction, 
 
 func executionResultError(result execution.Result) error {
 	switch result.Status {
-	case execution.StatusSubmitted, execution.StatusPartiallyFilled, execution.StatusFilled:
+	case execution.StatusSubmitted, execution.StatusAcknowledged, execution.StatusPartiallyFilled, execution.StatusFilled:
 		return nil
 	case execution.StatusPending:
 		return fmt.Errorf("execution pending for %s %s", result.Symbol, result.ActionType)

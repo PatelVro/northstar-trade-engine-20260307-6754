@@ -269,3 +269,66 @@ func TestGetBalanceAndPositionsUsePortfolioWarmupPath(t *testing.T) {
 		t.Fatalf("expected positions retry, got %d call(s)", atomic.LoadInt32(&positionsCalls))
 	}
 }
+
+func TestCreateOrderDoesNotAssumeFillFromMissingOpenOrders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/iserver/secdef/search":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"conid":265598,"symbol":"AAPL","description":"NASDAQ","sections":[{"secType":"STK","exchange":"NASDAQ"}]}]`))
+		case r.URL.Path == "/iserver/account/DU123456/orders" && r.Method == http.MethodPost:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		case r.URL.Path == "/iserver/account/orders":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"orders":[]}`))
+		case r.URL.Path == "/portfolio/accounts":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`["DU123456"]`))
+		case r.URL.Path == "/portfolio/subaccounts":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":"DU123456"}]`))
+		case r.URL.RequestURI() == "/portfolio/subaccounts2?page=0":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":"DU123456"}]`))
+		case r.URL.Path == "/portfolio/DU123456/positions":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := broker.NewIBKRClient(server.URL, "DU123456", "")
+	client.HTTPClient = server.Client()
+	provider := &market.IBKRProvider{Client: client}
+
+	trader := &IBKRTrader{
+		BaseURL:       server.URL,
+		AccountID:     "DU123456",
+		HTTPClient:    server.Client(),
+		Provider:      provider,
+		orderStore:    orders.NewStore(),
+		fallbackCash:  100000,
+		protectiveOCA: make(map[string]string),
+	}
+
+	result, err := trader.CreateOrder("AAPL", "long", orders.IntentEntryLong, "long", 0, 10, 1, "", "")
+	if err != nil {
+		t.Fatalf("CreateOrder failed: %v", err)
+	}
+	if got := result["status"]; got != "submitted" {
+		t.Fatalf("expected submitted status without fill inference, got %v", got)
+	}
+	if got := result["localOrderId"]; got == "" {
+		t.Fatalf("expected local order id in result")
+	}
+	summary := trader.GetOrderReconciliationSummary()
+	if summary.ActiveLocalOrders != 1 {
+		t.Fatalf("expected submitted order to remain active while broker truth is pending, got %+v", summary)
+	}
+	if summary.ResolvedOrders != 0 {
+		t.Fatalf("expected no resolved orders from missing open-order heuristic, got %+v", summary)
+	}
+}
