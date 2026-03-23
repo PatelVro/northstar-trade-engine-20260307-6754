@@ -6,7 +6,7 @@ import (
 )
 
 var (
-	percentPattern = regexp.MustCompile(`\b\d+(\.\d+)?%\b`)
+	percentPattern = regexp.MustCompile(`\b\d+(\.\d+)?%`)
 )
 
 var positiveTerms = []string{

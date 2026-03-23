@@ -49,14 +49,19 @@ func TestAnalyzeText_ImpactWithMacroTerms(t *testing.T) {
 	}
 }
 
-func TestAnalyzeText_PercentageRegexRequiresWordBoundaryAfterPercent(t *testing.T) {
-	// NOTE: The current regex `\b\d+(\.\d+)?%\b` requires a word-boundary AFTER
-	// the %, which means "15% drop" does NOT match (non-word to non-word).
-	// Only "15%loss" (non-word to word) matches. This documents current behavior.
-	_, impNoMatch := AnalyzeText("revenue plunge 15% year over year")
-	_, impMatch := AnalyzeText("revenue plunge 15%drop year over year")
-	if impMatch <= impNoMatch {
-		t.Errorf("expected word-boundary match to boost impact: match=%.4f, noMatch=%.4f", impMatch, impNoMatch)
+func TestAnalyzeText_ImpactWithPercentage(t *testing.T) {
+	_, impPct := AnalyzeText("revenue plunge 15% year over year")
+	_, impNoPct := AnalyzeText("revenue plunge year over year")
+	if impPct <= impNoPct {
+		t.Errorf("expected percentage to boost impact: pct=%.4f, noPct=%.4f", impPct, impNoPct)
+	}
+}
+
+func TestAnalyzeText_PercentageDecimal(t *testing.T) {
+	_, imp := AnalyzeText("growth of 3.5% in Q4")
+	// Should match the decimal percentage
+	if imp <= 0.20 {
+		t.Errorf("expected percentage to boost beyond baseline, got %.4f", imp)
 	}
 }
 
