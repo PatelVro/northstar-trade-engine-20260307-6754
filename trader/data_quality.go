@@ -62,12 +62,14 @@ func (at *AutoTrader) currentTimeUTC() time.Time {
 }
 
 func (at *AutoTrader) getValidatedMarketData(symbol string) (*market.Data, error) {
+	vopts := at.currentDataValidationOptions()
+	vopts.StaleAfterBars = 6 // tolerate IBKR paper account 15-min delayed data
 	req := market.GetRequest{
 		Symbol:            symbol,
 		Provider:          at.provider,
 		InstrumentType:    at.config.InstrumentType,
 		BarsAdjustment:    at.config.BarsAdjustment,
-		ValidationOptions: at.currentDataValidationOptions(),
+		ValidationOptions: vopts,
 	}
 	marketData, err := market.Get(req)
 	at.observeDataQualityEvent(symbol, nil, err)
@@ -310,6 +312,7 @@ func (at *AutoTrader) preflightRuntimeMarketData(ctx *decision.Context) error {
 
 	opts := at.currentDataValidationOptions()
 	opts.ExpectedBars = 40
+	opts.StaleAfterBars = 6 // tolerate IBKR paper account 15-min delayed data
 	series, err := at.provider.GetBars(probeSymbols, "3m", 40)
 	if err != nil {
 		summary := fmt.Sprintf("runtime market-data probe failed: %v", err)

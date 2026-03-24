@@ -2,6 +2,7 @@ package trader
 
 import (
 	"northstar/incidents"
+	"northstar/risk"
 	"strings"
 	"testing"
 )
@@ -272,6 +273,176 @@ func TestJoinNonEmpty_Single(t *testing.T) {
 // ---------------------------------------------------------------------------
 // RuntimeConditionState constants
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// currentRuntimeConditionState — integration tests for CycleTradable logic
+// ---------------------------------------------------------------------------
+
+func healthyGate() tradingGateDecision {
+	return tradingGateDecision{
+		Mode:           risk.SupervisorModeAllow,
+		TradingAllowed: true,
+		EntriesAllowed: true,
+		ExitsAllowed:   true,
+		Message:        "trading allowed",
+	}
+}
+
+func healthyBrokerStatus() brokerRuntimeSnapshot {
+	return brokerRuntimeSnapshot{State: BrokerRuntimeHealthy}
+}
+
+func TestCurrentRuntimeCondition_HealthyCycleIsTradable(t *testing.T) {
+	at := &AutoTrader{isRunning: true}
+	view := at.currentRuntimeConditionState(
+		healthyGate(),
+		brokerTruthSummary{},
+		OperatorDataQualitySummary{},
+		nil, nil,
+		restartRecoverySummary{},
+		killSwitchSummary{},
+		healthyBrokerStatus(),
+	)
+	if !view.CycleTradable {
+		t.Fatalf("expected healthy cycle to be tradable, got state=%s reason=%s", view.State, view.Reason)
+	}
+	if view.State != RuntimeConditionHealthy {
+		t.Errorf("expected healthy state, got %s", view.State)
+	}
+}
+
+func TestCurrentRuntimeCondition_BlockedSymbolsDoNotHardBlockCycle(t *testing.T) {
+	at := &AutoTrader{isRunning: true}
+	dq := OperatorDataQualitySummary{BlockedSymbolsCount: 3}
+	view := at.currentRuntimeConditionState(
+		healthyGate(),
+		brokerTruthSummary{},
+		dq,
+		nil, nil,
+		restartRecoverySummary{},
+		killSwitchSummary{},
+		healthyBrokerStatus(),
+	)
+	if !view.CycleTradable {
+		t.Fatalf("per-symbol data quality blocks should NOT hard-block cycle tradability; state=%s reason=%s", view.State, view.Reason)
+	}
+	if view.State != RuntimeConditionDegraded {
+		t.Errorf("expected degraded state when symbols are blocked, got %s", view.State)
+	}
+	if view.Severity != incidents.SeverityInfo {
+		t.Errorf("expected info severity for per-symbol blocks, got %s", view.Severity)
+	}
+}
+
+func TestCurrentRuntimeCondition_FeedDelayedHardBlocksCycle(t *testing.T) {
+	at := &AutoTrader{isRunning: true}
+	dq := OperatorDataQualitySummary{FeedDelayed: true, FeedSummary: "market data feed delayed"}
+	view := at.currentRuntimeConditionState(
+		healthyGate(),
+		brokerTruthSummary{},
+		dq,
+		nil, nil,
+		restartRecoverySummary{},
+		killSwitchSummary{},
+		healthyBrokerStatus(),
+	)
+	if view.CycleTradable {
+		t.Fatalf("feed-level delay should hard-block cycle")
+	}
+	if view.State != RuntimeConditionDegraded {
+		t.Errorf("expected degraded, got %s", view.State)
+	}
+}
+
+func TestCurrentRuntimeCondition_BrokerDegradedHardBlocksCycle(t *testing.T) {
+	at := &AutoTrader{isRunning: true}
+	view := at.currentRuntimeConditionState(
+		healthyGate(),
+		brokerTruthSummary{},
+		OperatorDataQualitySummary{},
+		nil, nil,
+		restartRecoverySummary{},
+		killSwitchSummary{},
+		brokerRuntimeSnapshot{State: BrokerRuntimeDegraded, Reason: "gateway timeout"},
+	)
+	if view.CycleTradable {
+		t.Fatalf("degraded broker should hard-block cycle")
+	}
+}
+
+func TestCurrentRuntimeCondition_EntriesBlockedHardBlocksCycle(t *testing.T) {
+	at := &AutoTrader{isRunning: true}
+	gate := tradingGateDecision{
+		Mode:           risk.SupervisorModeBlockNewEntries,
+		TradingAllowed: true,
+		EntriesAllowed: false,
+		ExitsAllowed:   true,
+		BlockReason:    "max concurrent positions breached",
+	}
+	view := at.currentRuntimeConditionState(
+		gate,
+		brokerTruthSummary{},
+		OperatorDataQualitySummary{},
+		nil, nil,
+		restartRecoverySummary{},
+		killSwitchSummary{},
+		healthyBrokerStatus(),
+	)
+	if view.CycleTradable {
+		t.Fatalf("entries-blocked gate should hard-block cycle")
+	}
+}
+
+func TestCurrentRuntimeCondition_KillSwitchOverridesEverything(t *testing.T) {
+	at := &AutoTrader{isRunning: true}
+	view := at.currentRuntimeConditionState(
+		healthyGate(),
+		brokerTruthSummary{},
+		OperatorDataQualitySummary{},
+		nil, nil,
+		restartRecoverySummary{},
+		killSwitchSummary{Active: true, Message: "operator halt"},
+		healthyBrokerStatus(),
+	)
+	if view.CycleTradable {
+		t.Fatalf("kill switch should block cycle")
+	}
+	if view.State != RuntimeConditionHalted {
+		t.Errorf("expected halted, got %s", view.State)
+	}
+}
+
+func TestCurrentRuntimeCondition_RestartRecoveryBlocksCycle(t *testing.T) {
+	at := &AutoTrader{isRunning: true}
+	view := at.currentRuntimeConditionState(
+		healthyGate(),
+		brokerTruthSummary{},
+		OperatorDataQualitySummary{},
+		nil, nil,
+		restartRecoverySummary{TradingBlocked: true, Message: "pending reconciliation"},
+		killSwitchSummary{},
+		healthyBrokerStatus(),
+	)
+	if view.CycleTradable {
+		t.Fatalf("restart recovery should block cycle")
+	}
+}
+
+func TestCurrentRuntimeCondition_BrokerTruthBlocksCycle(t *testing.T) {
+	at := &AutoTrader{isRunning: true}
+	view := at.currentRuntimeConditionState(
+		healthyGate(),
+		brokerTruthSummary{TradingBlocked: true, Message: "broker truth unverified"},
+		OperatorDataQualitySummary{},
+		nil, nil,
+		restartRecoverySummary{},
+		killSwitchSummary{},
+		healthyBrokerStatus(),
+	)
+	if view.CycleTradable {
+		t.Fatalf("broker truth block should prevent trading")
+	}
+}
 
 func TestRuntimeConditionStateConstants(t *testing.T) {
 	states := []RuntimeConditionState{

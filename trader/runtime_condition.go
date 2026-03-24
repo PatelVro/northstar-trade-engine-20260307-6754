@@ -234,7 +234,7 @@ func (at *AutoTrader) currentRuntimeConditionState(
 		return view
 	}
 
-	if !gate.EntriesAllowed || brokerStatus.State != BrokerRuntimeHealthy || dataQuality.BlockedSymbolsCount > 0 || dataQuality.FeedDelayed {
+	if !gate.EntriesAllowed || brokerStatus.State != BrokerRuntimeHealthy || dataQuality.FeedDelayed {
 		view.State = RuntimeConditionDegraded
 		view.Severity = incidents.SeverityWarning
 		view.CycleTradable = false
@@ -248,12 +248,18 @@ func (at *AutoTrader) currentRuntimeConditionState(
 		if dataQuality.FeedDelayed && strings.TrimSpace(dataQuality.FeedSummary) != "" {
 			reasons = append(reasons, dataQuality.FeedSummary)
 		}
-		if dataQuality.BlockedSymbolsCount > 0 {
-			reasons = append(reasons, "one or more symbols are blocked by data-quality validation")
-		}
 		view.Reason = firstNonEmpty(joinNonEmpty(reasons, "; "), "runtime degraded")
 		view.Causes = append([]string(nil), reasons...)
 		return view
+	}
+
+	// Per-symbol data-quality blocks are handled at the individual symbol level;
+	// they degrade the cycle but do not block trading on symbols that pass validation.
+	if dataQuality.BlockedSymbolsCount > 0 {
+		view.State = RuntimeConditionDegraded
+		view.Severity = incidents.SeverityInfo
+		view.Reason = "one or more symbols are blocked by data-quality validation; tradable symbols proceed"
+		view.Causes = []string{view.Reason}
 	}
 
 	return view
