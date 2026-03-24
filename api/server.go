@@ -2,10 +2,13 @@ package api
 
 import (
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"northstar/buildinfo"
 	"northstar/manager"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -182,6 +185,25 @@ func (s *Server) setupRoutes() {
 		api.GET("/equity-history", s.handleEquityHistory)
 		api.GET("/performance", s.handlePerformance)
 		api.GET("/candles", s.handleCandles)
+	}
+
+	// Serve the built web dashboard if the dist directory exists
+	distPath := filepath.Join("web", "dist")
+	if info, err := os.Stat(distPath); err == nil && info.IsDir() {
+		distFS := os.DirFS(distPath)
+		fileServer := http.FileServer(http.FS(distFS))
+		s.router.NoRoute(func(c *gin.Context) {
+			path := c.Request.URL.Path
+			// Try to serve the exact file first
+			if f, err := fs.Stat(distFS, path[1:]); err == nil && !f.IsDir() {
+				fileServer.ServeHTTP(c.Writer, c.Request)
+				return
+			}
+			// SPA fallback: serve index.html for all other routes
+			c.Request.URL.Path = "/"
+			fileServer.ServeHTTP(c.Writer, c.Request)
+		})
+		log.Printf("  Dashboard served from %s", distPath)
 	}
 }
 
@@ -564,7 +586,7 @@ func (s *Server) handlePerformance(c *gin.Context) {
 
 // Start runs the API server
 func (s *Server) Start() error {
-	addr := fmt.Sprintf("127.0.0.1:%d", s.port)
+	addr := fmt.Sprintf("0.0.0.0:%d", s.port)
 	log.Printf(" Northstar API build: %s", buildinfo.Current().Summary())
 	log.Printf(" API server started at http://%s", addr)
 	log.Printf(" API documentation:")
