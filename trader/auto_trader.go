@@ -836,10 +836,26 @@ func (at *AutoTrader) Run() error {
 		if !at.isRunning {
 			break
 		}
-		time.Sleep(at.config.ScanInterval)
+		sleepDuration := at.config.ScanInterval
+		if blocked := at.currentBlockedCycle(); blocked.ExpectedNonTradable {
+			// Back off when market is closed to reduce unnecessary API calls and log noise
+			sleepDuration = at.marketClosedBackoffInterval()
+		}
+		time.Sleep(sleepDuration)
 	}
 
 	return nil
+}
+
+// marketClosedBackoffInterval returns a longer sleep interval when the market
+// is closed. Uses 15 minutes as a reasonable backoff to keep broker truth fresh
+// while avoiding unnecessary API and log churn.
+func (at *AutoTrader) marketClosedBackoffInterval() time.Duration {
+	const closedInterval = 15 * time.Minute
+	if at.config.ScanInterval >= closedInterval {
+		return at.config.ScanInterval
+	}
+	return closedInterval
 }
 
 // RunBacktest executes a finite number of replay/backtest cycles without scan interval waits.

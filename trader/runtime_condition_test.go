@@ -5,6 +5,7 @@ import (
 	"northstar/risk"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -441,6 +442,28 @@ func TestCurrentRuntimeCondition_BrokerTruthBlocksCycle(t *testing.T) {
 	)
 	if view.CycleTradable {
 		t.Fatalf("broker truth block should prevent trading")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// marketClosedBackoffInterval
+// ---------------------------------------------------------------------------
+
+func TestMarketClosedBackoffInterval_UsesMinimum15m(t *testing.T) {
+	at := &AutoTrader{}
+	at.config.ScanInterval = 5 * time.Minute
+	got := at.marketClosedBackoffInterval()
+	if got != 15*time.Minute {
+		t.Errorf("expected 15m backoff, got %v", got)
+	}
+}
+
+func TestMarketClosedBackoffInterval_KeepsLargerScanInterval(t *testing.T) {
+	at := &AutoTrader{}
+	at.config.ScanInterval = 30 * time.Minute
+	got := at.marketClosedBackoffInterval()
+	if got != 30*time.Minute {
+		t.Errorf("expected scan interval preserved at 30m, got %v", got)
 	}
 }
 
