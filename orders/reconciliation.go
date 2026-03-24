@@ -70,6 +70,13 @@ func (s *Store) Reconcile(openOrders []BrokerOrder, positions []PositionSnapshot
 	})
 
 	for _, record := range localRecords {
+		// Mark broker orders as used even for terminal records to prevent
+		// re-importing orders that were already imported and reached terminal state.
+		if record.BrokerOrderID != "" {
+			if _, brokerStillPresent := brokerByID[record.BrokerOrderID]; brokerStillPresent {
+				usedBroker[record.BrokerOrderID] = true
+			}
+		}
 		if record.Status.Terminal() {
 			continue
 		}

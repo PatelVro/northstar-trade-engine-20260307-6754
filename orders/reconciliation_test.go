@@ -202,3 +202,44 @@ func TestNormalizeBrokerStatus(t *testing.T) {
 		t.Fatalf("expected rejected, got %s", got)
 	}
 }
+
+func TestReconcileDoesNotReImportTerminalBrokerOrders(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+
+	// First reconciliation: import an unknown broker order that is already filled
+	brokerOrders := []BrokerOrder{
+		{
+			OrderID:    "9999",
+			Symbol:     "ADBE",
+			Side:       "BUY",
+			Status:     StatusFilled,
+			RawStatus:  "Filled",
+			Quantity:   11,
+			FilledQty:  11,
+			ObservedAt: now,
+		},
+	}
+	result1 := store.Reconcile(brokerOrders, nil, now)
+	if result1.UnknownBrokerOrders != 1 {
+		t.Fatalf("first run: expected 1 unknown broker order import, got %d", result1.UnknownBrokerOrders)
+	}
+	if result1.ImportedOrders != 1 {
+		t.Fatalf("first run: expected 1 imported order, got %d", result1.ImportedOrders)
+	}
+
+	// Second reconciliation: same broker order still appears (IBKR keeps returning it)
+	result2 := store.Reconcile(brokerOrders, nil, now.Add(3*time.Second))
+	if result2.UnknownBrokerOrders != 0 {
+		t.Fatalf("second run: expected 0 unknown broker orders (already imported), got %d", result2.UnknownBrokerOrders)
+	}
+	if result2.ImportedOrders != 0 {
+		t.Fatalf("second run: expected 0 new imports, got %d", result2.ImportedOrders)
+	}
+
+	// Third reconciliation: still should not re-import
+	result3 := store.Reconcile(brokerOrders, nil, now.Add(6*time.Second))
+	if result3.UnknownBrokerOrders != 0 {
+		t.Fatalf("third run: expected 0 unknown broker orders, got %d", result3.UnknownBrokerOrders)
+	}
+}
