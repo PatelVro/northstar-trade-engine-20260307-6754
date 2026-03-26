@@ -468,7 +468,10 @@ func (c *IBKRClient) checkAuthStatus() {
 	json.Unmarshal(bAuth, &authResp)
 
 	if !authResp.Authenticated || statusAuth != 200 {
-		log.Printf("Debug: IBKR auth status false/failed: %d", statusAuth)
+		wasAuthenticated := c.IsAuthenticated()
+		if wasAuthenticated {
+			log.Printf(" IBKR: session LOST — authenticated=false (status %d). Re-login at https://localhost:5002 to resume.", statusAuth)
+		}
 		c.setAuthStatus(false)
 		return
 	}
@@ -499,7 +502,11 @@ func (c *IBKRClient) checkAuthStatus() {
 		}
 	}
 
+	wasAuthenticated := c.IsAuthenticated()
 	c.setAuthStatus(true)
+	if !wasAuthenticated {
+		log.Printf(" IBKR: session RECOVERED — authenticated=true, trading can resume")
+	}
 }
 
 // monitorSession continuously verifes the gateway auth status
