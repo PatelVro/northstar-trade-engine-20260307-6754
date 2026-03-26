@@ -95,3 +95,93 @@ func buildDecisionTestKlines(start time.Time, step time.Duration, count int, sta
 	}
 	return out
 }
+
+func TestNormalizeDecisionActions(t *testing.T) {
+	positions := []PositionInfo{
+		{Symbol: "LMT", Side: "long"},
+		{Symbol: "VZ", Side: "short"},
+	}
+
+	tests := []struct {
+		name     string
+		action   string
+		symbol   string
+		expected string
+	}{
+		{"close long position", "close", "LMT", "close_long"},
+		{"close short position", "close", "VZ", "close_short"},
+		{"sell maps to close_long", "sell", "LMT", "close_long"},
+		{"exit maps to close_short", "exit", "VZ", "close_short"},
+		{"buy maps to open_long", "buy", "AAPL", "open_long"},
+		{"long maps to open_long", "long", "MSFT", "open_long"},
+		{"short maps to open_short", "short", "TSLA", "open_short"},
+		{"open maps to open_long", "open", "GOOGL", "open_long"},
+		{"close unknown defaults to close_long", "close", "UNKNOWN", "close_long"},
+		{"valid action unchanged", "open_long", "AAPL", "open_long"},
+		{"hold unchanged", "hold", "LMT", "hold"},
+		{"wait unchanged", "wait", "AAPL", "wait"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			decisions := []Decision{{Symbol: tt.symbol, Action: tt.action}}
+			normalizeDecisionActions(decisions, positions)
+			if decisions[0].Action != tt.expected {
+				t.Errorf("got %q, want %q", decisions[0].Action, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParseFullDecisionSkipsInvalidDecisions(t *testing.T) {
+	// AI response with 3 decisions: 2 valid (hold/wait), 1 invalid action
+	aiResponse := `Analysis complete.
+[
+  {"symbol": "LMT", "action": "hold", "confidence": 80, "reasoning": "stable"},
+  {"symbol": "AAPL", "action": "bogus_action", "confidence": 90, "reasoning": "test"},
+  {"symbol": "VZ", "action": "wait", "confidence": 70, "reasoning": "waiting"}
+]`
+
+	result, err := parseFullDecisionResponseWithPositions(aiResponse, 100000, 1, 1, "equity", false, nil)
+	if err != nil {
+		t.Fatalf("should not error when some decisions are valid, got: %v", err)
+	}
+	if len(result.Decisions) != 2 {
+		t.Fatalf("expected 2 valid decisions, got %d", len(result.Decisions))
+	}
+	if result.Decisions[0].Symbol != "LMT" || result.Decisions[1].Symbol != "VZ" {
+		t.Errorf("unexpected decisions: %+v", result.Decisions)
+	}
+}
+
+func TestParseFullDecisionAllInvalidReturnsError(t *testing.T) {
+	aiResponse := `Analysis.
+[
+  {"symbol": "AAPL", "action": "yolo", "confidence": 90, "reasoning": "test"}
+]`
+
+	_, err := parseFullDecisionResponseWithPositions(aiResponse, 100000, 1, 1, "equity", false, nil)
+	if err == nil {
+		t.Fatal("expected error when all decisions are invalid")
+	}
+}
+
+func TestParseFullDecisionNormalizesBeforeValidation(t *testing.T) {
+	// GPT-4o says "close" for a long position — should be normalized to "close_long" and pass
+	aiResponse := `Closing losing position.
+[
+  {"symbol": "LMT", "action": "close", "confidence": 85, "reasoning": "bearish"}
+]`
+
+	positions := []PositionInfo{{Symbol: "LMT", Side: "long"}}
+	result, err := parseFullDecisionResponseWithPositions(aiResponse, 100000, 1, 1, "equity", false, positions)
+	if err != nil {
+		t.Fatalf("normalized close should not error: %v", err)
+	}
+	if len(result.Decisions) != 1 {
+		t.Fatalf("expected 1 decision, got %d", len(result.Decisions))
+	}
+	if result.Decisions[0].Action != "close_long" {
+		t.Errorf("expected close_long, got %q", result.Decisions[0].Action)
+	}
+}

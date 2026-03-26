@@ -133,8 +133,8 @@ func GetFullDecision(ctx *Context, mcpClient *mcp.Client) (*FullDecision, error)
 		return nil, fmt.Errorf("API call failed: %w", err)
 	}
 
-	// 4. Parse AI response
-	decision, err := parseFullDecisionResponse(aiResponse, ctx.Account.DecisionSizingEquity(), ctx.BTCETHLeverage, ctx.AltcoinLeverage, ctx.InstrumentType, ctx.IsReplay)
+	// 4. Parse AI response (with position context for action normalization)
+	decision, err := parseFullDecisionResponseWithPositions(aiResponse, ctx.Account.DecisionSizingEquity(), ctx.BTCETHLeverage, ctx.AltcoinLeverage, ctx.InstrumentType, ctx.IsReplay, ctx.Positions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse AI response: %w", err)
 	}
@@ -538,6 +538,11 @@ func buildUserPrompt(ctx *Context) string {
 
 // parseFullDecisionResponse parses AI's complete decision payload
 func parseFullDecisionResponse(aiResponse string, accountEquity float64, btcEthLeverage, altcoinLeverage int, instrumentType string, isReplay bool) (*FullDecision, error) {
+	return parseFullDecisionResponseWithPositions(aiResponse, accountEquity, btcEthLeverage, altcoinLeverage, instrumentType, isReplay, nil)
+}
+
+// parseFullDecisionResponseWithPositions parses AI decisions with position context for action normalization
+func parseFullDecisionResponseWithPositions(aiResponse string, accountEquity float64, btcEthLeverage, altcoinLeverage int, instrumentType string, isReplay bool, positions []PositionInfo) (*FullDecision, error) {
 	// 1. Extract Chain of Thought
 	cotTrace := extractCoTTrace(aiResponse)
 
@@ -550,18 +555,65 @@ func parseFullDecisionResponse(aiResponse string, accountEquity float64, btcEthL
 		}, fmt.Errorf("Failed to extract decisions: %w\n\n=== AI Chain of Thought ===\n%s", err, cotTrace)
 	}
 
-	// 3. Validate decisions
-	if err := validateDecisions(decisions, accountEquity, btcEthLeverage, altcoinLeverage, instrumentType, isReplay); err != nil {
-		return &FullDecision{
-			CoTTrace:  cotTrace,
-			Decisions: decisions,
-		}, fmt.Errorf("Decision payload validation failed: %w\n\n=== AI Chain of Thought ===\n%s", err, cotTrace)
+	// 3. Normalize action aliases (e.g. "close" → "close_long" based on position side)
+	normalizeDecisionActions(decisions, positions)
+
+	// 4. Validate decisions individually — skip invalid ones instead of failing all
+	var valid []Decision
+	var warnings []string
+	for i, d := range decisions {
+		if err := validateDecision(&d, accountEquity, btcEthLeverage, altcoinLeverage, instrumentType, isReplay); err != nil {
+			warnings = append(warnings, fmt.Sprintf("Decision #%d (%s %s) skipped: %v", i+1, d.Symbol, d.Action, err))
+			log.Printf("  [decision] skipping invalid decision #%d (%s %s): %v", i+1, d.Symbol, d.Action, err)
+		} else {
+			valid = append(valid, d)
+		}
 	}
 
-	return &FullDecision{
+	result := &FullDecision{
 		CoTTrace:  cotTrace,
-		Decisions: decisions,
-	}, nil
+		Decisions: valid,
+	}
+
+	if len(valid) == 0 && len(decisions) > 0 {
+		return result, fmt.Errorf("all %d decisions failed validation: %s\n\n=== AI Chain of Thought ===\n%s",
+			len(decisions), strings.Join(warnings, "; "), cotTrace)
+	}
+
+	return result, nil
+}
+
+// normalizeDecisionActions maps common AI action aliases to valid Northstar actions
+func normalizeDecisionActions(decisions []Decision, positions []PositionInfo) {
+	positionSides := make(map[string]string)
+	for _, p := range positions {
+		positionSides[p.Symbol] = p.Side
+	}
+
+	for i := range decisions {
+		d := &decisions[i]
+		action := strings.ToLower(strings.TrimSpace(d.Action))
+
+		switch action {
+		case "close", "sell", "exit":
+			// Infer close direction from existing position
+			if side, ok := positionSides[d.Symbol]; ok {
+				if side == "short" {
+					d.Action = "close_short"
+				} else {
+					d.Action = "close_long"
+				}
+			} else {
+				d.Action = "close_long" // Default assumption
+			}
+		case "buy", "long", "open":
+			d.Action = "open_long"
+		case "short":
+			d.Action = "open_short"
+		default:
+			d.Action = action // Keep as-is (already valid or will fail validation)
+		}
+	}
 }
 
 // extractCoTTrace extracts the prepended Chain of Thought reasoning array
@@ -609,7 +661,7 @@ func fixMissingQuotes(jsonStr string) string {
 	return jsonStr
 }
 
-// validateDecisions loops validation constraints across all array objects
+// validateDecisions loops validation constraints across all array objects (legacy all-or-nothing mode for tests)
 func validateDecisions(decisions []Decision, accountEquity float64, btcEthLeverage, altcoinLeverage int, instrumentType string, isReplay bool) error {
 	for i, decision := range decisions {
 		if err := validateDecision(&decision, accountEquity, btcEthLeverage, altcoinLeverage, instrumentType, isReplay); err != nil {
