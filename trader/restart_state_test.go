@@ -1,6 +1,7 @@
 package trader
 
 import (
+	"encoding/json"
 	"fmt"
 	"northstar/alerts"
 	"northstar/audit"
@@ -283,6 +284,44 @@ func TestDurableRuntimeStatePreservesUnresolvedOrderTruth(t *testing.T) {
 	}
 	if record.TruthAuthority != orders.TruthAuthorityUnresolved || record.TruthConfidence != orders.TruthConfidenceUnresolved || !record.NeedsReview {
 		t.Fatalf("expected unresolved truth metadata after restore, got %+v", record)
+	}
+}
+
+func TestRestartStateAtomicWriteNoTempFileOnSuccess(t *testing.T) {
+	cleanup := withTempWorkingDir(t)
+	defer cleanup()
+
+	cfg := AutoTraderConfig{ID: "atomic_write", Name: "Atomic Write", Mode: "paper", Broker: "ibkr", Exchange: "ibkr", StrategyMode: "momentum_only"}
+	trader := &restartStateTestTrader{orderStore: orders.NewStore()}
+	at := newRestartStateTestAutoTrader(cfg, trader)
+	at.setLatestAccountSummary(&AccountSummary{StrategyInitialCapital: 100000, StrategyEquity: 100000, AccountEquity: 100000, AvailableBalance: 100000, AccountingVersion: accountingVersion})
+
+	at.persistDurableRuntimeState("test_atomic_write")
+
+	statePath := at.durableRuntimeStatePath()
+
+	// The final state file must exist.
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("expected state file to exist after persist: %v", err)
+	}
+
+	// The temp file must not persist after a successful write.
+	tmpPath := statePath + ".tmp"
+	if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
+		t.Fatalf("expected temp file %s to be removed after successful write, but it exists", tmpPath)
+	}
+
+	// The written file must be valid JSON.
+	var state durableRuntimeState
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatalf("expected valid JSON in state file, got unmarshal error: %v", err)
+	}
+	if state.TraderID != cfg.ID {
+		t.Fatalf("expected trader_id %q in state file, got %q", cfg.ID, state.TraderID)
+	}
+	if state.Version != durableRuntimeStateVersion {
+		t.Fatalf("expected version %d, got %d", durableRuntimeStateVersion, state.Version)
 	}
 }
 

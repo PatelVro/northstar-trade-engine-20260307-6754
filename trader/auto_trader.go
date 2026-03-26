@@ -1569,6 +1569,11 @@ func (at *AutoTrader) runCycle() error {
 	}
 	at.clearBlockedCycle()
 
+	// Persist durable runtime state at the end of each cycle so that
+	// recent state survives a mid-session crash. Run in a goroutine to
+	// avoid blocking the next cycle on disk I/O.
+	go at.persistDurableRuntimeState("cycle_end")
+
 	return nil
 }
 

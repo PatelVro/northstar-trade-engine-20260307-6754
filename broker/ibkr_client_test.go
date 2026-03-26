@@ -221,3 +221,129 @@ func TestFetchPortfolioEndpointFailsFastOnHungAccountEndpoint(t *testing.T) {
 		t.Fatalf("expected transient classification for timeout, got %s", got)
 	}
 }
+
+func TestCheckAuthStatus_Authenticated(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/iserver/auth/status":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"authenticated":true,"connected":true}`))
+		case "/iserver/accounts":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"accounts":["DU123456"]}`))
+		case "/portfolio/accounts":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":"DU123456"}]`))
+		case "/portfolio/DU123456/meta":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := &IBKRClient{
+		BaseURL:    server.URL,
+		AccountID:  "DU123456",
+		HTTPClient: server.Client(),
+		conIDCache: make(map[string]int),
+	}
+
+	client.checkAuthStatus()
+
+	if !client.IsAuthenticated() {
+		t.Fatalf("expected authenticated=true after successful auth status check")
+	}
+}
+
+func TestCheckAuthStatus_NotAuthenticated(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/iserver/auth/status":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"authenticated":false,"connected":false}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := &IBKRClient{
+		BaseURL:    server.URL,
+		AccountID:  "DU123456",
+		HTTPClient: server.Client(),
+		conIDCache: make(map[string]int),
+	}
+
+	// Pre-set to true so we can confirm it gets flipped
+	client.setAuthStatus(true)
+	client.checkAuthStatus()
+
+	if client.IsAuthenticated() {
+		t.Fatalf("expected authenticated=false when gateway reports authenticated=false")
+	}
+}
+
+func TestSessionLostDetection_401Handling(t *testing.T) {
+	var authCheckCalls int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/iserver/auth/status":
+			atomic.AddInt32(&authCheckCalls, 1)
+			w.Header().Set("Content-Type", "application/json")
+			// Auth check also reports not authenticated (session truly dead)
+			_, _ = w.Write([]byte(`{"authenticated":false,"connected":false}`))
+		case "/some/endpoint":
+			// Return 401 to simulate session loss
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`unauthorized`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := &IBKRClient{
+		BaseURL:    server.URL,
+		AccountID:  "DU123456",
+		HTTPClient: server.Client(),
+		conIDCache: make(map[string]int),
+	}
+	client.setAuthStatus(true)
+
+	req, _ := http.NewRequest("GET", server.URL+"/some/endpoint", nil)
+	_, err := client.Do(req)
+
+	if err == nil {
+		t.Fatalf("expected error from 401 response")
+	}
+
+	var reqErr *IBKRRequestError
+	if !errors.As(err, &reqErr) {
+		t.Fatalf("expected IBKRRequestError, got %T: %v", err, err)
+	}
+	if reqErr.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d", reqErr.StatusCode)
+	}
+
+	if client.IsAuthenticated() {
+		t.Fatalf("expected AuthStatus=false after session loss via 401")
+	}
+
+	if atomic.LoadInt32(&authCheckCalls) == 0 {
+		t.Fatalf("expected checkAuthStatus to be called during 401 recovery attempt")
+	}
+}
+
+func TestClassifyIBKRError_401IsTransient(t *testing.T) {
+	err := NewIBKRHTTPError("GET", "/some/endpoint", 401, "unauthorized")
+	got := ClassifyIBKRError(err)
+	if got != IBKRErrorTransient {
+		t.Fatalf("expected 401 to be classified as transient, got %s", got)
+	}
+	if !IsRetryableIBKRError(err) {
+		t.Fatalf("expected 401 error to be retryable")
+	}
+}
