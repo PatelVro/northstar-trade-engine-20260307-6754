@@ -615,7 +615,11 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 					trader = NewSimTrader(config.InitialBalance, provider)
 					log.Printf(" [%s] Using Simulated Broker against IBKR Data", config.Name)
 				} else {
-					trader = NewIBKRTrader(config.IBKRGatewayURL, config.IBKRAccountID, config.IBKRSessionCookie, provider.(*market.IBKRProvider), config.InitialBalance)
+					ibkrProv, ok := provider.(*market.IBKRProvider)
+					if !ok {
+						return nil, fmt.Errorf("[%s] IBKR live trading requires data_provider='ibkr', but got '%s'", config.Name, config.DataProvider)
+					}
+					trader = NewIBKRTrader(config.IBKRGatewayURL, config.IBKRAccountID, config.IBKRSessionCookie, ibkrProv, config.InitialBalance)
 					log.Printf(" [%s] Using Interactive Brokers Live Execution Engine", config.Name)
 				}
 			} else if config.Exchange == "alpaca" {

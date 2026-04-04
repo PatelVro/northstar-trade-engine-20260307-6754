@@ -6,6 +6,7 @@ import (
 	"northstar/broker"
 	"northstar/market"
 	"northstar/orders"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -330,5 +331,31 @@ func TestCreateOrderDoesNotAssumeFillFromMissingOpenOrders(t *testing.T) {
 	}
 	if summary.ResolvedOrders != 0 {
 		t.Fatalf("expected no resolved orders from missing open-order heuristic, got %+v", summary)
+	}
+}
+
+// TestNewAutoTrader_IBKRLive_NonIBKRDataProvider_ReturnsError verifies that
+// configuring Exchange="ibkr" for live trading with a non-IBKR data provider
+// (e.g. "synthetic") returns a clear error rather than panicking with an unsafe
+// type assertion.
+func TestNewAutoTrader_IBKRLive_NonIBKRDataProvider_ReturnsError(t *testing.T) {
+	nonIBKRProviders := []string{"synthetic", "csv", "alpaca"}
+	for _, dp := range nonIBKRProviders {
+		t.Run(dp, func(t *testing.T) {
+			cfg := AutoTraderConfig{
+				Exchange:       "ibkr",
+				Broker:         "live",
+				InstrumentType: "equity",
+				DataProvider:   dp,
+				InitialBalance: 100_000,
+			}
+			_, err := NewAutoTrader(cfg)
+			if err == nil {
+				t.Fatalf("expected error when data_provider=%q is used with IBKR live trading", dp)
+			}
+			if !strings.Contains(err.Error(), "data_provider") {
+				t.Fatalf("expected error message to mention data_provider, got: %v", err)
+			}
+		})
 	}
 }
