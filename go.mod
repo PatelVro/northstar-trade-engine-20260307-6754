@@ -4,14 +4,16 @@ go 1.25.0
 
 require (
 	github.com/adshao/go-binance/v2 v2.8.7
+	github.com/alpacahq/alpaca-trade-api-go/v3 v3.9.1
 	github.com/ethereum/go-ethereum v1.16.5
 	github.com/gin-gonic/gin v1.11.0
+	github.com/gorilla/websocket v1.5.3
+	github.com/shopspring/decimal v1.4.0
 	github.com/sonirico/go-hyperliquid v0.17.0
 )
 
 require (
 	cloud.google.com/go v0.118.0 // indirect
-	github.com/alpacahq/alpaca-trade-api-go/v3 v3.9.1 // indirect
 	github.com/armon/go-radix v1.0.0 // indirect
 	github.com/bitly/go-simplejson v0.5.0 // indirect
 	github.com/bits-and-blooms/bitset v1.24.0 // indirect
@@ -34,7 +36,6 @@ require (
 	github.com/goccy/go-json v0.10.4 // indirect
 	github.com/goccy/go-yaml v1.18.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/holiman/uint256 v1.3.2 // indirect
 	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
@@ -43,7 +44,6 @@ require (
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mailru/easyjson v0.9.1 // indirect
-	github.com/markcheno/go-talib v0.0.0-20250114000313-ec55a20c902f // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421 // indirect
@@ -54,7 +54,6 @@ require (
 	github.com/quic-go/qpack v0.5.1 // indirect
 	github.com/quic-go/quic-go v0.54.0 // indirect
 	github.com/rs/zerolog v1.34.0 // indirect
-	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/sonirico/vago v0.9.0 // indirect
 	github.com/sonirico/vago/lol v0.0.0-20250901170347-2d1d82c510bd // indirect
 	github.com/supranational/blst v0.3.16 // indirect

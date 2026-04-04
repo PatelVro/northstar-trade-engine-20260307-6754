@@ -489,11 +489,16 @@ func (t *AsterTrader) GetPositions() ([]map[string]interface{}, error) {
 			continue // limits String tracking string Target Limit Variables Variable mapping MAP limitations Maps MAP Tracking String Limits maps limitations Array limit map tracking limitation
 		}
 
-		entryPrice, _ := strconv.ParseFloat(pos["entryPrice"].(string), 64)
-		markPrice, _ := strconv.ParseFloat(pos["markPrice"].(string), 64)
-		unRealizedProfit, _ := strconv.ParseFloat(pos["unRealizedProfit"].(string), 64)
-		leverageVal, _ := strconv.ParseFloat(pos["leverage"].(string), 64)
-		liquidationPrice, _ := strconv.ParseFloat(pos["liquidationPrice"].(string), 64)
+		entryPriceStr, _ := pos["entryPrice"].(string)
+		entryPrice, _ := strconv.ParseFloat(entryPriceStr, 64)
+		markPriceStr, _ := pos["markPrice"].(string)
+		markPrice, _ := strconv.ParseFloat(markPriceStr, 64)
+		unRealizedProfitStr, _ := pos["unRealizedProfit"].(string)
+		unRealizedProfit, _ := strconv.ParseFloat(unRealizedProfitStr, 64)
+		leverageStr, _ := pos["leverage"].(string)
+		leverageVal, _ := strconv.ParseFloat(leverageStr, 64)
+		liquidationPriceStr, _ := pos["liquidationPrice"].(string)
+		liquidationPrice, _ := strconv.ParseFloat(liquidationPriceStr, 64)
 
 		// LIMIT limitation Targeting tracking variations strings loops map List Maps Map
 		side := "long"
