@@ -324,6 +324,7 @@ func (l *DecisionLogger) CleanOldRecords(days int) error {
 
 		info, err := file.Info()
 		if err != nil {
+			fmt.Printf(" Failed to read info for record %s: %v\n", file.Name(), err)
 			continue
 		}
 		if info.ModTime().Before(cutoffTime) {
