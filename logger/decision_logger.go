@@ -3,7 +3,6 @@ package logger
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"os"
 	"path/filepath"
@@ -233,7 +232,7 @@ func (l *DecisionLogger) LogDecision(record *DecisionRecord) error {
 	}
 
 	// Render into file storage directly
-	if err := ioutil.WriteFile(filepath, data, 0644); err != nil {
+	if err := os.WriteFile(filepath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write decision record: %w", err)
 	}
 
@@ -243,7 +242,7 @@ func (l *DecisionLogger) LogDecision(record *DecisionRecord) error {
 
 // GetLatestRecords retrieves the most recent N records chronologically
 func (l *DecisionLogger) GetLatestRecords(n int) ([]*DecisionRecord, error) {
-	files, err := ioutil.ReadDir(l.logDir)
+	files, err := os.ReadDir(l.logDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed pulling log files directory: %w", err)
 	}
@@ -258,7 +257,7 @@ func (l *DecisionLogger) GetLatestRecords(n int) ([]*DecisionRecord, error) {
 		}
 
 		filepath := filepath.Join(l.logDir, file.Name())
-		data, err := ioutil.ReadFile(filepath)
+		data, err := os.ReadFile(filepath)
 		if err != nil {
 			continue
 		}
@@ -292,7 +291,7 @@ func (l *DecisionLogger) GetRecordByDate(date time.Time) ([]*DecisionRecord, err
 
 	var records []*DecisionRecord
 	for _, filepath := range files {
-		data, err := ioutil.ReadFile(filepath)
+		data, err := os.ReadFile(filepath)
 		if err != nil {
 			continue
 		}
@@ -312,7 +311,7 @@ func (l *DecisionLogger) GetRecordByDate(date time.Time) ([]*DecisionRecord, err
 func (l *DecisionLogger) CleanOldRecords(days int) error {
 	cutoffTime := time.Now().AddDate(0, 0, -days)
 
-	files, err := ioutil.ReadDir(l.logDir)
+	files, err := os.ReadDir(l.logDir)
 	if err != nil {
 		return fmt.Errorf("purge read evaluation directories failure: %w", err)
 	}
@@ -323,7 +322,11 @@ func (l *DecisionLogger) CleanOldRecords(days int) error {
 			continue
 		}
 
-		if file.ModTime().Before(cutoffTime) {
+		info, err := file.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoffTime) {
 			filepath := filepath.Join(l.logDir, file.Name())
 			if err := os.Remove(filepath); err != nil {
 				fmt.Printf(" Failed to delete old record %s: %v\n", file.Name(), err)
@@ -342,7 +345,7 @@ func (l *DecisionLogger) CleanOldRecords(days int) error {
 
 // GetStatistics outputs globally captured session properties metadata
 func (l *DecisionLogger) GetStatistics() (*Statistics, error) {
-	files, err := ioutil.ReadDir(l.logDir)
+	files, err := os.ReadDir(l.logDir)
 	if err != nil {
 		return nil, fmt.Errorf("log mapping validation failed statistics: %w", err)
 	}
@@ -355,7 +358,7 @@ func (l *DecisionLogger) GetStatistics() (*Statistics, error) {
 		}
 
 		filepath := filepath.Join(l.logDir, file.Name())
-		data, err := ioutil.ReadFile(filepath)
+		data, err := os.ReadFile(filepath)
 		if err != nil {
 			continue
 		}

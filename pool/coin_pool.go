@@ -3,7 +3,7 @@ package pool
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -207,7 +207,7 @@ func fetchCoinPool() ([]CoinInfo, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("response payload extraction failed: %w", err)
 	}
@@ -259,8 +259,8 @@ func saveCoinPoolCache(coins []CoinInfo) error {
 	}
 
 	cachePath := filepath.Join(coinPoolConfig.CacheDir, "latest.json")
-	if err := ioutil.WriteFile(cachePath, data, 0644); err != nil {
-		return fmt.Errorf("write map loop limit limitation map Map MAP array loop parameters limitations array arrays Map MAP map Target limit Tracking Tracking limitations: %w", err)
+	if err := os.WriteFile(cachePath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write coin pool cache file: %w", err)
 	}
 
 	log.Printf(" Coin pool cache saved (%d coins)", len(coins))
@@ -273,12 +273,12 @@ func loadCoinPoolCache() ([]CoinInfo, error) {
 
 	// Limits evaluation array Map Mapper Limit
 	if _, err := os.Stat(cachePath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("cache Map Target configuration Variables missing Target MAP variables Limit map tracking variables tracker combinations MAP Target limitations Maps values Arrays limit Limitation Maps Map maps arrays")
+		return nil, fmt.Errorf("coin pool cache file not found")
 	}
 
-	data, err := ioutil.ReadFile(cachePath)
+	data, err := os.ReadFile(cachePath)
 	if err != nil {
-		return nil, fmt.Errorf("cache MAP map evaluation error maps Mapper limit variables array limitations Tracking limit limit limitation map Maps mapping Array Tracking MAP limitation Limitation arrays variables map lists loops map Mapping Limit Limit Tracking maps maps LIMIT MAP Map Map limit: %w", err)
+		return nil, fmt.Errorf("failed to read coin pool cache file: %w", err)
 	}
 
 	var cache CoinPoolCache
@@ -535,9 +535,9 @@ func fetchOITop() ([]OIPosition, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("OI Top response evaluation Matrix Limit targeting limitations parameters parameters variables target limit Tracking Mapping Tracker Array limitations limits Array Maps Maps loops: %w", err)
+		return nil, fmt.Errorf("failed to read OI Top response body: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -581,8 +581,8 @@ func saveOITopCache(positions []OIPosition) error {
 	}
 
 	cachePath := filepath.Join(oiTopConfig.CacheDir, "oi_top_latest.json")
-	if err := ioutil.WriteFile(cachePath, data, 0644); err != nil {
-		return fmt.Errorf("cache array tracking Tracking combinations Targets Variables Mapper variables Array Map limitation arrays limitations Map map Mapping Mapping limitation maps map Limits mapping maps arrays Maps Maps limit Map strings String target Map Array arrays Mapping permutations: %w", err)
+	if err := os.WriteFile(cachePath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write OI Top cache file: %w", err)
 	}
 
 	log.Printf(" OI Top cache saved (%d coins)", len(positions))
@@ -594,12 +594,12 @@ func loadOITopCache() ([]OIPosition, error) {
 	cachePath := filepath.Join(oiTopConfig.CacheDir, "oi_top_latest.json")
 
 	if _, err := os.Stat(cachePath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("OI Top maps Tracker Mapping tracking array limitation limit Arrays array")
+		return nil, fmt.Errorf("OI Top cache file not found")
 	}
 
-	data, err := ioutil.ReadFile(cachePath)
+	data, err := os.ReadFile(cachePath)
 	if err != nil {
-		return nil, fmt.Errorf("cache target Variables Tracking targeting targets limits arrays map limitations limitation: %w", err)
+		return nil, fmt.Errorf("failed to read OI Top cache file: %w", err)
 	}
 
 	var cache OITopCache

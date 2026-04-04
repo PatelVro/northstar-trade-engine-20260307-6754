@@ -38,6 +38,8 @@ type IBKRClient struct {
 
 	portfolioWarmAccount string
 	portfolioWarmAt      time.Time
+
+	stopMonitor chan struct{} // closed to signal monitorSession to exit
 }
 
 type ibkrSecdefSection struct {
@@ -82,13 +84,19 @@ func NewIBKRClient(baseURL, accountID, sessionCookie string) *IBKRClient {
 			Timeout:   15 * time.Second,
 			Jar:       jar,
 		},
-		conIDCache: make(map[string]int),
+		conIDCache:  make(map[string]int),
+		stopMonitor: make(chan struct{}),
 	}
 
 	// Start background authentication monitor
 	go client.monitorSession()
 
 	return client
+}
+
+// Close shuts down the background session monitor goroutine.
+func (c *IBKRClient) Close() {
+	close(c.stopMonitor)
 }
 
 // Do executes an HTTP request with basic retry and pacing logic.
@@ -223,7 +231,10 @@ func (c *IBKRClient) initSSOBridge() ([]byte, int, error) {
 			c.setSessionCookie(fmt.Sprintf("%s=%s", cookie.Name, cookie.Value))
 		}
 	}
-	b, _ := io.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, 0, fmt.Errorf("reading response body for /iserver/auth/ssodh/init: %w", err)
+	}
 	return b, resp.StatusCode, nil
 }
 
@@ -253,7 +264,10 @@ func (c *IBKRClient) doPreflightWithTimeout(method, endpoint string, timeout tim
 			c.setSessionCookie(fmt.Sprintf("%s=%s", cookie.Name, cookie.Value))
 		}
 	}
-	b, _ := io.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, 0, fmt.Errorf("reading response body for %s %s: %w", method, endpoint, err)
+	}
 	return b, resp.StatusCode, nil
 }
 
@@ -329,8 +343,7 @@ func (c *IBKRClient) CheckSessionReadiness(accountID string) error {
 					var authResp2 struct {
 						Authenticated bool `json:"authenticated"`
 					}
-					json.Unmarshal(bAuth2, &authResp2)
-					if authResp2.Authenticated {
+					if err := json.Unmarshal(bAuth2, &authResp2); err == nil && authResp2.Authenticated {
 						log.Printf(" IBKR: SSO init succeeded — auth/status now reports authenticated")
 						c.setAuthStatus(true)
 						// iserver/accounts should work now too
@@ -538,7 +551,10 @@ func (c *IBKRClient) checkAuthStatus() {
 	var authResp struct {
 		Authenticated bool `json:"authenticated"`
 	}
-	json.Unmarshal(bAuth, &authResp)
+	if err := json.Unmarshal(bAuth, &authResp); err != nil {
+		c.setAuthStatus(false)
+		return
+	}
 
 	if !authResp.Authenticated || statusAuth != 200 {
 		// auth/status can lag behind actual session state (especially after Selenium login).
@@ -613,9 +629,14 @@ func (c *IBKRClient) monitorSession() {
 	c.checkAuthStatus()
 	c.tickleSession()
 
-	for range ticker.C {
-		c.checkAuthStatus()
-		c.tickleSession()
+	for {
+		select {
+		case <-c.stopMonitor:
+			return
+		case <-ticker.C:
+			c.checkAuthStatus()
+			c.tickleSession()
+		}
 	}
 }
 
@@ -706,7 +727,10 @@ func (c *IBKRClient) ResolveContract(symbol string) (int, error) {
 	}
 	defer resp.Body.Close()
 
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read secdef response for %s: %w", cleanSymbol, err)
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("IBKR secdef search returned status %d: %s", resp.StatusCode, string(bodyBytes))
