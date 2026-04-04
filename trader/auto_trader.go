@@ -594,7 +594,10 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 	// Determine data provider based on config
 	if !config.DemoMode && config.Exchange != "demo" {
 		if config.InstrumentType == "equity" {
-			if config.DataProvider == "csv" {
+			if config.DataProvider == "synthetic" {
+				provider = market.NewSyntheticProvider()
+				log.Printf(" [%s] Using Synthetic Market Data Provider (simulated)", config.Name)
+			} else if config.DataProvider == "csv" {
 				provider = market.NewCSVProvider(config.CSVDataDir)
 				log.Printf(" [%s] Using CSV Data Provider from %s", config.Name, config.CSVDataDir)
 			} else if config.DataProvider == "ibkr" {

@@ -164,7 +164,10 @@ func (t *IBKRTrader) fallbackBalance(reason error) map[string]interface{} {
 func (t *IBKRTrader) GetBalance() (map[string]interface{}, error) {
 	bodyBytes, err := t.Provider.Client.FetchPortfolioEndpoint(t.AccountID, "summary")
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch IBKR account summary: %w", err)
+		// Portfolio summary endpoint can be slow/unavailable after Selenium login.
+		// Use fallback balance so bootstrap can proceed — it will reconcile on next cycle.
+		log.Printf(" IBKR: portfolio/summary failed, using fallback balance: %v", err)
+		return t.fallbackBalance(err), nil
 	}
 	log.Printf(" IBKR summary response bytes=%d", len(bodyBytes))
 
@@ -228,7 +231,10 @@ func (t *IBKRTrader) GetBalance() (map[string]interface{}, error) {
 func (t *IBKRTrader) GetPositions() ([]map[string]interface{}, error) {
 	b, err := t.Provider.Client.FetchPortfolioEndpoint(t.AccountID, "positions")
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch IBKR positions: %w", err)
+		// Portfolio positions endpoint can be slow/unavailable after Selenium login.
+		// Return empty positions so bootstrap can proceed — will reconcile on next cycle.
+		log.Printf(" IBKR: portfolio/positions failed, returning empty positions: %v", err)
+		return []map[string]interface{}{}, nil
 	}
 
 	var rawPositions []map[string]interface{}

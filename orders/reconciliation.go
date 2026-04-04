@@ -418,6 +418,30 @@ func inferMissingBrokerState(record *Record, positions []PositionSnapshot, now t
 				NeedsReview: true,
 			}
 		}
+		// Broker-discovered orders that vanish with no fill evidence were cancelled
+		// by the broker — they should not block trading since we never submitted them.
+		if record.Source == "broker_discovered" {
+			return missingBrokerResolution{
+				Status:      StatusCancelled,
+				Authority:   TruthAuthorityReconciliationInferred,
+				Confidence:  TruthConfidenceHigh,
+				Message:     fmt.Sprintf("broker-discovered order %s removed from broker active list with no fill evidence; inferred cancelled", record.LocalID),
+				Repaired:    true,
+				NeedsReview: false,
+			}
+		}
+		// For locally-submitted orders, allow a grace period before blocking.
+		// After 10 minutes unresolved, infer cancellation to avoid permanent trading halt.
+		if now.Sub(record.SubmittedAt) > 10*time.Minute {
+			return missingBrokerResolution{
+				Status:      StatusCancelled,
+				Authority:   TruthAuthorityReconciliationInferred,
+				Confidence:  TruthConfidenceMedium,
+				Message:     fmt.Sprintf("local order %s missing at broker for over 10m with no fill evidence; inferred cancelled to unblock trading", record.LocalID),
+				Repaired:    true,
+				NeedsReview: true,
+			}
+		}
 		return missingBrokerResolution{
 			Status:      StatusUnknown,
 			Authority:   TruthAuthorityUnresolved,
@@ -446,6 +470,26 @@ func inferMissingBrokerState(record *Record, positions []PositionSnapshot, now t
 				Authority:   TruthAuthorityReconciliationInferred,
 				Confidence:  TruthConfidenceMedium,
 				Message:     fmt.Sprintf("exit order %s missing at broker active list; remaining position indicates partial fill %.4f", record.LocalID, filled),
+				Repaired:    true,
+				NeedsReview: true,
+			}
+		}
+		if record.Source == "broker_discovered" {
+			return missingBrokerResolution{
+				Status:      StatusCancelled,
+				Authority:   TruthAuthorityReconciliationInferred,
+				Confidence:  TruthConfidenceHigh,
+				Message:     fmt.Sprintf("broker-discovered exit order %s removed from broker active list; inferred cancelled", record.LocalID),
+				Repaired:    true,
+				NeedsReview: false,
+			}
+		}
+		if now.Sub(record.SubmittedAt) > 10*time.Minute {
+			return missingBrokerResolution{
+				Status:      StatusCancelled,
+				Authority:   TruthAuthorityReconciliationInferred,
+				Confidence:  TruthConfidenceMedium,
+				Message:     fmt.Sprintf("exit order %s missing at broker for over 10m with no close evidence; inferred cancelled to unblock trading", record.LocalID),
 				Repaired:    true,
 				NeedsReview: true,
 			}
@@ -479,6 +523,27 @@ func inferMissingBrokerState(record *Record, positions []PositionSnapshot, now t
 			NeedsReview: true,
 		}
 	default:
+		// Broker-discovered orders with unknown intent that vanish are just cancelled.
+		if record.Source == "broker_discovered" {
+			return missingBrokerResolution{
+				Status:      StatusCancelled,
+				Authority:   TruthAuthorityReconciliationInferred,
+				Confidence:  TruthConfidenceHigh,
+				Message:     fmt.Sprintf("broker-discovered order %s removed from broker active list; inferred cancelled", record.LocalID),
+				Repaired:    true,
+				NeedsReview: false,
+			}
+		}
+		if now.Sub(record.SubmittedAt) > 10*time.Minute {
+			return missingBrokerResolution{
+				Status:      StatusCancelled,
+				Authority:   TruthAuthorityReconciliationInferred,
+				Confidence:  TruthConfidenceMedium,
+				Message:     fmt.Sprintf("order %s missing at broker for over 10m; inferred cancelled to unblock trading", record.LocalID),
+				Repaired:    true,
+				NeedsReview: true,
+			}
+		}
 		return missingBrokerResolution{
 			Status:      StatusUnknown,
 			Authority:   TruthAuthorityUnresolved,

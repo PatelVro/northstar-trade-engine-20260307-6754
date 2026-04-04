@@ -243,3 +243,69 @@ func TestReconcileDoesNotReImportTerminalBrokerOrders(t *testing.T) {
 		t.Fatalf("third run: expected 0 unknown broker orders, got %d", result3.UnknownBrokerOrders)
 	}
 }
+
+func TestBrokerDiscoveredOrderDoesNotBlockTradingWhenMissing(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+
+	// Step 1: Import an unknown broker order (becomes broker_discovered)
+	result1 := store.Reconcile([]BrokerOrder{
+		{
+			OrderID:    "5555",
+			Symbol:     "MSFT",
+			Side:       "BUY",
+			Status:     StatusAccepted,
+			RawStatus:  "Submitted",
+			Quantity:   10,
+			ObservedAt: now,
+		},
+	}, nil, now)
+	if result1.ImportedOrders != 1 {
+		t.Fatalf("expected 1 import, got %d", result1.ImportedOrders)
+	}
+
+	// Step 2: Broker order disappears (empty broker list), no position evidence.
+	// After the inference waiting period, broker_discovered orders should be
+	// inferred as cancelled, NOT block trading.
+	later := now.Add(5 * time.Minute)
+	result2 := store.Reconcile(nil, nil, later)
+	if result2.TradingBlocked {
+		t.Fatalf("broker-discovered order missing from broker should NOT block trading; got TradingBlocked=true")
+	}
+
+	// Verify the order was marked cancelled
+	record := store.Lookup("", "5555")
+	if record == nil {
+		t.Fatalf("imported order not found in store")
+	}
+	if record.Status != StatusCancelled {
+		t.Fatalf("expected broker-discovered missing order to be cancelled, got %s", record.Status)
+	}
+	if record.Source != "broker_discovered" {
+		t.Fatalf("expected source broker_discovered, got %s", record.Source)
+	}
+}
+
+func TestLocalOrderUnresolvedExpiresAfter10Minutes(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+
+	// Submit a local order via RegisterSubmitted
+	localID := store.RegisterSubmitted(IntentEntryLong, "AAPL", "BUY", "", 10, now)
+
+	// Order disappears from broker after inference wait period but before 10m expiry
+	at6m := now.Add(6 * time.Minute)
+	result1 := store.Reconcile(nil, nil, at6m)
+	if !result1.TradingBlocked {
+		t.Fatalf("locally-submitted order should block trading within 10m grace period")
+	}
+
+	_ = localID
+
+	// After 10+ minutes, should auto-resolve as cancelled and unblock
+	at12m := now.Add(12 * time.Minute)
+	result2 := store.Reconcile(nil, nil, at12m)
+	if result2.TradingBlocked {
+		t.Fatalf("locally-submitted order should NOT block trading after 10m expiry")
+	}
+}
