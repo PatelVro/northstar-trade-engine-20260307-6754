@@ -123,7 +123,10 @@ func evaluateDailyLossRule(ctx evaluationContext, current orderSizing) (orderSiz
 	if !ctx.order.IsEntry {
 		return current, passRule("max_daily_loss", "daily loss gate skipped for exit order", current)
 	}
-	if ctx.config.MaxDailyLossPct <= 0 || ctx.account.DailyLossLimit >= 0 {
+	// Skip the rule only when the limit is exactly zero (equity baseline not yet
+	// established) rather than using >= 0, which would also skip the rule for a
+	// misconfigured positive limit value.
+	if ctx.config.MaxDailyLossPct <= 0 || ctx.account.DailyLossLimit == 0 {
 		return current, passRule("max_daily_loss", "daily loss limit not configured", current)
 	}
 	if ctx.account.DailyPnL <= ctx.account.DailyLossLimit {

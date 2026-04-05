@@ -127,7 +127,7 @@ func (at *AutoTrader) waitForLivePromotionApproval() error {
 		return nil
 	}
 
-	for at.isRunning {
+	for at.isRunning.Load() {
 		summary := at.runPromotionChecks()
 		at.logPromotionSummary(summary)
 		if summary.LiveTradingAllowed {

@@ -146,8 +146,8 @@ func newProtectionTestAutoTrader(cfg AutoTraderConfig, tr *protectionTestTrader)
 		positionPeakPnLPct: map[string]float64{},
 		positionNewsBias:   map[string]float64{},
 		plannedNewsBias:    map[string]float64{},
-		isRunning:          true,
 	}
+	at.isRunning.Store(true)
 	at.executionManager.SetOrderLookup(tr)
 	at.initializeBrokerRuntimeState()
 	at.initializeReadinessSummary()

@@ -25,8 +25,8 @@ func TestRunPromotionChecks_PaperModeIsNotApplicable(t *testing.T) {
 			InitialBalance: 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 	}
+	at.isRunning.Store(true)
 	at.initializePromotionSummary()
 
 	summary := at.runPromotionChecks()
@@ -153,7 +153,7 @@ func TestRunPromotionChecks_MissingPaperEvidenceFailsLivePromotion(t *testing.T)
 }
 
 func newPromotionLiveTrader() *AutoTrader {
-	return &AutoTrader{
+	at := &AutoTrader{
 		id:       "ibkr_live_trader",
 		name:     "IBKR Live Trader",
 		aiModel:  "deepseek",
@@ -177,10 +177,11 @@ func newPromotionLiveTrader() *AutoTrader {
 			PromotionMaxEvidenceAgeDays: 30,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 		startTime:      time.Now().Add(-20 * time.Minute),
 		lastResetTime:  time.Now().Add(-2 * time.Hour),
 	}
+	at.isRunning.Store(true)
+	return at
 }
 
 func promotionPassReadiness() ReadinessSummary {

@@ -145,7 +145,7 @@ func (at *AutoTrader) waitForPositionReconciliationBootstrap() error {
 	if !at.managesPositionReconciliation() {
 		return nil
 	}
-	for at.isRunning {
+	for at.isRunning.Load() {
 		if err := at.bootstrapPositionReconciliation(); err == nil {
 			return nil
 		} else {
@@ -161,7 +161,7 @@ func (at *AutoTrader) waitForPositionReconciliationBootstrap() error {
 }
 
 func (at *AutoTrader) startPositionReconciliationLoop() {
-	if !at.managesPositionReconciliation() || !at.isRunning {
+	if !at.managesPositionReconciliation() || !at.isRunning.Load() {
 		return
 	}
 
@@ -183,7 +183,7 @@ func (at *AutoTrader) runPositionReconciliationLoop() {
 		at.positionReconMu.Unlock()
 	}()
 
-	for at.isRunning {
+	for at.isRunning.Load() {
 		at.runPositionReconciliationCheck("periodic")
 		if !at.sleepWhileRunning(at.positionReconciliationInterval()) {
 			return

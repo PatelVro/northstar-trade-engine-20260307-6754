@@ -136,12 +136,12 @@ func TestExecuteDecisionWithRecord_RiskRejectStopsExecution(t *testing.T) {
 		trader:                mockTrader,
 		provider:              &riskTestProvider{price: 100, currentVolume: 20000, averageVolume: 50000},
 		initialBalance:        100000,
-		isRunning:             true,
 		dailyStartEquity:      100000,
 		dailyPnL:              0,
 		positionFirstSeenTime: map[string]int64{},
 		riskEngine:            risk.NewEngine(buildRiskConfig(AutoTraderConfig{MaxDailyLossPct: 0.05, RiskPerTradePct: 0.01, MaxGrossExposure: 1.0, MaxPositionPct: 0.20, MaxConcurrentPos: 3, MinLiquidityUSD: 1_000_000, MaxParticipationRate: 0.15})),
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", CheckedAt: time.Now(), TradingAllowed: true})
 
 	actionRecord := &logger.DecisionAction{Action: "open_long", Symbol: "AAPL"}
@@ -199,11 +199,11 @@ func TestExecuteDecisionWithRecord_RiskReduceSizeAdjustsExecutionQuantity(t *tes
 		trader:                mockTrader,
 		provider:              &riskTestProvider{price: 100, currentVolume: 20000, averageVolume: 50000},
 		initialBalance:        100000,
-		isRunning:             true,
 		dailyStartEquity:      100000,
 		positionFirstSeenTime: map[string]int64{},
 		riskEngine:            risk.NewEngine(buildRiskConfig(cfg)),
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", CheckedAt: time.Now(), TradingAllowed: true})
 
 	actionRecord := &logger.DecisionAction{Action: "open_long", Symbol: "AAPL"}
@@ -277,12 +277,12 @@ func TestExecuteDecisionWithRecord_PortfolioSectorRiskRejectStopsExecution(t *te
 		trader:                mockTrader,
 		provider:              &riskTestProvider{price: 100, currentVolume: 20000, averageVolume: 50000},
 		initialBalance:        100000,
-		isRunning:             true,
 		dailyStartEquity:      100000,
 		peakEquitySeen:        100000,
 		positionFirstSeenTime: map[string]int64{},
 		riskEngine:            risk.NewEngine(buildRiskConfig(cfg)),
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", CheckedAt: time.Now(), TradingAllowed: true})
 
 	actionRecord := &logger.DecisionAction{Action: "open_long", Symbol: "MSFT"}
@@ -340,7 +340,6 @@ func TestExecuteDecisionWithRecord_KillSwitchBlocksExecutionSubmission(t *testin
 		trader:                mockTrader,
 		provider:              &riskTestProvider{price: 100, currentVolume: 20000, averageVolume: 50000},
 		initialBalance:        100000,
-		isRunning:             true,
 		dailyStartEquity:      100000,
 		positionFirstSeenTime: map[string]int64{},
 		riskEngine:            risk.NewEngine(buildRiskConfig(cfg)),
@@ -351,6 +350,7 @@ func TestExecuteDecisionWithRecord_KillSwitchBlocksExecutionSubmission(t *testin
 			Message:   "operator kill switch active",
 		},
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", CheckedAt: time.Now(), TradingAllowed: true})
 	at.initializeBrokerRuntimeState()
 
@@ -406,7 +406,6 @@ func TestExecuteDecisionWithRecord_DuplicateIntentSuppressedByExecutionManager(t
 		trader:                mockTrader,
 		provider:              &riskTestProvider{price: 100, currentVolume: 20000, averageVolume: 50000},
 		initialBalance:        100000,
-		isRunning:             true,
 		dailyStartEquity:      100000,
 		positionFirstSeenTime: map[string]int64{},
 		riskEngine:            risk.NewEngine(buildRiskConfig(cfg)),
@@ -415,6 +414,7 @@ func TestExecuteDecisionWithRecord_DuplicateIntentSuppressedByExecutionManager(t
 			StaleAfter:   time.Minute,
 		}),
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", CheckedAt: time.Now(), TradingAllowed: true})
 	at.initializeBrokerRuntimeState()
 

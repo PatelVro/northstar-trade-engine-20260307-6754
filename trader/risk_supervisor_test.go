@@ -19,9 +19,9 @@ func TestCurrentTradingGateDecision_ReduceOnlyBlocksEntriesButAllowsExits(t *tes
 			MaxDrawdown:                    10.0,
 			SupervisorReduceOnlyOnDrawdown: true,
 		},
-		isRunning:      true,
 		peakEquitySeen: 100000,
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", CheckedAt: time.Now(), TradingAllowed: true})
 	at.setLatestAccountSummary(&AccountSummary{
 		AccountingVersion:      accountingVersion,
@@ -73,10 +73,10 @@ func TestGetOperatorStatus_IncludesRiskSupervisorSummary(t *testing.T) {
 			InitialBalance:                 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 		startTime:      time.Now().Add(-15 * time.Minute),
 		peakEquitySeen: 100000,
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", CheckedAt: time.Now(), TradingAllowed: true})
 	at.setLatestAccountSummary(&AccountSummary{
 		AccountingVersion:      accountingVersion,

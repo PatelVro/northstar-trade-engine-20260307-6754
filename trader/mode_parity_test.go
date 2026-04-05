@@ -41,7 +41,6 @@ func newModeParityTestTrader(t *testing.T, mode, brokerName string) *AutoTrader 
 			BenchmarkSymbols: []string{"SPY", "QQQ"},
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 		eventJournal: audit.NewJournal(filepath.Join(dir, "output", "audit"), audit.Metadata{
 			TraderID:     "mode_parity_trader",
 			TraderName:   "Mode Parity Trader",
@@ -50,6 +49,7 @@ func newModeParityTestTrader(t *testing.T, mode, brokerName string) *AutoTrader 
 			StrategyMode: "momentum_only",
 		}),
 	}
+	trader.isRunning.Store(true)
 	trader.initializeBrokerRuntimeState()
 	trader.initializeDataQualityState()
 	trader.initializeRestartRecoveryState()

@@ -474,15 +474,16 @@ func TestSetLocalPositionSnapshots_SetsSourceAndTimestamp(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func newMinimalReconAutoTrader() *AutoTrader {
-	return &AutoTrader{
+	at := &AutoTrader{
 		id:                     "test",
 		name:                   "Test",
 		trader:                 &positionReconTestTrader{},
 		alertManager:           alerts.NewManager(),
 		config:                 AutoTraderConfig{ID: "test", Name: "Test", Mode: "paper", Broker: "ibkr"},
 		localPositionSnapshots: make(map[string]positions.Snapshot),
-		isRunning:              true,
 	}
+	at.isRunning.Store(true)
+	return at
 }
 
 type testError string

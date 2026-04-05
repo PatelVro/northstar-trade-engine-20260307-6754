@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -192,7 +193,7 @@ type AutoTrader struct {
 	peakEquitySeen                        float64
 	lastResetTime                         time.Time
 	stopUntil                             time.Time
-	isRunning                             bool
+	isRunning                             atomic.Bool
 	startTime                             time.Time // System start time
 	callCount                             int       // AI invocation cycle counter
 	runDone                               chan struct{}
@@ -719,7 +720,6 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 		lastResetTime:         time.Now(),
 		startTime:             time.Now(),
 		callCount:             0,
-		isRunning:             false,
 		positionFirstSeenTime: make(map[string]int64),
 		positionEntryCycle:    make(map[string]int),
 		positionPeakPnLPct:    make(map[string]float64),
@@ -789,7 +789,7 @@ func (at *AutoTrader) Run() error {
 		return at.RunBacktest(at.config.MaxCycles)
 	}
 
-	at.isRunning = true
+	at.isRunning.Store(true)
 	at.runDone = make(chan struct{})
 	defer close(at.runDone)
 	at.startPaperSessionReporting(time.Now())
@@ -836,11 +836,11 @@ func (at *AutoTrader) Run() error {
 		log.Printf("  Evidence warnings: %s", strings.Join(modeParity.Warnings, "; "))
 	}
 
-	for at.isRunning {
+	for at.isRunning.Load() {
 		if err := at.runCycle(); err != nil {
 			log.Printf(" Execution failed: %v", err)
 		}
-		if !at.isRunning {
+		if !at.isRunning.Load() {
 			break
 		}
 		sleepDuration := at.config.ScanInterval
@@ -871,22 +871,22 @@ func (at *AutoTrader) RunBacktest(maxCycles int) error {
 		return fmt.Errorf("max backtest cycles must be greater than 0")
 	}
 
-	at.isRunning = true
+	at.isRunning.Store(true)
 	at.backtestMode = true
 	defer func() { at.backtestMode = false }()
 	log.Printf(" Backtest mode started (%d cycles)", maxCycles)
 	if err := at.waitForKillSwitchClear(); err != nil {
-		at.isRunning = false
+		at.isRunning.Store(false)
 		return err
 	}
 	summary := at.runReadinessChecks()
 	at.logReadinessSummary(summary)
 	if !summary.TradingAllowed {
-		at.isRunning = false
+		at.isRunning.Store(false)
 		return fmt.Errorf("startup readiness blocked backtest start: %s", summary.Message)
 	}
 
-	for at.isRunning && at.callCount < maxCycles {
+	for at.isRunning.Load() && at.callCount < maxCycles {
 		if err := at.runCycle(); err != nil {
 			log.Printf(" Backtest cycle error: %v", err)
 		}
@@ -899,7 +899,7 @@ func (at *AutoTrader) RunBacktest(maxCycles int) error {
 
 // Stop shuts down the auto trader
 func (at *AutoTrader) Stop() {
-	at.isRunning = false
+	at.isRunning.Store(false)
 	done := at.runDone
 
 	type summarizer interface {
@@ -1014,7 +1014,7 @@ func (at *AutoTrader) prepareReplayStep() bool {
 	cursor, maxCursor := controller.ReplayProgress()
 	log.Printf(" Replay dataset exhausted at %d/%d bars, stopping backtest", cursor, maxCursor)
 	if at.backtestMode {
-		at.isRunning = false
+		at.isRunning.Store(false)
 	} else {
 		at.Stop()
 	}
@@ -2325,7 +2325,7 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 		"trader_name":               at.name,
 		"ai_model":                  at.aiModel,
 		"exchange":                  at.exchange,
-		"is_running":                at.isRunning,
+		"is_running":                at.isRunning.Load(),
 		"start_time":                at.startTime.Format(time.RFC3339),
 		"runtime_minutes":           int(time.Since(at.startTime).Minutes()),
 		"broker_state":              brokerStatus.State,

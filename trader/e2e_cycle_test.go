@@ -91,12 +91,12 @@ func TestE2E_MixedValidInvalidDecisions_ValidOnesExecute(t *testing.T) {
 		trader:                mockTrader,
 		provider:              &riskTestProvider{price: 100, currentVolume: 20000, averageVolume: 50000},
 		initialBalance:        equity,
-		isRunning:             true,
 		dailyStartEquity:      equity,
 		positionFirstSeenTime: map[string]int64{},
 		riskEngine:            risk.NewEngine(buildRiskConfig(cfg)),
 		executionManager:      execution.NewManager(execution.Config{}),
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", CheckedAt: time.Now(), TradingAllowed: true})
 	at.initializeBrokerRuntimeState()
 
@@ -150,7 +150,6 @@ func TestE2E_MarketClosedDetection_BlocksTradingAndBacksOff(t *testing.T) {
 		id:        "e2e-market-closed",
 		name:      "E2E Market Closed",
 		exchange:  "alpaca",
-		isRunning: true,
 		config: AutoTraderConfig{
 			Mode:           "paper",
 			Broker:         "sim",
@@ -158,6 +157,7 @@ func TestE2E_MarketClosedDetection_BlocksTradingAndBacksOff(t *testing.T) {
 			ScanInterval:   5 * time.Minute,
 		},
 	}
+	at.isRunning.Store(true)
 
 	// 1. Verify isMarketClosedReason correctly detects "market is closed" variants
 	closedReasons := []string{
@@ -242,12 +242,12 @@ func TestE2E_BrokerDisconnectMidCycle_NoCascadeFailure(t *testing.T) {
 		trader:                failingTrader,
 		provider:              &riskTestProvider{price: 100, currentVolume: 20000, averageVolume: 50000},
 		initialBalance:        100000,
-		isRunning:             true,
 		dailyStartEquity:      100000,
 		positionFirstSeenTime: map[string]int64{},
 		riskEngine:            risk.NewEngine(buildRiskConfig(cfg)),
 		executionManager:      execution.NewManager(execution.Config{}),
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", CheckedAt: time.Now(), TradingAllowed: true})
 	at.initializeBrokerRuntimeState()
 
@@ -349,9 +349,9 @@ func TestE2E_PositionCountVsMaxConcurrentPositions(t *testing.T) {
 				InstrumentType:  "equity",
 				MaxConcurrentPos: 3,
 			},
-			isRunning:      true,
 			peakEquitySeen: 100000,
 		}
+		at.isRunning.Store(true)
 		at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "ok", CheckedAt: time.Now(), TradingAllowed: true})
 		at.setLatestAccountSummary(&AccountSummary{
 			AccountingVersion:      accountingVersion,
@@ -383,9 +383,9 @@ func TestE2E_PositionCountVsMaxConcurrentPositions(t *testing.T) {
 				InstrumentType:  "equity",
 				MaxConcurrentPos: 3,
 			},
-			isRunning:      true,
 			peakEquitySeen: 100000,
 		}
+		at.isRunning.Store(true)
 		at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "ok", CheckedAt: time.Now(), TradingAllowed: true})
 		at.setLatestAccountSummary(&AccountSummary{
 			AccountingVersion:      accountingVersion,
@@ -414,9 +414,9 @@ func TestE2E_PositionCountVsMaxConcurrentPositions(t *testing.T) {
 				InstrumentType:  "equity",
 				MaxConcurrentPos: 3,
 			},
-			isRunning:      true,
 			peakEquitySeen: 100000,
 		}
+		at.isRunning.Store(true)
 		at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "ok", CheckedAt: time.Now(), TradingAllowed: true})
 		at.setLatestAccountSummary(&AccountSummary{
 			AccountingVersion:      accountingVersion,
@@ -458,9 +458,9 @@ func TestE2E_GrossExposureLimit_BlocksNewEntries(t *testing.T) {
 				MaxGrossExposure: 1.0, // 100% of equity
 				MaxConcurrentPos: 10,
 			},
-			isRunning:      true,
 			peakEquitySeen: 100000,
 		}
+		at.isRunning.Store(true)
 		at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "ok", CheckedAt: time.Now(), TradingAllowed: true})
 		at.setLatestAccountSummary(&AccountSummary{
 			AccountingVersion:      accountingVersion,
@@ -490,9 +490,9 @@ func TestE2E_GrossExposureLimit_BlocksNewEntries(t *testing.T) {
 				MaxGrossExposure: 1.0, // 100% of equity
 				MaxConcurrentPos: 10,
 			},
-			isRunning:      true,
 			peakEquitySeen: 100000,
 		}
+		at.isRunning.Store(true)
 		at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "ok", CheckedAt: time.Now(), TradingAllowed: true})
 		at.setLatestAccountSummary(&AccountSummary{
 			AccountingVersion:      accountingVersion,
@@ -529,9 +529,9 @@ func TestE2E_GrossExposureLimit_BlocksNewEntries(t *testing.T) {
 				MaxGrossExposure: 1.0,
 				MaxConcurrentPos: 10,
 			},
-			isRunning:      true,
 			peakEquitySeen: 100000,
 		}
+		at.isRunning.Store(true)
 		at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "ok", CheckedAt: time.Now(), TradingAllowed: true})
 		at.setLatestAccountSummary(&AccountSummary{
 			AccountingVersion:      accountingVersion,

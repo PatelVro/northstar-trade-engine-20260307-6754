@@ -56,6 +56,7 @@ type restartRecoverySummary struct {
 	RestoredLocalPositions  int
 	RestoredPendingProtect  int
 	RestoredShadowPositions int
+	ConsecutiveSaveFailures int
 }
 
 type orderLifecycleStateCarrier interface {
@@ -263,6 +264,7 @@ func (at *AutoTrader) persistDurableRuntimeState(reason string) {
 	at.restartRecoveryState.StatePresent = true
 	at.restartRecoveryState.LastPersistedAt = state.SavedAt
 	at.restartRecoveryState.LastSaveError = ""
+	at.restartRecoveryState.ConsecutiveSaveFailures = 0
 	if at.restartRecoveryState.Corrupt {
 		at.restartRecoveryState.TradingBlocked = true
 	} else if recoveredFromSaveFailure && !at.restartRecoveryState.PendingReconciliation {
@@ -356,21 +358,41 @@ func (at *AutoTrader) markRestartRecoveryLoadFailure(path string, err error) {
 	})
 }
 
+// maxConsecutiveSaveFailuresBeforeBlock is the number of consecutive state
+// persistence failures allowed before trading is blocked. A single transient
+// I/O error (disk spike, NFS hiccup) should not immediately halt all trading.
+const maxConsecutiveSaveFailuresBeforeBlock = 3
+
 func (at *AutoTrader) markRestartRecoverySaveFailure(path string, err error) {
 	message := strings.TrimSpace(err.Error())
 	at.restartRecoveryMu.Lock()
 	at.restartRecoveryState.Available = true
-	at.restartRecoveryState.Status = "blocked"
 	at.restartRecoveryState.StatePath = path
-	at.restartRecoveryState.TradingBlocked = true
-	at.restartRecoveryState.Message = "durable runtime state persistence failed; trading remains blocked"
 	at.restartRecoveryState.LastSaveError = message
+	at.restartRecoveryState.ConsecutiveSaveFailures++
+	consecutiveFailures := at.restartRecoveryState.ConsecutiveSaveFailures
+
+	// Only block trading after several consecutive failures to tolerate transient
+	// disk errors. A single write timeout must not halt all position management.
+	if consecutiveFailures >= maxConsecutiveSaveFailuresBeforeBlock {
+		at.restartRecoveryState.Status = "blocked"
+		at.restartRecoveryState.TradingBlocked = true
+		at.restartRecoveryState.Message = "durable runtime state persistence failed; trading remains blocked"
+	} else {
+		at.restartRecoveryState.Message = fmt.Sprintf("durable runtime state persistence failed (%d/%d attempts); will retry", consecutiveFailures, maxConsecutiveSaveFailuresBeforeBlock)
+	}
 	summary := at.restartRecoveryState
 	at.restartRecoveryMu.Unlock()
-	log.Printf(" [%s] Durable runtime state persistence blocked trading: %s", at.name, message)
-	at.journalRestartRecoveryEvent("restart_state_persist_failed", audit.JournalSeverityCritical, summary, map[string]interface{}{
-		"error": message,
-	})
+
+	if consecutiveFailures >= maxConsecutiveSaveFailuresBeforeBlock {
+		log.Printf(" [%s] Durable runtime state persistence blocked trading after %d consecutive failures: %s", at.name, consecutiveFailures, message)
+		at.journalRestartRecoveryEvent("restart_state_persist_failed", audit.JournalSeverityCritical, summary, map[string]interface{}{
+			"error":               message,
+			"consecutive_failures": consecutiveFailures,
+		})
+	} else {
+		log.Printf(" [%s] Durable runtime state persistence failed (attempt %d/%d): %s", at.name, consecutiveFailures, maxConsecutiveSaveFailuresBeforeBlock, message)
+	}
 }
 
 func (at *AutoTrader) resolveRestartRecoveryAfterBrokerReconciliation(message string) {
