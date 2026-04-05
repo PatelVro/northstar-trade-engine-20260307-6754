@@ -294,7 +294,8 @@ func healthyBrokerStatus() brokerRuntimeSnapshot {
 }
 
 func TestCurrentRuntimeCondition_HealthyCycleIsTradable(t *testing.T) {
-	at := &AutoTrader{isRunning: true}
+	at := &AutoTrader{}
+	at.isRunning.Store(true)
 	view := at.currentRuntimeConditionState(
 		healthyGate(),
 		brokerTruthSummary{},
@@ -313,7 +314,8 @@ func TestCurrentRuntimeCondition_HealthyCycleIsTradable(t *testing.T) {
 }
 
 func TestCurrentRuntimeCondition_BlockedSymbolsDoNotHardBlockCycle(t *testing.T) {
-	at := &AutoTrader{isRunning: true}
+	at := &AutoTrader{}
+	at.isRunning.Store(true)
 	dq := OperatorDataQualitySummary{BlockedSymbolsCount: 3}
 	view := at.currentRuntimeConditionState(
 		healthyGate(),
@@ -336,7 +338,8 @@ func TestCurrentRuntimeCondition_BlockedSymbolsDoNotHardBlockCycle(t *testing.T)
 }
 
 func TestCurrentRuntimeCondition_FeedDelayedHardBlocksCycle(t *testing.T) {
-	at := &AutoTrader{isRunning: true}
+	at := &AutoTrader{}
+	at.isRunning.Store(true)
 	dq := OperatorDataQualitySummary{FeedDelayed: true, FeedSummary: "market data feed delayed"}
 	view := at.currentRuntimeConditionState(
 		healthyGate(),
@@ -356,7 +359,8 @@ func TestCurrentRuntimeCondition_FeedDelayedHardBlocksCycle(t *testing.T) {
 }
 
 func TestCurrentRuntimeCondition_BrokerDegradedHardBlocksCycle(t *testing.T) {
-	at := &AutoTrader{isRunning: true}
+	at := &AutoTrader{}
+	at.isRunning.Store(true)
 	view := at.currentRuntimeConditionState(
 		healthyGate(),
 		brokerTruthSummary{},
@@ -372,7 +376,8 @@ func TestCurrentRuntimeCondition_BrokerDegradedHardBlocksCycle(t *testing.T) {
 }
 
 func TestCurrentRuntimeCondition_EntriesBlockedHardBlocksCycle(t *testing.T) {
-	at := &AutoTrader{isRunning: true}
+	at := &AutoTrader{}
+	at.isRunning.Store(true)
 	gate := tradingGateDecision{
 		Mode:           risk.SupervisorModeBlockNewEntries,
 		TradingAllowed: true,
@@ -395,7 +400,8 @@ func TestCurrentRuntimeCondition_EntriesBlockedHardBlocksCycle(t *testing.T) {
 }
 
 func TestCurrentRuntimeCondition_KillSwitchOverridesEverything(t *testing.T) {
-	at := &AutoTrader{isRunning: true}
+	at := &AutoTrader{}
+	at.isRunning.Store(true)
 	view := at.currentRuntimeConditionState(
 		healthyGate(),
 		brokerTruthSummary{},
@@ -414,7 +420,8 @@ func TestCurrentRuntimeCondition_KillSwitchOverridesEverything(t *testing.T) {
 }
 
 func TestCurrentRuntimeCondition_RestartRecoveryBlocksCycle(t *testing.T) {
-	at := &AutoTrader{isRunning: true}
+	at := &AutoTrader{}
+	at.isRunning.Store(true)
 	view := at.currentRuntimeConditionState(
 		healthyGate(),
 		brokerTruthSummary{},
@@ -430,7 +437,8 @@ func TestCurrentRuntimeCondition_RestartRecoveryBlocksCycle(t *testing.T) {
 }
 
 func TestCurrentRuntimeCondition_BrokerTruthBlocksCycle(t *testing.T) {
-	at := &AutoTrader{isRunning: true}
+	at := &AutoTrader{}
+	at.isRunning.Store(true)
 	view := at.currentRuntimeConditionState(
 		healthyGate(),
 		brokerTruthSummary{TradingBlocked: true, Message: "broker truth unverified"},

@@ -85,7 +85,7 @@ func (at *AutoTrader) getReadinessSummary() ReadinessSummary {
 }
 
 func (at *AutoTrader) waitForStartupReadiness() error {
-	for at.isRunning {
+	for at.isRunning.Load() {
 		summary := at.runReadinessChecks()
 		at.logReadinessSummary(summary)
 		if summary.TradingAllowed {

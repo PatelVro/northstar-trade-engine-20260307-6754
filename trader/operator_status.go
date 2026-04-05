@@ -650,7 +650,7 @@ func (at *AutoTrader) GetOperatorStatus() OperatorStatusSummary {
 	}
 
 	runtimeSummary := OperatorRuntimeSummary{
-		IsRunning:         at.isRunning,
+		IsRunning: at.isRunning.Load(),
 		StartTime:         startTime,
 		RuntimeMinutes:    runtimeMinutesSince(at.startTime),
 		CallCount:         at.callCount,

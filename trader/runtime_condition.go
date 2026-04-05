@@ -151,7 +151,7 @@ func (at *AutoTrader) currentRuntimeConditionState(
 	view := runtimeConditionStateView{
 		State:         RuntimeConditionHealthy,
 		Severity:      incidents.SeverityInfo,
-		CycleTradable: at.isRunning && gate.TradingAllowed && gate.EntriesAllowed,
+		CycleTradable: at.isRunning.Load() && gate.TradingAllowed && gate.EntriesAllowed,
 		Reason:        "runtime healthy and cycle tradable",
 		Causes:        []string{},
 	}

@@ -91,8 +91,8 @@ func TestKillSwitchActivationWritesJournalMarker(t *testing.T) {
 			Broker:       "sim",
 			StrategyMode: "momentum_only",
 		}),
-		isRunning: true,
 	}
+	at.isRunning.Store(true)
 	at.initializeKillSwitchState()
 
 	summary := at.runKillSwitchCheck("test")
@@ -135,7 +135,6 @@ func TestOperatorStatusIncludesEventJournalSummary(t *testing.T) {
 			ScanInterval:   time.Minute,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 		startTime:      time.Now().Add(-time.Minute),
 		eventJournal: audit.NewJournal(filepath.Join("output", "audit"), audit.Metadata{
 			TraderID:     "status_journal_trader",
@@ -145,6 +144,7 @@ func TestOperatorStatusIncludesEventJournalSummary(t *testing.T) {
 			StrategyMode: "momentum_only",
 		}),
 	}
+	at.isRunning.Store(true)
 	at.initializeBrokerRuntimeState()
 	at.setReadinessSummary(ReadinessSummary{
 		Status:         ReadinessPass,
@@ -215,8 +215,8 @@ func TestJournalTradingGateTransitionsAlsoCaptureBrokerTruthState(t *testing.T) 
 			Broker:       "ibkr",
 			StrategyMode: "momentum_only",
 		}),
-		isRunning: true,
 	}
+	at.isRunning.Store(true)
 	at.initializeBrokerRuntimeState()
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "ready", CheckedAt: now, TradingAllowed: true})
 	at.positionReconSummary = freshPositionReconSummary(now)

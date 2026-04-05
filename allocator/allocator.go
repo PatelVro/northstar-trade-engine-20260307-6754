@@ -2,6 +2,7 @@ package allocator
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strings"
@@ -228,12 +229,19 @@ func regimeAdjustment(sel *selector.Selection) float64 {
 	case selector.StrategyFamilyDefensive:
 		return 0.65
 	default:
-		return 0
+		// Unknown strategy family: use a conservative non-zero scale rather
+		// than returning 0, which would silently zero out all position sizing
+		// and block all trades without any visible error.
+		log.Printf("WARN: unknown strategy family %q in regimeAdjustment; using 0.50", sel.SelectedFamily)
+		return 0.50
 	}
 }
 
 func drawdownAdjustment(account AccountSnapshot, cfg Config) float64 {
 	if account.PeakStrategyEquity <= 0 || account.StrategyEquity <= 0 || account.StrategyEquity >= account.PeakStrategyEquity {
+		return 1.0
+	}
+	if cfg.DrawdownThrottleStartPct <= 0 {
 		return 1.0
 	}
 	drawdown := (account.PeakStrategyEquity - account.StrategyEquity) / account.PeakStrategyEquity

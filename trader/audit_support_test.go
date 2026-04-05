@@ -128,7 +128,6 @@ func TestEnrichDecisionRecordExecutionTruthFromLifecycle(t *testing.T) {
 func TestEnrichDecisionRecordRuntimeTruthAddsConditionAndLatestAccount(t *testing.T) {
 	now := time.Now().UTC()
 	at := &AutoTrader{
-		isRunning: true,
 		trader: &auditSupportLookupTrader{
 			record: &orders.Record{
 				LocalID:         "local-123",
@@ -167,6 +166,7 @@ func TestEnrichDecisionRecordRuntimeTruthAddsConditionAndLatestAccount(t *testin
 		},
 		exchange: "ibkr",
 	}
+	at.isRunning.Store(true)
 	at.initializeBrokerRuntimeState()
 	at.setReadinessSummary(ReadinessSummary{
 		Status:         ReadinessPass,

@@ -578,7 +578,6 @@ func TestRecordPaperSessionBlockedCycleClassifiesExpectedVsUnexpected(t *testing
 	at := &AutoTrader{
 		id:        "paper_trader",
 		name:      "Paper Trader",
-		isRunning: true,
 		config: AutoTraderConfig{
 			ID:           "paper_trader",
 			Name:         "Paper Trader",
@@ -587,6 +586,7 @@ func TestRecordPaperSessionBlockedCycleClassifiesExpectedVsUnexpected(t *testing
 			StrategyMode: "multi_factor",
 		},
 	}
+	at.isRunning.Store(true)
 	at.ensurePaperSessionReportingForTime(time.Now())
 
 	at.recordPaperSessionBlockedCycle("market is closed for equity session")

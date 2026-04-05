@@ -29,10 +29,10 @@ func TestGetOperatorStatus_ReadinessFailureBlocksTradingClearly(t *testing.T) {
 			InitialBalance: 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 		startTime:      time.Now().Add(-15 * time.Minute),
 		lastResetTime:  time.Now().Add(-time.Hour),
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{
 		Status:         ReadinessFail,
 		Message:        "1 blocking readiness check(s) failed",
@@ -84,9 +84,9 @@ func TestGetOperatorStatus_BrokerDegradedAppearsDistinctFromLiveness(t *testing.
 			InitialBalance: 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 		startTime:      now.Add(-25 * time.Minute),
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{
 		Status:         ReadinessPass,
 		Message:        "startup readiness passed",
@@ -157,9 +157,9 @@ func TestGetOperatorStatus_LivePromotionFailureAppearsInTradingGate(t *testing.T
 			InitialBalance: 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 		startTime:      now.Add(-25 * time.Minute),
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{
 		Status:         ReadinessPass,
 		Message:        "startup readiness passed",
@@ -260,9 +260,9 @@ func TestGetOperatorStatus_IncludesOrderReconciliationSummary(t *testing.T) {
 			InitialBalance: 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 		startTime:      time.Now().Add(-25 * time.Minute),
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{
 		Status:         ReadinessPass,
 		Message:        "startup readiness passed",
@@ -306,9 +306,9 @@ func TestGetOperatorStatus_IncludesPortfolioRiskSummary(t *testing.T) {
 			InitialBalance: 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 		startTime:      time.Now().Add(-25 * time.Minute),
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{
 		Status:         ReadinessPass,
 		Message:        "startup readiness passed",
@@ -390,9 +390,9 @@ func TestGetOperatorStatus_IncludesExecutionSummary(t *testing.T) {
 			InitialBalance: 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 		startTime:      time.Now().Add(-25 * time.Minute),
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{
 		Status:         ReadinessPass,
 		Message:        "startup readiness passed",
@@ -465,9 +465,9 @@ func TestGetOperatorStatus_PositionReconciliationBlocksTrading(t *testing.T) {
 			InitialBalance: 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 		startTime:      time.Now().Add(-25 * time.Minute),
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{
 		Status:         ReadinessPass,
 		Message:        "startup readiness passed",
@@ -528,9 +528,9 @@ func TestGetOperatorStatus_IncludesDataQualitySummary(t *testing.T) {
 			InitialBalance: 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 		startTime:      time.Now().Add(-25 * time.Minute),
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{
 		Status:         ReadinessPass,
 		Message:        "startup readiness passed",
@@ -595,9 +595,9 @@ func TestGetOperatorStatus_IncludesRecentAlerts(t *testing.T) {
 			InitialBalance: 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 		startTime:      time.Now().Add(-25 * time.Minute),
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{
 		Status:         ReadinessPass,
 		Message:        "startup readiness passed",
@@ -639,9 +639,9 @@ func TestGetOperatorStatus_IncludesIncidentSummary(t *testing.T) {
 			InitialBalance: 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 		startTime:      time.Now().Add(-25 * time.Minute),
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{
 		Status:         ReadinessPass,
 		Message:        "startup readiness passed",
@@ -696,9 +696,9 @@ func TestGetOperatorStatus_MarketClosedAppearsAsExpectedNonTradable(t *testing.T
 			StrategyMode:   "momentum_only",
 			ScanInterval:   5 * time.Minute,
 		},
-		isRunning: true,
 		startTime: time.Now().Add(-10 * time.Minute),
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{
 		Status:         ReadinessPass,
 		Message:        "startup readiness passed",
@@ -763,9 +763,9 @@ func TestGetOperatorStatus_InferredExecutionConfidenceShowsAwaitingReconciliatio
 			InitialBalance: 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 		startTime:      now.Add(-10 * time.Minute),
 	}
+	at.isRunning.Store(true)
 	at.initializeBrokerRuntimeState()
 	at.setReadinessSummary(ReadinessSummary{
 		Status:         ReadinessPass,

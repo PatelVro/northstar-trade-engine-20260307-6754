@@ -117,7 +117,7 @@ func (at *AutoTrader) setRiskSupervisorState(state risk.SupervisorState) {
 	at.riskSupervisorMu.Unlock()
 	at.syncRiskSupervisorIncidents(state)
 
-	if !at.paperSessionReportsEnabled() || !at.isRunning {
+	if !at.paperSessionReportsEnabled() || !at.isRunning.Load() {
 		return
 	}
 	at.sessionReportMu.Lock()
@@ -297,7 +297,7 @@ func (at *AutoTrader) evaluateRiskSupervisor(account *AccountSummary, probeStric
 
 func (at *AutoTrader) currentTradingGateDecision(probeStrictLive bool, account *AccountSummary) tradingGateDecision {
 	state := at.evaluateRiskSupervisor(account, probeStrictLive)
-	if !at.isRunning {
+	if !at.isRunning.Load() {
 		return tradingGateDecision{
 			Mode:            state.Mode,
 			TradingAllowed:  false,

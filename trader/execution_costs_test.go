@@ -118,9 +118,9 @@ func TestGetOperatorStatusExposesEvaluationCostsForShadowMode(t *testing.T) {
 			MaxParticipationRate:   0.15,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 		startTime:      now.Add(-15 * time.Minute),
 	}
+	at.isRunning.Store(true)
 	at.initializeShadowModeState()
 	at.initializeBrokerRuntimeState()
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", CheckedAt: now, TradingAllowed: true, PassCount: 3})

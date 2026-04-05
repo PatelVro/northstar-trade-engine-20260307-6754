@@ -238,8 +238,15 @@ func currentPositionQuantityForSide(positions []map[string]interface{}, symbol, 
 }
 
 func (at *AutoTrader) currentDailyLossLimit() float64 {
-	if at.config.MaxDailyLossPct <= 0 {
+	pct := at.config.MaxDailyLossPct
+	if pct <= 0 {
 		return 0
+	}
+	// Normalize: treat values > 1 as a percentage (e.g. 2.0 → 0.02 = 2%).
+	// Without this, a config value of 2.0 would require a 200% daily loss
+	// before the limit fires — making it effectively unreachable.
+	if pct > 1 {
+		pct = pct / 100.0
 	}
 	baseline := at.dailyStartEquity
 	if baseline <= 0 {
@@ -248,7 +255,7 @@ func (at *AutoTrader) currentDailyLossLimit() float64 {
 	if baseline <= 0 {
 		return 0
 	}
-	return -baseline * at.config.MaxDailyLossPct
+	return -baseline * pct
 }
 
 func (at *AutoTrader) applyRiskEvaluation(actionRecord *logger.DecisionAction, evaluation risk.Evaluation) {

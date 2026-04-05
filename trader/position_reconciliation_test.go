@@ -147,8 +147,8 @@ func newPositionReconTestAutoTrader(tr Trader) *AutoTrader {
 		positionNewsBias:       map[string]float64{},
 		plannedNewsBias:        map[string]float64{},
 		localPositionSnapshots: map[string]positions.Snapshot{},
-		isRunning:              true,
 	}
+	at.isRunning.Store(true)
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", TradingAllowed: true, CheckedAt: time.Now()})
 	at.initializeBrokerRuntimeState()
 	return at

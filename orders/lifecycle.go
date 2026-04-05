@@ -81,8 +81,16 @@ func (s *Store) RestoreState(state StoreState) error {
 		record.TruthAuthority = normalizeTruthAuthority(record.TruthAuthority, record.Status, record.Source, record.BrokerOrderID, record.RawBrokerStatus, record.LastMessage)
 		record.TruthConfidence = normalizeTruthConfidence(record.TruthConfidence, record.TruthAuthority, record.LastMessage)
 		record.TruthReason = normalizeTruthReason(record.TruthReason, record.TruthAuthority, record.LastMessage)
-		record.SubmittedAt = normalizeTime(record.SubmittedAt)
-		record.UpdatedAt = normalizeTime(record.UpdatedAt)
+		// During restore, preserve historical timestamps as-is; only apply
+		// normalizeTime (which replaces zero with time.Now) to non-zero values
+		// to avoid making old stale orders appear freshly submitted, which would
+		// suppress stale-detection and the dedupe window.
+		if !record.SubmittedAt.IsZero() {
+			record.SubmittedAt = normalizeTime(record.SubmittedAt)
+		}
+		if !record.UpdatedAt.IsZero() {
+			record.UpdatedAt = normalizeTime(record.UpdatedAt)
+		}
 		if !record.LastSeenAt.IsZero() {
 			record.LastSeenAt = normalizeTime(record.LastSeenAt)
 		}
@@ -274,8 +282,10 @@ func normalizeIntent(intent Intent) Intent {
 func normalizeSide(side string) string {
 	side = strings.ToUpper(strings.TrimSpace(side))
 	switch side {
-	case "BUY", "SELL":
-		return side
+	case "BUY", "BOT", "B", "LONG":
+		return "BUY"
+	case "SELL", "SLD", "S", "SHORT":
+		return "SELL"
 	default:
 		return side
 	}

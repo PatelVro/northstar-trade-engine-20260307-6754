@@ -66,7 +66,6 @@ func TestKillSwitchEnvBlocksTradingAndCancelsOrders(t *testing.T) {
 		exchange:       "alpaca",
 		trader:         mockTrader,
 		initialBalance: 100000,
-		isRunning:      true,
 		startTime:      time.Now().Add(-5 * time.Minute),
 		config: AutoTraderConfig{
 			ID:           traderID,
@@ -77,6 +76,7 @@ func TestKillSwitchEnvBlocksTradingAndCancelsOrders(t *testing.T) {
 			ScanInterval: 3 * time.Second,
 		},
 	}
+	at.isRunning.Store(true)
 	at.initializeBrokerRuntimeState()
 	at.initializeKillSwitchState()
 	at.setReadinessSummary(ReadinessSummary{
@@ -132,7 +132,6 @@ func TestKillSwitchFileActivatesAndClears(t *testing.T) {
 		exchange:       "alpaca",
 		trader:         mockTrader,
 		initialBalance: 100000,
-		isRunning:      true,
 		startTime:      time.Now().Add(-5 * time.Minute),
 		config: AutoTraderConfig{
 			ID:             "paper_trader",
@@ -144,6 +143,7 @@ func TestKillSwitchFileActivatesAndClears(t *testing.T) {
 			ScanInterval:   3 * time.Second,
 		},
 	}
+	at.isRunning.Store(true)
 	at.initializeBrokerRuntimeState()
 	at.initializeKillSwitchState()
 	at.setReadinessSummary(ReadinessSummary{
@@ -189,7 +189,6 @@ func TestKillSwitchConfigFlagActivates(t *testing.T) {
 		exchange:       "alpaca",
 		trader:         &killSwitchTestTrader{},
 		initialBalance: 100000,
-		isRunning:      true,
 		startTime:      time.Now().Add(-5 * time.Minute),
 		config: AutoTraderConfig{
 			ID:                  "paper_trader",
@@ -201,6 +200,7 @@ func TestKillSwitchConfigFlagActivates(t *testing.T) {
 			ScanInterval:        3 * time.Second,
 		},
 	}
+	at.isRunning.Store(true)
 	at.initializeBrokerRuntimeState()
 	at.initializeKillSwitchState()
 	at.setReadinessSummary(ReadinessSummary{

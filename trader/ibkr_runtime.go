@@ -112,7 +112,7 @@ func (at *AutoTrader) handleIBKRRuntimeError(stage string, err error) error {
 }
 
 func (at *AutoTrader) startIBKRRecoveryLoop() {
-	if !at.managesIBKRBrokerRuntime() || !at.isRunning {
+	if !at.managesIBKRBrokerRuntime() || !at.isRunning.Load() {
 		return
 	}
 
@@ -134,7 +134,7 @@ func (at *AutoTrader) runIBKRRecoveryLoop() {
 		at.brokerStateMu.Unlock()
 	}()
 
-	for attempt := 1; at.isRunning; attempt++ {
+	for attempt := 1; at.isRunning.Load(); attempt++ {
 		backoff := ibkrRecoveryBackoff(attempt)
 		nextRetryAt := time.Now().Add(backoff)
 
@@ -339,9 +339,9 @@ func (at *AutoTrader) sleepWhileRunning(delay time.Duration) bool {
 	for {
 		select {
 		case <-timer.C:
-			return at.isRunning
+			return at.isRunning.Load()
 		default:
-			if !at.isRunning {
+			if !at.isRunning.Load() {
 				return false
 			}
 			time.Sleep(200 * time.Millisecond)

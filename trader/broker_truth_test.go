@@ -117,8 +117,8 @@ func TestBrokerTruthGateBlocksPaperIBKRWithoutFreshAccountSnapshot(t *testing.T)
 			InitialBalance: 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 	}
+	at.isRunning.Store(true)
 	at.initializeBrokerRuntimeState()
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", TradingAllowed: true, CheckedAt: now})
 	at.positionReconSummary = freshPositionReconSummary(now)
@@ -156,8 +156,8 @@ func TestBrokerTruthGateAllowsPaperIBKRWithFreshTruth(t *testing.T) {
 			InitialBalance: 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 	}
+	at.isRunning.Store(true)
 	at.initializeBrokerRuntimeState()
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", TradingAllowed: true, CheckedAt: now})
 	at.positionReconSummary = freshPositionReconSummary(now)
@@ -201,8 +201,8 @@ func TestBrokerTruthGateBlocksPaperIBKRWhenOrderTruthIsUnresolved(t *testing.T) 
 			InitialBalance: 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 	}
+	at.isRunning.Store(true)
 	at.initializeBrokerRuntimeState()
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", TradingAllowed: true, CheckedAt: now})
 	at.positionReconSummary = freshPositionReconSummary(now)
@@ -260,8 +260,8 @@ func TestBrokerTruthSummaryMarksInferredOrderTruthAsDegraded(t *testing.T) {
 			InitialBalance: 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 	}
+	at.isRunning.Store(true)
 	at.initializeBrokerRuntimeState()
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", TradingAllowed: true, CheckedAt: now})
 	at.positionReconSummary = freshPositionReconSummary(now)
@@ -315,8 +315,8 @@ func TestBrokerTruthGateBlocksShadowWhenFeedDelayed(t *testing.T) {
 			InitialBalance: 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 	}
+	at.isRunning.Store(true)
 	at.initializeBrokerRuntimeState()
 	at.initializeDataQualityState()
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", TradingAllowed: true, CheckedAt: now})
@@ -337,7 +337,6 @@ func TestBrokerTruthGateBlocksShadowWhenMarketDataHasNotBeenPreflighted(t *testi
 		id:        "shadow_feed_unchecked",
 		name:      "Shadow Feed Unchecked",
 		exchange:  "ibkr",
-		isRunning: true,
 		config: AutoTraderConfig{
 			Mode:           "shadow",
 			Broker:         "sim",
@@ -349,6 +348,7 @@ func TestBrokerTruthGateBlocksShadowWhenMarketDataHasNotBeenPreflighted(t *testi
 		},
 		initialBalance: 100000,
 	}
+	at.isRunning.Store(true)
 	at.initializeBrokerRuntimeState()
 	at.initializeDataQualityState()
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", TradingAllowed: true, CheckedAt: now})
@@ -376,8 +376,8 @@ func TestBrokerTruthGateBlocksPaperIBKRWithoutOrderReconciliationSummary(t *test
 			InitialBalance: 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 	}
+	at.isRunning.Store(true)
 	at.initializeBrokerRuntimeState()
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", TradingAllowed: true, CheckedAt: now})
 	at.positionReconSummary = freshPositionReconSummary(now)
@@ -415,8 +415,8 @@ func TestBrokerTruthSummaryMarksStaleMarketDataPreflightAsBlocked(t *testing.T) 
 			InitialBalance: 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 	}
+	at.isRunning.Store(true)
 	at.initializeBrokerRuntimeState()
 	at.initializeDataQualityState()
 	at.updateMarketDataFeedStatus(false, "", []string{"AAPL", "MSFT"})
@@ -470,9 +470,9 @@ func TestGetOperatorStatus_IncludesBrokerTruthSummary(t *testing.T) {
 			InitialBalance: 100000,
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 		startTime:      now.Add(-10 * time.Minute),
 	}
+	at.isRunning.Store(true)
 	at.initializeBrokerRuntimeState()
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", TradingAllowed: true, CheckedAt: now})
 	at.positionReconSummary = freshPositionReconSummary(now)

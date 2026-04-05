@@ -50,11 +50,11 @@ func TestExecuteDecisionWithRecord_ShadowModeDoesNotSubmitRealOrder(t *testing.T
 		trader:                mockTrader,
 		provider:              &riskTestProvider{price: 100, currentVolume: 20000, averageVolume: 50000},
 		initialBalance:        100000,
-		isRunning:             true,
 		dailyStartEquity:      100000,
 		positionFirstSeenTime: map[string]int64{},
 		riskEngine:            risk.NewEngine(buildRiskConfig(cfg)),
 	}
+	at.isRunning.Store(true)
 	at.initializeShadowModeState()
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", CheckedAt: time.Now(), TradingAllowed: true})
 	at.initializeBrokerRuntimeState()
@@ -420,11 +420,11 @@ func TestShadowModeAccountAndRiskUseHypotheticalPortfolio(t *testing.T) {
 		trader:                mockTrader,
 		provider:              &riskTestProvider{price: 100, currentVolume: 20000, averageVolume: 50000},
 		initialBalance:        100000,
-		isRunning:             true,
 		dailyStartEquity:      100000,
 		positionFirstSeenTime: map[string]int64{},
 		riskEngine:            risk.NewEngine(buildRiskConfig(cfg)),
 	}
+	at.isRunning.Store(true)
 	at.initializeShadowModeState()
 	at.setReadinessSummary(ReadinessSummary{Status: ReadinessPass, Message: "startup readiness passed", CheckedAt: time.Now(), TradingAllowed: true})
 	at.initializeBrokerRuntimeState()

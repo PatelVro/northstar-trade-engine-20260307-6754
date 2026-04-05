@@ -127,7 +127,6 @@ func (m *Manager) Execute(intent Intent, gate Gate, broker Broker) Result {
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	m.sweepLocked(now)
 	m.nextID++
@@ -156,7 +155,9 @@ func (m *Manager) Execute(intent Intent, gate Gate, broker Broker) Result {
 		result.Error = reason
 		result.Message = reason
 		result.CompletedAt = now
-		return m.storeLocked(intent, result)
+		r := m.storeLocked(intent, result)
+		m.mu.Unlock()
+		return r
 	}
 
 	if existingID, ok := m.latestByKey[result.DedupeKey]; ok {
@@ -169,14 +170,18 @@ func (m *Manager) Execute(intent Intent, gate Gate, broker Broker) Result {
 				result.Error = "equivalent execution intent already in flight"
 				result.Message = "duplicate execution suppressed while equivalent intent is still active"
 				result.CompletedAt = now
-				return m.storeLocked(intent, result)
+				r := m.storeLocked(intent, result)
+				m.mu.Unlock()
+				return r
 			case StatusStale:
 				result.Status = StatusBlocked
 				result.Stale = true
 				result.Error = "equivalent execution intent remains unresolved and stale"
 				result.Message = "execution blocked because a matching prior intent is stale and unresolved"
 				result.CompletedAt = now
-				return m.storeLocked(intent, result)
+				r := m.storeLocked(intent, result)
+				m.mu.Unlock()
+				return r
 			default:
 				ref := tracked.Result.CompletedAt
 				if ref.IsZero() {
@@ -188,7 +193,9 @@ func (m *Manager) Execute(intent Intent, gate Gate, broker Broker) Result {
 					result.Error = "equivalent execution intent was submitted recently"
 					result.Message = "duplicate execution suppressed within recent submission window"
 					result.CompletedAt = now
-					return m.storeLocked(intent, result)
+					r := m.storeLocked(intent, result)
+					m.mu.Unlock()
+					return r
 				}
 			}
 		}
@@ -200,7 +207,18 @@ func (m *Manager) Execute(intent Intent, gate Gate, broker Broker) Result {
 		m.latestByKey[result.DedupeKey] = intent.IntentID
 	}
 
+	// Release the lock before calling the broker to avoid holding it during
+	// a potentially slow or blocking network operation. The tracked entry is
+	// already registered with StatusPending so concurrent callers will see it
+	// as in-flight and be correctly deduplicated.
+	m.mu.Unlock()
+
 	order, err := submitToBroker(intent, broker)
+
+	// Re-acquire the lock to update the tracked result.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if err != nil {
 		tracked.Result.Status = mapSubmitError(err)
 		tracked.Result.Error = err.Error()
@@ -299,6 +317,11 @@ func (m *Manager) appendLocked(tracked *trackedExecution) {
 		return
 	}
 	evicted := m.history[0]
+	// Nil out the slot before reslicing so the GC can collect the evicted
+	// entry. Without this, the backing array retains a reference to the
+	// evicted pointer even after the slice header has advanced, causing a
+	// memory leak that grows unboundedly in long-running sessions.
+	m.history[0] = nil
 	m.history = m.history[1:]
 	if evicted != nil {
 		delete(m.historyByID, evicted.Intent.IntentID)

@@ -73,7 +73,7 @@ func (at *AutoTrader) killSwitchPollInterval() time.Duration {
 }
 
 func (at *AutoTrader) waitForKillSwitchClear() error {
-	for at.isRunning {
+	for at.isRunning.Load() {
 		summary := at.runKillSwitchCheck("startup")
 		if !summary.Active {
 			return nil
@@ -82,10 +82,13 @@ func (at *AutoTrader) waitForKillSwitchClear() error {
 		delay := at.killSwitchPollInterval()
 		log.Printf(" [%s] Emergency kill switch remains active; retrying in %s", at.name, delay)
 		if !at.sleepWhileRunning(delay) {
-			return nil
+			// Trader is shutting down while kill switch is still active;
+			// return an error so callers do not proceed to trade.
+			return fmt.Errorf("emergency kill switch still active; trading blocked until cleared")
 		}
 	}
-	return nil
+	// isRunning became false while kill switch was still active.
+	return fmt.Errorf("emergency kill switch still active; trading blocked until cleared")
 }
 
 func (at *AutoTrader) ensureKillSwitchClear() error {
@@ -101,7 +104,7 @@ func (at *AutoTrader) ensureKillSwitchClear() error {
 }
 
 func (at *AutoTrader) startKillSwitchMonitor() {
-	if !at.isRunning {
+	if !at.isRunning.Load() {
 		return
 	}
 	at.killSwitchMu.Lock()
@@ -122,7 +125,7 @@ func (at *AutoTrader) runKillSwitchMonitorLoop() {
 		at.killSwitchMu.Unlock()
 	}()
 
-	for at.isRunning {
+	for at.isRunning.Load() {
 		at.runKillSwitchCheck("monitor")
 		if !at.sleepWhileRunning(at.killSwitchPollInterval()) {
 			return
@@ -217,20 +220,18 @@ func (at *AutoTrader) clearKillSwitch(now time.Time) {
 }
 
 func (at *AutoTrader) ensureKillSwitchOrdersCancelled(stage string, now time.Time) {
-	at.killSwitchMu.RLock()
+	// Use a single write-lock for the check-and-update to eliminate the TOCTOU
+	// race that could allow two concurrent callers to both pass the
+	// lastAttempt < 15s guard and send duplicate cancel requests to the broker.
+	at.killSwitchMu.Lock()
 	active := at.killSwitchState.Active
 	lastAttempt := at.killSwitchState.LastCancelAttemptAt
 	alreadyCancelled := at.killSwitchState.OrdersCancelled && strings.TrimSpace(at.killSwitchState.LastCancelError) == ""
-	at.killSwitchMu.RUnlock()
 
-	if !active || alreadyCancelled {
+	if !active || alreadyCancelled || (!lastAttempt.IsZero() && now.Sub(lastAttempt) < 15*time.Second) {
+		at.killSwitchMu.Unlock()
 		return
 	}
-	if !lastAttempt.IsZero() && now.Sub(lastAttempt) < 15*time.Second {
-		return
-	}
-
-	at.killSwitchMu.Lock()
 	at.killSwitchState.LastCancelAttemptAt = now
 	at.killSwitchMu.Unlock()
 
@@ -275,13 +276,16 @@ func (at *AutoTrader) cancelOpenOrdersForKillSwitch() error {
 	if fetcher, ok := at.trader.(killSwitchLiveOrdersFetcher); ok {
 		liveOrders, err := fetcher.GetLiveOrders()
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("fetch open orders: %v", err))
-		} else {
-			for _, order := range liveOrders {
-				symbol := strings.ToUpper(strings.TrimSpace(toString(firstPresent(order["symbol"], order["ticker"]))))
-				if symbol != "" {
-					symbolSet[symbol] = struct{}{}
-				}
+			// A failure to fetch live orders means we cannot reliably cancel all
+			// open orders. Return an error immediately so the caller retries rather
+			// than proceeding with a potentially incomplete symbol set that would
+			// silently miss pure-entry (unfilled) orders.
+			return fmt.Errorf("kill switch: cannot fetch live orders to cancel: %w", err)
+		}
+		for _, order := range liveOrders {
+			symbol := strings.ToUpper(strings.TrimSpace(toString(firstPresent(order["symbol"], order["ticker"]))))
+			if symbol != "" {
+				symbolSet[symbol] = struct{}{}
 			}
 		}
 	}

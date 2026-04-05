@@ -142,9 +142,9 @@ func TestGetOperatorStatusIncludesUniverseSummary(t *testing.T) {
 			ConfiguredDefaultSymbolsFile: "data/universe/us_companies.txt",
 		},
 		initialBalance: 100000,
-		isRunning:      true,
 		startTime:      now.Add(-20 * time.Minute),
 	}
+	at.isRunning.Store(true)
 	if err := at.initializeTradingUniverse(); err != nil {
 		t.Fatalf("initializeTradingUniverse failed: %v", err)
 	}

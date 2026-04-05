@@ -181,15 +181,15 @@ func TestRunIBKRRecoveryLoop_ReconcilesBeforeHealthy(t *testing.T) {
 		alertManager:       alerts.NewManager(),
 		provider:           provider,
 		trader:             mockTrader,
-		isRunning:          true,
 		positionEntryCycle: map[string]int{},
 		positionPeakPnLPct: map[string]float64{},
 		positionNewsBias:   map[string]float64{},
 		plannedNewsBias:    map[string]float64{},
 	}
+	at.isRunning.Store(true)
 	at.initializeBrokerRuntimeState()
 	defer func() {
-		at.isRunning = false
+		at.isRunning.Store(false)
 	}()
 
 	_ = at.handleIBKRRuntimeError("orders", broker.NewIBKRTransportError("GET", "/iserver/account/orders", errors.New("connection refused")))
