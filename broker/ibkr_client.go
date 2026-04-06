@@ -46,8 +46,8 @@ type ibkrSecdefSection struct {
 }
 
 const (
-	defaultPortfolioRequestTimeout = 5 * time.Second
-	defaultPortfolioRetryAttempts  = 3
+	defaultPortfolioRequestTimeout = 15 * time.Second
+	defaultPortfolioRetryAttempts  = 5
 	defaultPortfolioWarmTTL        = 15 * time.Second
 )
 
@@ -199,6 +199,34 @@ func (c *IBKRClient) doPreflight(method, endpoint string) ([]byte, int, error) {
 	return c.doPreflightWithTimeout(method, endpoint, 0)
 }
 
+// initSSOBridge calls /iserver/auth/ssodh/init with the required JSON body
+// to establish the iserver bridge after a Selenium login.
+func (c *IBKRClient) initSSOBridge() ([]byte, int, error) {
+	body := bytes.NewReader([]byte(`{"publish":true,"compete":true}`))
+	req, err := http.NewRequest("POST", c.BaseURL+"/iserver/auth/ssodh/init", body)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	if cookie := c.getSessionCookie(); cookie != "" {
+		req.Header.Set("Cookie", cookie)
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	for _, cookie := range resp.Cookies() {
+		if cookie.Name == "x-sess-uuid" && cookie.Value != "" {
+			c.setSessionCookie(fmt.Sprintf("%s=%s", cookie.Name, cookie.Value))
+		}
+	}
+	b, _ := io.ReadAll(resp.Body)
+	return b, resp.StatusCode, nil
+}
+
 func (c *IBKRClient) doPreflightWithTimeout(method, endpoint string, timeout time.Duration) ([]byte, int, error) {
 	req, err := http.NewRequest(method, c.BaseURL+endpoint, nil)
 	if err != nil {
@@ -281,6 +309,40 @@ func (c *IBKRClient) CheckSessionReadiness(accountID string) error {
 		return fmt.Errorf("auth status decode failed: %w", err)
 	}
 	if !authResp.Authenticated || !authResp.Connected {
+		// auth/status can lag behind real session state (especially after Selenium login).
+		// Fall back to /portfolio/accounts to check actual connectivity.
+		bFallback, statusFallback, errFallback := c.doPreflight("GET", "/portfolio/accounts")
+		if errFallback == nil && statusFallback == 200 {
+			var fallbackAccounts []struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(bFallback, &fallbackAccounts); err == nil && len(fallbackAccounts) > 0 {
+				log.Printf(" IBKR: CheckBrokerConnectivity: auth/status says not ready but /portfolio/accounts works — initializing iserver bridge")
+				// SSO init establishes the iserver bridge which is needed for trading
+				c.initSSOBridge()
+				c.doPreflight("POST", "/tickle")
+				// Give the bridge a moment to establish
+				time.Sleep(2 * time.Second)
+				// Re-check auth/status after SSO init
+				bAuth2, statusAuth2, _ := c.doPreflight("GET", "/iserver/auth/status")
+				if statusAuth2 == 200 {
+					var authResp2 struct {
+						Authenticated bool `json:"authenticated"`
+					}
+					json.Unmarshal(bAuth2, &authResp2)
+					if authResp2.Authenticated {
+						log.Printf(" IBKR: SSO init succeeded — auth/status now reports authenticated")
+						c.setAuthStatus(true)
+						// iserver/accounts should work now too
+						goto portfolioBootstrap
+					}
+				}
+				// SSO init didn't fix auth/status, but portfolio works — proceed anyway
+				log.Printf(" IBKR: SSO init did not fix auth/status, but /portfolio/accounts works — proceeding")
+				c.setAuthStatus(true)
+				goto portfolioBootstrap
+			}
+		}
 		c.setAuthStatus(false)
 		return NewIBKRHTTPError("GET", "/iserver/auth/status", http.StatusUnauthorized, fmt.Sprintf("auth status not ready (authenticated=%t connected=%t)", authResp.Authenticated, authResp.Connected))
 	}
@@ -293,6 +355,7 @@ func (c *IBKRClient) CheckSessionReadiness(accountID string) error {
 		return NewIBKRHTTPError("GET", "/iserver/accounts", statusAccounts, string(body))
 	}
 
+portfolioBootstrap:
 	if body, statusPortfolioAccounts, err := c.doPreflight("GET", "/portfolio/accounts"); err != nil {
 		c.setAuthStatus(false)
 		return fmt.Errorf("portfolio/accounts failed: %w", err)
@@ -411,6 +474,16 @@ func (c *IBKRClient) ensurePortfolioSession(accountID string, force bool) error 
 		return nil
 	}
 
+	// Ensure the iserver bridge is initialized (critical after Selenium login).
+	// Only do this on first warmup or forced refresh, and only if not authenticated yet.
+	if (force || c.portfolioWarmAt.IsZero()) && !c.IsAuthenticated() {
+		if b, status, err := c.initSSOBridge(); err == nil && status == 200 {
+			log.Printf(" IBKR: SSO bridge initialized during portfolio session setup")
+			_ = b
+			time.Sleep(1 * time.Second)
+		}
+	}
+
 	mandatory := []string{
 		"/portfolio/accounts",
 	}
@@ -468,7 +541,32 @@ func (c *IBKRClient) checkAuthStatus() {
 	json.Unmarshal(bAuth, &authResp)
 
 	if !authResp.Authenticated || statusAuth != 200 {
-		log.Printf("Debug: IBKR auth status false/failed: %d", statusAuth)
+		// auth/status can lag behind actual session state (especially after Selenium login).
+		// Fall back to /portfolio/accounts which reflects the real session.
+		bFallback, statusFallback, errFallback := c.doPreflight("GET", "/portfolio/accounts")
+		if errFallback == nil && statusFallback == 200 {
+			var fallbackAccounts []struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(bFallback, &fallbackAccounts); err == nil && len(fallbackAccounts) > 0 {
+				log.Printf(" IBKR: auth/status says unauthenticated but /portfolio/accounts works (account %s) — initializing iserver bridge", fallbackAccounts[0].ID)
+				// SSO init + tickle to fully establish the iserver bridge
+				c.initSSOBridge()
+				c.doPreflight("POST", "/tickle")
+				wasAuthenticated := c.IsAuthenticated()
+				c.setAuthStatus(true)
+				if !wasAuthenticated {
+					log.Printf(" IBKR: session RECOVERED (via portfolio fallback) — trading can resume")
+				}
+				return
+			}
+		}
+
+		// Genuinely not authenticated
+		wasAuthenticated := c.IsAuthenticated()
+		if wasAuthenticated {
+			log.Printf(" IBKR: session LOST — authenticated=false (status %d). Re-login at https://localhost:5002 to resume.", statusAuth)
+		}
 		c.setAuthStatus(false)
 		return
 	}
@@ -499,7 +597,11 @@ func (c *IBKRClient) checkAuthStatus() {
 		}
 	}
 
+	wasAuthenticated := c.IsAuthenticated()
 	c.setAuthStatus(true)
+	if !wasAuthenticated {
+		log.Printf(" IBKR: session RECOVERED — authenticated=true, trading can resume")
+	}
 }
 
 // monitorSession continuously verifes the gateway auth status

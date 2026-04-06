@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"northstar/broker"
+	"northstar/logger"
 	"northstar/market"
 	"northstar/news"
 	"os"
@@ -92,6 +93,7 @@ func (at *AutoTrader) waitForStartupReadiness() error {
 			return nil
 		}
 		at.alertTradingBlocked(summary.Message)
+		at.persistStartupReadinessBlockedDecision(summary)
 
 		delay := at.startupReadinessRetryInterval()
 		log.Printf(" [%s] Active trading remains blocked by startup readiness; retrying in %s", at.name, delay)
@@ -100,6 +102,37 @@ func (at *AutoTrader) waitForStartupReadiness() error {
 		}
 	}
 	return nil
+}
+
+func (at *AutoTrader) persistStartupReadinessBlockedDecision(summary ReadinessSummary) {
+	if at == nil || at.decisionLogger == nil {
+		return
+	}
+
+	record := &logger.DecisionRecord{
+		InputPrompt:  "Startup readiness blocked trading before the runtime cycle loop",
+		CoTTrace:     "Northstar did not enter a normal decision cycle because startup readiness checks still require broker, account, or reconciliation truth before trading can continue.",
+		DecisionJSON: "[]",
+		ExecutionLog: []string{fmt.Sprintf("startup readiness blocked trading: %s", summary.Message)},
+		Success:      false,
+		ErrorMessage: summary.Message,
+		ShadowMode:   at.shadowModeEnabled(),
+	}
+	for _, check := range summary.Checks {
+		if check.Status == ReadinessPass {
+			continue
+		}
+		record.ExecutionLog = append(
+			record.ExecutionLog,
+			fmt.Sprintf("startup readiness %s (%s): %s", check.Name, check.Status, strings.TrimSpace(check.Message)),
+		)
+	}
+
+	if err := at.logDecisionAndAudit(record, nil, nil); err != nil {
+		log.Printf(" [%s] Failed to persist startup-readiness blocked decision record: %v", at.name, err)
+		return
+	}
+	at.observePaperSessionDecisionRecord(record)
 }
 
 func (at *AutoTrader) startupReadinessRetryInterval() time.Duration {
@@ -237,6 +270,50 @@ func readinessFail(name, message string) ReadinessCheck {
 	}
 }
 
+func isIBKRNightlyResetWindow(now time.Time) bool {
+	now = now.In(time.Local)
+	return now.Hour() == 1
+}
+
+func isIBKRPortfolioBootstrapFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(err.Error()))
+	if lower == "" || !strings.Contains(lower, "/portfolio/") {
+		return false
+	}
+	return strings.Contains(lower, "503") ||
+		strings.Contains(lower, "service unavailable") ||
+		strings.Contains(lower, "deadline exceeded") ||
+		strings.Contains(lower, "timeout")
+}
+
+func (at *AutoTrader) classifyIBKRStartupReadinessFailure(stage string, err error, now time.Time) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+
+	stage = strings.TrimSpace(stage)
+	if stage == "" {
+		stage = "broker"
+	}
+
+	raw := fmt.Sprintf("startup readiness %s failed: %v", stage, err)
+	if at == nil || !at.managesIBKRBrokerRuntime() {
+		return raw, false
+	}
+	if !isIBKRNightlyResetWindow(now) || !isIBKRPortfolioBootstrapFailure(err) {
+		return raw, false
+	}
+
+	return fmt.Sprintf(
+		"IBKR nightly reset window is active; %s account-state endpoints are temporarily unavailable and trading will remain paused until broker truth returns (%v)",
+		stage,
+		err,
+	), true
+}
+
 func (at *AutoTrader) checkConfigReadiness() ReadinessCheck {
 	switch {
 	case strings.TrimSpace(at.id) == "":
@@ -313,7 +390,7 @@ func (at *AutoTrader) checkDataReadiness() ReadinessCheck {
 	if at.provider == nil {
 		return readinessFail("data_readiness", "market data provider is not initialized")
 	}
-	if at.requiresIBKRSessionReadiness() && strings.EqualFold(at.config.DataProvider, "ibkr") {
+	if at.requiresIBKRSessionReadiness() && (strings.EqualFold(at.config.DataProvider, "ibkr") || strings.EqualFold(at.config.DataProvider, "ibkr_tws")) {
 		return readinessPass("data_readiness", "IBKR-backed market data dependency will be validated through broker session readiness")
 	}
 	return readinessPass("data_readiness", fmt.Sprintf("market data provider initialized (%T)", at.provider))
@@ -393,14 +470,20 @@ func (at *AutoTrader) checkBrokerConnectivityReadiness() ReadinessCheck {
 		return readinessPass("broker_connectivity", "broker connectivity is not required for this mode")
 	}
 
-	ibkrProvider, ok := at.provider.(*market.IBKRProvider)
-	if !ok || ibkrProvider == nil || ibkrProvider.Client == nil {
+	// Support both Client Portal REST API and TWS API providers
+	var checkErr error
+	if twsProv, ok := at.provider.(*market.IBKRTWSProvider); ok && twsProv != nil && twsProv.Client != nil {
+		checkErr = twsProv.Client.CheckSessionReadiness(at.config.IBKRAccountID)
+	} else if ibkrProvider, ok := at.provider.(*market.IBKRProvider); ok && ibkrProvider != nil && ibkrProvider.Client != nil {
+		checkErr = ibkrProvider.Client.CheckSessionReadiness(at.config.IBKRAccountID)
+	} else {
 		return readinessFail("broker_connectivity", "IBKR data/broker provider is not initialized")
 	}
 
-	if err := ibkrProvider.Client.CheckSessionReadiness(at.config.IBKRAccountID); err != nil {
-		at.applyIBKRStartupReadinessFailure("broker_connectivity", err)
-		return readinessFail("broker_connectivity", fmt.Sprintf("IBKR session/connectivity check failed: %v", err))
+	if checkErr != nil {
+		at.applyIBKRStartupReadinessFailure("broker_connectivity", checkErr)
+		reason, _ := at.classifyIBKRStartupReadinessFailure("broker_connectivity", checkErr, time.Now())
+		return readinessFail("broker_connectivity", reason)
 	}
 
 	return readinessPass("broker_connectivity", "IBKR session and account connectivity are ready")
@@ -415,7 +498,8 @@ func (at *AutoTrader) checkBrokerBootstrapReadiness() ReadinessCheck {
 		snapshot, err := reconciler.ReconcileBrokerState()
 		if err != nil {
 			at.applyIBKRStartupReadinessFailure("broker_bootstrap", err)
-			return readinessFail("broker_bootstrap", fmt.Sprintf("broker bootstrap reconciliation failed: %v", err))
+			reason, _ := at.classifyIBKRStartupReadinessFailure("broker_bootstrap", err, time.Now())
+			return readinessFail("broker_bootstrap", reason)
 		}
 		at.markIBKRHealthyWithReason("startup readiness passed; broker bootstrap reconciled")
 		positions := 0
@@ -488,9 +572,9 @@ func (at *AutoTrader) requiresIBKRSessionReadiness() bool {
 		return false
 	}
 	if strings.EqualFold(at.config.Mode, "replay") {
-		return strings.EqualFold(at.config.Broker, "ibkr") || strings.EqualFold(at.config.DataProvider, "ibkr")
+		return strings.EqualFold(at.config.Broker, "ibkr") || strings.EqualFold(at.config.DataProvider, "ibkr") || strings.EqualFold(at.config.DataProvider, "ibkr_tws")
 	}
-	if strings.EqualFold(at.exchange, "ibkr") || strings.EqualFold(at.config.Broker, "ibkr") || strings.EqualFold(at.config.DataProvider, "ibkr") {
+	if strings.EqualFold(at.exchange, "ibkr") || strings.EqualFold(at.config.Broker, "ibkr") || strings.EqualFold(at.config.DataProvider, "ibkr") || strings.EqualFold(at.config.DataProvider, "ibkr_tws") {
 		return true
 	}
 	return false
@@ -501,10 +585,17 @@ func (at *AutoTrader) applyIBKRStartupReadinessFailure(stage string, err error) 
 		return
 	}
 
-	reason := fmt.Sprintf("startup readiness %s failed: %v", stage, err)
+	reason, expectedMaintenance := at.classifyIBKRStartupReadinessFailure(stage, err, time.Now())
 	switch broker.ClassifyIBKRError(err) {
 	case broker.IBKRErrorTransient:
-		at.alertBrokerDisconnect(stage, err)
+		if expectedMaintenance {
+			at.alertRuntimeInfo("broker_maintenance_window", reason, map[string]string{
+				"stage": stage,
+				"error": err.Error(),
+			})
+		} else {
+			at.alertBrokerDisconnect(stage, err)
+		}
 		at.setBrokerRuntimeState(BrokerRuntimeDegraded, reason, err, false, time.Time{})
 	case broker.IBKRErrorAuth:
 		at.setBrokerRuntimeState(BrokerRuntimePaused, reason, err, false, time.Time{})

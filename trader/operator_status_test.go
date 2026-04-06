@@ -53,17 +53,91 @@ func TestGetOperatorStatus_ReadinessFailureBlocksTradingClearly(t *testing.T) {
 	if status.DecisionArchitecture != "equity_generator_plus_canonical_pipeline" {
 		t.Fatalf("expected equity trader to report canonical pipeline architecture, got %q", status.DecisionArchitecture)
 	}
-	if status.TradingBlockReason != "startup readiness failed" {
-		t.Fatalf("expected readiness block reason, got %q", status.TradingBlockReason)
+	expected := "DeepSeek strategy mode requires deepseek_key or NORTHSTAR_DEEPSEEK_API_KEY"
+	if status.TradingBlockReason != expected {
+		t.Fatalf("expected readiness block reason %q, got %q", expected, status.TradingBlockReason)
 	}
-	if status.OperatorMessage != "startup readiness failed" {
+	if status.OperatorMessage != expected {
 		t.Fatalf("unexpected operator message: %q", status.OperatorMessage)
 	}
 	if status.Readiness.Status != ReadinessFail {
 		t.Fatalf("expected nested readiness fail, got %s", status.Readiness.Status)
 	}
-	if len(status.BlockingReasons) == 0 || !strings.Contains(status.BlockingReasons[0], "startup readiness failed") {
+	if len(status.BlockingReasons) == 0 || !strings.Contains(status.BlockingReasons[0], expected) {
 		t.Fatalf("expected detailed blocking reasons, got %+v", status.BlockingReasons)
+	}
+}
+
+func TestGetOperatorStatus_ReadinessMaintenanceOutranksRestartRecovery(t *testing.T) {
+	now := time.Date(2026, time.March, 27, 1, 25, 0, 0, time.Local)
+	maintenance := "IBKR nightly reset window is active; broker_bootstrap account-state endpoints are temporarily unavailable and trading will remain paused until broker truth returns (account summary refresh failed: GET: /portfolio/DUP200062/summary: HTTP 503)"
+
+	at := &AutoTrader{
+		id:       "ibkr_maintenance",
+		name:     "IBKR Maintenance",
+		aiModel:  "deepseek",
+		exchange: "ibkr",
+		config: AutoTraderConfig{
+			ID:             "ibkr_maintenance",
+			Name:           "IBKR Maintenance",
+			Mode:           "paper",
+			Broker:         "ibkr",
+			DataProvider:   "ibkr",
+			StrategyMode:   "momentum_only",
+			ScanInterval:   5 * time.Minute,
+			InitialBalance: 100000,
+		},
+		initialBalance: 100000,
+		isRunning:      true,
+		startTime:      now.Add(-15 * time.Minute),
+	}
+	at.setReadinessSummary(ReadinessSummary{
+		Status:         ReadinessFail,
+		Message:        "1 blocking readiness check(s) failed",
+		CheckedAt:      now,
+		TradingAllowed: false,
+		PassCount:      7,
+		WarnCount:      1,
+		FailCount:      1,
+		Checks: []ReadinessCheck{
+			readinessFail("broker_bootstrap", maintenance),
+			readinessWarn("restart_recovery", "durable runtime state restored; broker reconciliation must confirm orders and positions before trading resumes"),
+		},
+	})
+	at.restartRecoveryState = restartRecoverySummary{
+		Available:             true,
+		Status:                "pending_reconciliation",
+		Restored:              true,
+		PendingReconciliation: true,
+		TradingBlocked:        true,
+		Message:               "durable runtime state restored; broker reconciliation must confirm orders and positions before trading resumes",
+	}
+	at.initializeBrokerRuntimeState()
+
+	status := at.GetOperatorStatus()
+	if status.TradingAllowed {
+		t.Fatalf("expected maintenance readiness failure to block trading")
+	}
+	if status.TradingBlockReason != maintenance {
+		t.Fatalf("expected maintenance block reason, got %q", status.TradingBlockReason)
+	}
+	if status.OperatorMessage != maintenance {
+		t.Fatalf("expected operator message to prioritize maintenance readiness, got %q", status.OperatorMessage)
+	}
+	if status.RuntimeCondition.State != RuntimeConditionBlocked {
+		t.Fatalf("expected blocked runtime condition, got %+v", status.RuntimeCondition)
+	}
+	if status.RuntimeCondition.Severity != incidents.SeverityInfo {
+		t.Fatalf("expected info severity for maintenance window, got %+v", status.RuntimeCondition)
+	}
+	if !status.RuntimeCondition.ExpectedNonTradable {
+		t.Fatalf("expected maintenance window to be marked expected_non_tradable")
+	}
+	if status.RuntimeCondition.AwaitingReconciliation {
+		t.Fatalf("did not expect restart recovery to outrank maintenance readiness: %+v", status.RuntimeCondition)
+	}
+	if status.RestartRecovery.Message == "" {
+		t.Fatalf("expected nested restart recovery details to remain visible")
 	}
 }
 

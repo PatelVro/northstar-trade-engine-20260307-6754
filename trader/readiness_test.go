@@ -1,14 +1,18 @@
 package trader
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"northstar/broker"
+	"northstar/logger"
 	"northstar/market"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestRunReadinessChecks_IBKRFailureBlocksTrading(t *testing.T) {
@@ -253,6 +257,107 @@ func TestRunReadinessChecks_IBKRSuccessRequiresBootstrapReconciliation(t *testin
 	}
 	if cached, _, ok := at.currentRuntimeAccountSnapshot(runtimeAccountSnapshotTTL); !ok || cached == nil || cached.AccountEquity != 100000.0 {
 		t.Fatalf("expected broker bootstrap to seed runtime account snapshot, got summary=%+v ok=%t", cached, ok)
+	}
+}
+
+func TestPersistStartupReadinessBlockedDecisionWritesRecord(t *testing.T) {
+	logDir := t.TempDir()
+	at := &AutoTrader{
+		id:        "paper_readiness_blocked",
+		name:      "Paper Readiness Blocked",
+		isRunning: true,
+		config: AutoTraderConfig{
+			ID:             "paper_readiness_blocked",
+			Name:           "Paper Readiness Blocked",
+			Mode:           "paper",
+			Broker:         "ibkr",
+			DataProvider:   "ibkr",
+			InstrumentType: "equity",
+			StrategyMode:   "momentum_only",
+			InitialBalance: 100000,
+		},
+		initialBalance:     100000,
+		decisionLogger:     logger.NewDecisionLogger(logDir),
+		positionEntryCycle: map[string]int{},
+		positionPeakPnLPct: map[string]float64{},
+		positionNewsBias:   map[string]float64{},
+		plannedNewsBias:    map[string]float64{},
+	}
+	at.initializeBrokerRuntimeState()
+	at.initializeDataQualityState()
+	at.initializeReadinessSummary()
+
+	summary := ReadinessSummary{
+		Status:         ReadinessFail,
+		Message:        "1 blocking readiness check(s) failed",
+		TradingAllowed: false,
+		Checks: []ReadinessCheck{
+			{
+				Name:           "broker_bootstrap",
+				Status:         ReadinessFail,
+				Severity:       ReadinessSeverityCritical,
+				Message:        "broker bootstrap reconciliation failed: account summary unavailable",
+				TradingAllowed: false,
+			},
+			{
+				Name:           "restart_recovery",
+				Status:         ReadinessWarn,
+				Severity:       ReadinessSeverityWarning,
+				Message:        "durable runtime state restored; broker reconciliation must confirm orders and positions before trading resumes",
+				TradingAllowed: false,
+			},
+		},
+	}
+
+	at.persistStartupReadinessBlockedDecision(summary)
+
+	records, err := at.decisionLogger.GetLatestRecords(1)
+	if err != nil {
+		t.Fatalf("GetLatestRecords: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected 1 decision record, got %d", len(records))
+	}
+	record := records[0]
+	if record.CycleNumber != 1 {
+		t.Fatalf("expected first blocked readiness record to be cycle 1, got %d", record.CycleNumber)
+	}
+	if record.Success {
+		t.Fatalf("expected blocked readiness record to be unsuccessful")
+	}
+	if record.ErrorMessage != summary.Message {
+		t.Fatalf("expected error message %q, got %q", summary.Message, record.ErrorMessage)
+	}
+	joinedLog := strings.Join(record.ExecutionLog, "\n")
+	if !strings.Contains(joinedLog, "startup readiness broker_bootstrap (fail): broker bootstrap reconciliation failed: account summary unavailable") {
+		t.Fatalf("expected blocked readiness detail in execution log, got %q", joinedLog)
+	}
+}
+
+func TestClassifyIBKRStartupReadinessFailure_NightlyResetWindow(t *testing.T) {
+	at := &AutoTrader{
+		exchange: "ibkr",
+		config: AutoTraderConfig{
+			Mode:         "paper",
+			Broker:       "ibkr",
+			DataProvider: "ibkr",
+		},
+	}
+	err := fmt.Errorf("account summary refresh failed: failed to fetch IBKR account summary: GET: /portfolio/DUP200062/summary: HTTP 503: {\"error\":\"Service Unavailable\",\"statusCode\":503}")
+
+	message, expectedMaintenance := at.classifyIBKRStartupReadinessFailure(
+		"broker_bootstrap",
+		err,
+		time.Date(2026, time.March, 27, 1, 15, 0, 0, time.Local),
+	)
+	if !expectedMaintenance {
+		t.Fatalf("expected nightly reset window to be classified as expected maintenance")
+	}
+	if !strings.Contains(message, "IBKR nightly reset window is active") {
+		t.Fatalf("expected maintenance message, got %q", message)
+	}
+	if !strings.Contains(message, "broker_bootstrap") {
+		t.Fatalf("expected stage to be preserved, got %q", message)
 	}
 }
 

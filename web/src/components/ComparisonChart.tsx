@@ -17,9 +17,10 @@ import { getTraderColor } from '../utils/traderColors';
 
 interface ComparisonChartProps {
   traders: CompetitionTraderData[];
+  currency?: string;
 }
 
-export function ComparisonChart({ traders }: ComparisonChartProps) {
+export function ComparisonChart({ traders, currency = 'USD' }: ComparisonChartProps) {
   // trader - useSWRtrader
   // keytraders
   const tradersKey = traders.map(t => t.trader_id).sort().join(',');
@@ -206,7 +207,7 @@ export function ComparisonChart({ traders }: ComparisonChartProps) {
                 <div className="text-sm mono font-bold" style={{ color: pnlPct >= 0 ? '#0ECB81' : '#F6465D' }}>
                   {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
                   <span className="text-xs ml-2 font-normal" style={{ color: '#848E9C' }}>
-                    ({equity?.toFixed(2)} USDT)
+                    ({equity?.toFixed(2)} {currency})
                   </span>
                 </div>
               </div>

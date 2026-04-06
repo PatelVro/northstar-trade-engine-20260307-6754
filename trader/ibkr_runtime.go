@@ -85,8 +85,9 @@ func (at *AutoTrader) ensureIBKRRuntimeReady() error {
 		return fmt.Errorf("ibkr broker state=%s: %s", snapshot.State, snapshot.Reason)
 	}
 
-	ibkrProv, ok := at.provider.(*market.IBKRProvider)
-	if ok && ibkrProv != nil && ibkrProv.Client != nil && !ibkrProv.Client.IsAuthenticated() {
+	if twsProv, ok := at.provider.(*market.IBKRTWSProvider); ok && twsProv != nil && twsProv.Client != nil && !twsProv.Client.IsAuthenticated() {
+		return at.handleIBKRRuntimeError("session_check", fmt.Errorf("TWS connection not ready"))
+	} else if ibkrProv, ok := at.provider.(*market.IBKRProvider); ok && ibkrProv != nil && ibkrProv.Client != nil && !ibkrProv.Client.IsAuthenticated() {
 		return at.handleIBKRRuntimeError("session_check", fmt.Errorf("IBKR session not ready"))
 	}
 
@@ -293,6 +294,9 @@ func (at *AutoTrader) brokerRuntimeLogLineLocked(state BrokerRuntimeState) strin
 }
 
 func (at *AutoTrader) checkIBKRSessionReadiness() error {
+	if twsProv, ok := at.provider.(*market.IBKRTWSProvider); ok && twsProv != nil && twsProv.Client != nil {
+		return twsProv.Client.CheckSessionReadiness(at.config.IBKRAccountID)
+	}
 	ibkrProv, ok := at.provider.(*market.IBKRProvider)
 	if !ok || ibkrProv == nil || ibkrProv.Client == nil {
 		return fmt.Errorf("IBKR provider is not initialized")

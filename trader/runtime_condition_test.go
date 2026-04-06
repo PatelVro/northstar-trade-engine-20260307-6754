@@ -95,6 +95,19 @@ func TestClassifyBlockedCycleReason_MarketClosed(t *testing.T) {
 	}
 }
 
+func TestClassifyBlockedCycleReason_BrokerMaintenance(t *testing.T) {
+	state := classifyBlockedCycleReason("IBKR nightly reset window is active; broker account-state endpoints are temporarily unavailable")
+	if state.State != RuntimeConditionBlocked {
+		t.Errorf("expected blocked, got %s", state.State)
+	}
+	if state.Severity != incidents.SeverityInfo {
+		t.Errorf("expected info severity, got %s", state.Severity)
+	}
+	if !state.ExpectedNonTradable {
+		t.Error("expected ExpectedNonTradable=true")
+	}
+}
+
 func TestClassifyBlockedCycleReason_Reconciliation(t *testing.T) {
 	state := classifyBlockedCycleReason("pending clean reconciliation cycle")
 	if state.State != RuntimeConditionAwaitingReconciliation {
@@ -442,6 +455,41 @@ func TestCurrentRuntimeCondition_BrokerTruthBlocksCycle(t *testing.T) {
 	)
 	if view.CycleTradable {
 		t.Fatalf("broker truth block should prevent trading")
+	}
+}
+
+func TestCurrentRuntimeCondition_ReadinessMaintenanceOutranksRestartRecovery(t *testing.T) {
+	at := &AutoTrader{isRunning: true}
+	at.setReadinessSummary(ReadinessSummary{
+		Status:         ReadinessFail,
+		Message:        "1 blocking readiness check(s) failed",
+		CheckedAt:      time.Now(),
+		TradingAllowed: false,
+		Checks: []ReadinessCheck{
+			readinessFail("broker_bootstrap", "IBKR nightly reset window is active; broker_bootstrap account-state endpoints are temporarily unavailable"),
+			readinessWarn("restart_recovery", "durable runtime state restored; broker reconciliation must confirm orders and positions before trading resumes"),
+		},
+	})
+	view := at.currentRuntimeConditionState(
+		healthyGate(),
+		brokerTruthSummary{},
+		OperatorDataQualitySummary{},
+		nil, nil,
+		restartRecoverySummary{TradingBlocked: true, Message: "durable runtime state restored; broker reconciliation must confirm orders and positions before trading resumes"},
+		killSwitchSummary{},
+		healthyBrokerStatus(),
+	)
+	if view.State != RuntimeConditionBlocked {
+		t.Fatalf("expected blocked runtime state, got %+v", view)
+	}
+	if view.Severity != incidents.SeverityInfo {
+		t.Fatalf("expected info severity, got %+v", view)
+	}
+	if !view.ExpectedNonTradable {
+		t.Fatalf("expected maintenance readiness failure to mark expected_non_tradable")
+	}
+	if view.AwaitingReconciliation {
+		t.Fatalf("did not expect restart recovery to outrank readiness maintenance: %+v", view)
 	}
 }
 

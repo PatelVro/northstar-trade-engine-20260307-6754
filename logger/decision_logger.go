@@ -7,6 +7,9 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
+	"strconv"
 	"time"
 )
 
@@ -196,6 +199,72 @@ type DecisionLogger struct {
 	cycleNumber int
 }
 
+var decisionCyclePattern = regexp.MustCompile(`_cycle(\d+)\.json$`)
+
+// SanitizeNonFiniteFloats replaces NaN/Inf values with zero so decision records
+// can always be persisted and surfaced to operators.
+func (r *DecisionRecord) SanitizeNonFiniteFloats() int {
+	if r == nil {
+		return 0
+	}
+	return sanitizeNonFiniteValue(reflect.ValueOf(r))
+}
+
+func sanitizeNonFiniteValue(v reflect.Value) int {
+	if !v.IsValid() {
+		return 0
+	}
+
+	switch v.Kind() {
+	case reflect.Pointer:
+		if v.IsNil() {
+			return 0
+		}
+		return sanitizeNonFiniteValue(v.Elem())
+	case reflect.Interface:
+		if v.IsNil() {
+			return 0
+		}
+		return sanitizeNonFiniteValue(v.Elem())
+	case reflect.Struct:
+		count := 0
+		for i := 0; i < v.NumField(); i++ {
+			count += sanitizeNonFiniteValue(v.Field(i))
+		}
+		return count
+	case reflect.Slice, reflect.Array:
+		count := 0
+		for i := 0; i < v.Len(); i++ {
+			count += sanitizeNonFiniteValue(v.Index(i))
+		}
+		return count
+	case reflect.Map:
+		count := 0
+		iter := v.MapRange()
+		for iter.Next() {
+			value := iter.Value()
+			if !value.IsValid() {
+				continue
+			}
+			clone := reflect.New(value.Type()).Elem()
+			clone.Set(value)
+			count += sanitizeNonFiniteValue(clone)
+			v.SetMapIndex(iter.Key(), clone)
+		}
+		return count
+	case reflect.Float32, reflect.Float64:
+		f := v.Float()
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			if v.CanSet() {
+				v.SetFloat(0)
+			}
+			return 1
+		}
+	}
+
+	return 0
+}
+
 // NewDecisionLogger instantiates a logger configuration
 func NewDecisionLogger(logDir string) *DecisionLogger {
 	if logDir == "" {
@@ -209,8 +278,34 @@ func NewDecisionLogger(logDir string) *DecisionLogger {
 
 	return &DecisionLogger{
 		logDir:      logDir,
-		cycleNumber: 0,
+		cycleNumber: latestPersistedCycleNumber(logDir),
 	}
+}
+
+func latestPersistedCycleNumber(logDir string) int {
+	entries, err := os.ReadDir(logDir)
+	if err != nil {
+		return 0
+	}
+
+	maxCycle := 0
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		matches := decisionCyclePattern.FindStringSubmatch(entry.Name())
+		if len(matches) != 2 {
+			continue
+		}
+		cycle, err := strconv.Atoi(matches[1])
+		if err != nil {
+			continue
+		}
+		if cycle > maxCycle {
+			maxCycle = cycle
+		}
+	}
+	return maxCycle
 }
 
 // LogDecision saves a decision object locally for historical tracking
@@ -218,6 +313,10 @@ func (l *DecisionLogger) LogDecision(record *DecisionRecord) error {
 	l.cycleNumber++
 	record.CycleNumber = l.cycleNumber
 	record.Timestamp = time.Now()
+	if sanitized := record.SanitizeNonFiniteFloats(); sanitized > 0 {
+		record.ExecutionLog = append(record.ExecutionLog,
+			fmt.Sprintf("decision record sanitized %d non-finite numeric value(s) before persistence", sanitized))
+	}
 
 	// Build log label constraint format: decision_YYYYMMDD_HHMMSS_cycleN.json
 	filename := fmt.Sprintf("decision_%s_cycle%d.json",

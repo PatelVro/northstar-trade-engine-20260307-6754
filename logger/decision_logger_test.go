@@ -115,7 +115,7 @@ func TestLogDecisionAndGetLatestRecords(t *testing.T) {
 	// Log 3 records
 	for i := 0; i < 3; i++ {
 		record := &DecisionRecord{
-			Success:    true,
+			Success:     true,
 			InputPrompt: "test prompt",
 			Decisions: []DecisionAction{
 				{Action: "open_long", Symbol: "AAPL", Success: true, Price: 150, Quantity: 10},
@@ -162,6 +162,32 @@ func TestLogDecisionIncrementsCycleNumber(t *testing.T) {
 	}
 }
 
+func TestNewDecisionLoggerContinuesCycleNumberFromExistingFiles(t *testing.T) {
+	dir := t.TempDir()
+	logDir := filepath.Join(dir, "logs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		t.Fatalf("failed to create log dir: %v", err)
+	}
+	for _, name := range []string{
+		"decision_20260326_101635_cycle1.json",
+		"decision_20260326_102208_cycle2.json",
+		"decision_20260326_110242_cycle7.json",
+	} {
+		if err := os.WriteFile(filepath.Join(logDir, name), []byte(`{}`), 0644); err != nil {
+			t.Fatalf("failed to seed %s: %v", name, err)
+		}
+	}
+
+	dl := NewDecisionLogger(logDir)
+	record := &DecisionRecord{Success: true}
+	if err := dl.LogDecision(record); err != nil {
+		t.Fatalf("LogDecision failed: %v", err)
+	}
+	if record.CycleNumber != 8 {
+		t.Fatalf("expected cycle 8 after existing files, got %d", record.CycleNumber)
+	}
+}
+
 func TestLogDecisionWritesValidJSON(t *testing.T) {
 	dir := t.TempDir()
 	logDir := filepath.Join(dir, "logs")
@@ -202,6 +228,98 @@ func TestLogDecisionWritesValidJSON(t *testing.T) {
 	}
 	if len(parsed.Decisions) != 1 || parsed.Decisions[0].Symbol != "MSFT" {
 		t.Error("decision data not preserved in round-trip")
+	}
+}
+
+func TestLogDecisionSanitizesNonFiniteFloats(t *testing.T) {
+	dir := t.TempDir()
+	logDir := filepath.Join(dir, "logs")
+	dl := NewDecisionLogger(logDir)
+
+	record := &DecisionRecord{
+		Success:     true,
+		InputPrompt: "nan test",
+		AccountState: AccountSnapshot{
+			AccountingVersion: 2,
+			AccountEquity:     math.NaN(),
+			MarginUsedPct:     math.Inf(1),
+		},
+		Pipeline: []PipelineObservation{
+			{
+				Symbol:           "COP",
+				RegimeScore:      math.NaN(),
+				RegimeConfidence: math.Inf(-1),
+			},
+		},
+		Decisions: []DecisionAction{
+			{
+				Action:               "open_long",
+				Symbol:               "COP",
+				Success:              true,
+				Price:                math.Inf(1),
+				Quantity:             math.NaN(),
+				DecisionPositionSize: math.NaN(),
+				DecisionStopLoss:     math.Inf(-1),
+				DecisionTakeProfit:   math.Inf(1),
+				Pipeline: &PipelineDecision{
+					DecisionAllowed:       true,
+					RecommendedQuantity:   math.NaN(),
+					RecommendedNotional:   math.Inf(1),
+					TargetPositionPct:     math.Inf(-1),
+					RiskBudgetUsed:        math.NaN(),
+					AllocationAllowTrade:  true,
+					AllocationReducedSize: false,
+				},
+			},
+		},
+	}
+
+	if err := dl.LogDecision(record); err != nil {
+		t.Fatalf("LogDecision failed: %v", err)
+	}
+
+	entries, err := os.ReadDir(logDir)
+	if err != nil {
+		t.Fatalf("failed to read log dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log file, got %d", len(entries))
+	}
+
+	data, err := os.ReadFile(filepath.Join(logDir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("failed to read log file: %v", err)
+	}
+
+	var parsed DecisionRecord
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("expected sanitized JSON, got unmarshal error: %v", err)
+	}
+
+	if parsed.AccountState.AccountEquity != 0 {
+		t.Fatalf("expected sanitized account equity to be 0, got %.2f", parsed.AccountState.AccountEquity)
+	}
+	if parsed.AccountState.MarginUsedPct != 0 {
+		t.Fatalf("expected sanitized margin used pct to be 0, got %.2f", parsed.AccountState.MarginUsedPct)
+	}
+	if len(parsed.Pipeline) != 1 || parsed.Pipeline[0].RegimeScore != 0 || parsed.Pipeline[0].RegimeConfidence != 0 {
+		t.Fatalf("expected sanitized pipeline floats, got %+v", parsed.Pipeline)
+	}
+	if len(parsed.Decisions) != 1 {
+		t.Fatalf("expected one decision action, got %d", len(parsed.Decisions))
+	}
+	action := parsed.Decisions[0]
+	if action.Price != 0 || action.Quantity != 0 || action.DecisionPositionSize != 0 || action.DecisionStopLoss != 0 || action.DecisionTakeProfit != 0 {
+		t.Fatalf("expected sanitized action floats, got %+v", action)
+	}
+	if action.Pipeline == nil {
+		t.Fatal("expected nested pipeline decision to be preserved")
+	}
+	if action.Pipeline.RecommendedQuantity != 0 || action.Pipeline.RecommendedNotional != 0 || action.Pipeline.TargetPositionPct != 0 || action.Pipeline.RiskBudgetUsed != 0 {
+		t.Fatalf("expected sanitized nested pipeline floats, got %+v", action.Pipeline)
+	}
+	if len(parsed.ExecutionLog) == 0 {
+		t.Fatal("expected sanitization note in execution log")
 	}
 }
 

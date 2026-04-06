@@ -313,6 +313,13 @@ func (at *AutoTrader) preflightRuntimeMarketData(ctx *decision.Context) error {
 	opts := at.currentDataValidationOptions()
 	opts.ExpectedBars = 40
 	opts.StaleAfterBars = 6 // tolerate IBKR paper account 15-min delayed data
+	// During the first 20 minutes after market open, IBKR's 15-min delayed feed won't
+	// have any current-session bars yet — the last bar is from yesterday's close (~17h stale).
+	// Use a large tolerance for the feed probe so overnight-stale data doesn't kill the probe.
+	// Per-symbol checks in getValidatedMarketData still use StaleAfterBars=6.
+	if ibkrPostOpenDelayWindow(at.currentTimeUTC()) {
+		opts.StaleAfterBars = 400
+	}
 	series, err := at.provider.GetBars(probeSymbols, "3m", 40)
 	if err != nil {
 		summary := fmt.Sprintf("runtime market-data probe failed: %v", err)
@@ -358,4 +365,24 @@ func (at *AutoTrader) preflightRuntimeMarketData(ctx *decision.Context) error {
 	at.updateMarketDataFeedStatus(true, summary, probeSymbols)
 	at.syncMarketDataFeedDelayIncident(true, summary, details)
 	return fmt.Errorf("market-data feed delayed: %s", summary)
+}
+
+// ibkrPostOpenDelayWindow returns true during the first 20 minutes after the US equity
+// market opens (9:30–9:50 AM ET). IBKR paper accounts have 15-minute delayed data, so
+// no current-session bars are available in this window — the history endpoint returns bars
+// only up to the previous session's close (~17h stale). The feed probe uses a much larger
+// StaleAfterBars tolerance during this window to avoid a false "feed delayed" block.
+func ibkrPostOpenDelayWindow(now time.Time) bool {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		return false
+	}
+	et := now.In(loc)
+	if et.Weekday() == time.Saturday || et.Weekday() == time.Sunday {
+		return false
+	}
+	midnight := time.Date(et.Year(), et.Month(), et.Day(), 0, 0, 0, 0, loc)
+	open := midnight.Add(9*time.Hour + 30*time.Minute)
+	windowEnd := open.Add(20 * time.Minute)
+	return !et.Before(open) && et.Before(windowEnd)
 }

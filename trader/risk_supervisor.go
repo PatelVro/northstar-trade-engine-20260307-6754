@@ -309,6 +309,36 @@ func (at *AutoTrader) currentTradingGateDecision(probeStrictLive bool, account *
 			Message:         "trading blocked: trader loop is not running",
 		}
 	}
+	readiness := at.getReadinessSummary()
+	if readiness.CheckedAt.After(time.Time{}) && !readiness.TradingAllowed {
+		reasons := make([]string, 0, len(readiness.Checks))
+		for _, check := range readiness.Checks {
+			if check.Status == ReadinessPass && check.TradingAllowed {
+				continue
+			}
+			reason := strings.TrimSpace(check.Message)
+			if reason == "" {
+				continue
+			}
+			reasons = append(reasons, reason)
+		}
+		blockReason := firstNonEmpty(strings.TrimSpace(readiness.Message), "startup readiness is blocking trading")
+		if len(reasons) > 0 {
+			blockReason = reasons[0]
+		} else {
+			reasons = []string{blockReason}
+		}
+		return tradingGateDecision{
+			Mode:            risk.SupervisorModeHalted,
+			TradingAllowed:  false,
+			EntriesAllowed:  false,
+			ExitsAllowed:    false,
+			ReduceOnly:      false,
+			BlockReason:     blockReason,
+			BlockingReasons: reasons,
+			Message:         fmt.Sprintf("trading blocked: %s", blockReason),
+		}
+	}
 	restartRecovery := at.currentRestartRecoverySummary()
 	if restartRecovery.TradingBlocked {
 		blockReason := strings.TrimSpace(restartRecovery.Message)

@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import type { Position, DecisionRecord } from '../types';
 
-export function TradeExecutionMonitor({ positions, decisions }: { positions?: Position[], decisions?: DecisionRecord[] }) {
+export function TradeExecutionMonitor({ positions, decisions, currency = 'USD' }: { positions?: Position[], decisions?: DecisionRecord[], currency?: string }) {
 
     const recentExecutions = useMemo(() => {
         return (decisions || [])
@@ -91,7 +91,7 @@ export function TradeExecutionMonitor({ positions, decisions }: { positions?: Po
                                         <div>
                                             <div className="text-[10px] text-[#848E9C] uppercase tracking-wider mb-1">Current PnL</div>
                                             <div className={`font-mono font-bold ${activePos.unrealized_pnl >= 0 ? 'text-[#0ECB81]' : 'text-[#F6465D]'}`}>
-                                                {activePos.unrealized_pnl >= 0 ? '+' : ''}{activePos.unrealized_pnl.toFixed(2)} USDT
+                                                {activePos.unrealized_pnl >= 0 ? '+' : ''}{activePos.unrealized_pnl.toFixed(2)} {currency}
                                                 <span className="text-xs ml-1 opacity-80">({activePos.unrealized_pnl_pct.toFixed(2)}%)</span>
                                             </div>
                                         </div>

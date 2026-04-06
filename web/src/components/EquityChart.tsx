@@ -31,9 +31,10 @@ interface EquityPoint {
 
 interface EquityChartProps {
   traderId?: string;
+  currency?: string;
 }
 
-export function EquityChart({ traderId }: EquityChartProps) {
+export function EquityChart({ traderId, currency = 'USD' }: EquityChartProps) {
   const { language } = useLanguage();
   const [displayMode, setDisplayMode] = useState<'dollar' | 'percent'>('dollar');
 
@@ -148,17 +149,17 @@ export function EquityChart({ traderId }: EquityChartProps) {
         <div className="rounded p-3 shadow-xl" style={{ background: '#1E2329', border: '1px solid #2B3139' }}>
           <div className="text-xs mb-1" style={{ color: '#848E9C' }}>Cycle #{data.cycle}</div>
           <div className="font-bold mono" style={{ color: '#EAECEF' }}>
-            Strategy Equity {data.raw_strategy_equity.toFixed(2)} USDT
+            Strategy Equity {data.raw_strategy_equity.toFixed(2)} {currency}
           </div>
           <div className="text-xs mono" style={{ color: '#848E9C' }}>
-            Broker Equity {data.raw_account_equity.toFixed(2)} USDT
+            Broker Equity {data.raw_account_equity.toFixed(2)} {currency}
           </div>
           <div
             className="text-sm mono font-bold"
             style={{ color: data.raw_total_pnl >= 0 ? '#0ECB81' : '#F6465D' }}
           >
             {data.raw_total_pnl >= 0 ? '+' : ''}
-            {data.raw_total_pnl.toFixed(2)} USDT ({data.raw_strategy_return_pct >= 0 ? '+' : ''}
+            {data.raw_total_pnl.toFixed(2)} {currency} ({data.raw_strategy_return_pct >= 0 ? '+' : ''}
             {data.raw_strategy_return_pct.toFixed(2)}%)
           </div>
         </div>
@@ -176,7 +177,7 @@ export function EquityChart({ traderId }: EquityChartProps) {
           <div className="flex flex-col sm:flex-row sm:items-baseline gap-2 sm:gap-4">
             <span className="text-2xl sm:text-3xl font-bold mono" style={{ color: '#EAECEF' }}>
               {account?.strategy_equity.toFixed(2) || '0.00'}
-              <span className="text-base sm:text-lg ml-1" style={{ color: '#848E9C' }}>USDT</span>
+              <span className="text-base sm:text-lg ml-1" style={{ color: '#848E9C' }}>{currency}</span>
             </span>
             <div className="flex items-center gap-2 flex-wrap">
               <span
@@ -191,7 +192,7 @@ export function EquityChart({ traderId }: EquityChartProps) {
                 {currentValue.raw_strategy_return_pct.toFixed(2)}%
               </span>
               <span className="text-xs sm:text-sm mono" style={{ color: '#848E9C' }}>
-                ({isProfit ? '+' : ''}{currentValue.raw_total_pnl.toFixed(2)} USDT)
+                ({isProfit ? '+' : ''}{currentValue.raw_total_pnl.toFixed(2)} {currency})
               </span>
             </div>
           </div>
@@ -207,7 +208,7 @@ export function EquityChart({ traderId }: EquityChartProps) {
               : { background: 'transparent', color: '#848E9C' }
             }
           >
-             USDT
+             {currency}
           </button>
           <button
             onClick={() => setDisplayMode('percent')}
@@ -281,13 +282,13 @@ export function EquityChart({ traderId }: EquityChartProps) {
         <div className="p-2 rounded transition-all hover:bg-opacity-50" style={{ background: 'rgba(240, 185, 11, 0.05)' }}>
           <div className="text-xs mb-1 uppercase tracking-wider" style={{ color: '#848E9C' }}>{t('initialBalance', language)}</div>
           <div className="text-xs sm:text-sm font-bold mono" style={{ color: '#EAECEF' }}>
-            {initialBalance.toFixed(2)} USDT
+            {initialBalance.toFixed(2)} {currency}
           </div>
         </div>
         <div className="p-2 rounded transition-all hover:bg-opacity-50" style={{ background: 'rgba(240, 185, 11, 0.05)' }}>
           <div className="text-xs mb-1 uppercase tracking-wider" style={{ color: '#848E9C' }}>{t('currentEquity', language)}</div>
           <div className="text-xs sm:text-sm font-bold mono" style={{ color: '#EAECEF' }}>
-            {currentValue.raw_strategy_equity.toFixed(2)} USDT
+            {currentValue.raw_strategy_equity.toFixed(2)} {currency}
           </div>
         </div>
         <div className="p-2 rounded transition-all hover:bg-opacity-50" style={{ background: 'rgba(240, 185, 11, 0.05)' }}>

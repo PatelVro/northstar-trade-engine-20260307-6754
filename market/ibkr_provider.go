@@ -79,7 +79,8 @@ func (p *IBKRProvider) GetBars(symbols []string, interval string, limit int) (ma
 
 		// 3. Parse Response
 		var histResp struct {
-			Data []struct {
+			Error string `json:"error"`
+			Data  []struct {
 				T int64   `json:"t"` // timestamp ms
 				O float64 `json:"o"`
 				H float64 `json:"h"`
@@ -95,6 +96,10 @@ func (p *IBKRProvider) GetBars(symbols []string, interval string, limit int) (ma
 			return nil, err
 		}
 		resp.Body.Close()
+
+		if histResp.Error != "" {
+			return nil, fmt.Errorf("IBKR history unavailable for %s: %s", symbol, histResp.Error)
+		}
 
 		// 4. Map to Standard Klines
 		var klines []Kline

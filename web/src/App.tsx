@@ -499,7 +499,7 @@ function TraderDetailsPage({
         <div className="space-y-6">
           {/* Equity Chart */}
           <div className="animate-slide-in" style={{ animationDelay: '0.1s' }}>
-            <EquityChart traderId={selectedTrader.trader_id} />
+            <EquityChart traderId={selectedTrader.trader_id} currency={accountCurrency} />
           </div>
 
           {/* Current Positions */}
@@ -627,13 +627,13 @@ function TraderDetailsPage({
 
       {/* Execution Monitors */}
       <div className="mb-6">
-        <TradeExecutionMonitor positions={positions} decisions={decisions} />
+        <TradeExecutionMonitor positions={positions} decisions={decisions} currency={accountCurrency} />
         <StrategyComplianceMonitor records={decisions} />
       </div>
 
       {/* AI Learning & Performance Analysis */}
       <div className="mb-6 animate-slide-in" style={{ animationDelay: '0.3s' }}>
-        <AILearning traderId={selectedTrader.trader_id} />
+        <AILearning traderId={selectedTrader.trader_id} currency={accountCurrency} />
       </div>
 
       {/* Chart Overlay */}

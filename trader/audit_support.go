@@ -71,14 +71,14 @@ func (at *AutoTrader) enrichDecisionRecordRuntimeTruth(record *logger.DecisionRe
 	if at == nil || record == nil {
 		return
 	}
-	status := at.GetOperatorStatus()
-	record.RuntimeState = string(status.RuntimeCondition.State)
-	record.RuntimeSeverity = string(status.RuntimeCondition.Severity)
-	record.CycleTradable = status.RuntimeCondition.CycleTradable
-	record.ExpectedNonTradable = status.RuntimeCondition.ExpectedNonTradable
-	record.AwaitingReconciliation = status.RuntimeCondition.AwaitingReconciliation
-	record.RuntimeReason = strings.TrimSpace(status.RuntimeCondition.Reason)
-	record.RuntimeCauses = append([]string(nil), status.RuntimeCondition.Causes...)
+	runtimeCondition := at.currentDecisionRecordRuntimeCondition()
+	record.RuntimeState = string(runtimeCondition.State)
+	record.RuntimeSeverity = string(runtimeCondition.Severity)
+	record.CycleTradable = runtimeCondition.CycleTradable
+	record.ExpectedNonTradable = runtimeCondition.ExpectedNonTradable
+	record.AwaitingReconciliation = runtimeCondition.AwaitingReconciliation
+	record.RuntimeReason = strings.TrimSpace(runtimeCondition.Reason)
+	record.RuntimeCauses = append([]string(nil), runtimeCondition.Causes...)
 
 	if record.AccountState.HasCanonicalAccounting() {
 		return
@@ -106,6 +106,33 @@ func (at *AutoTrader) enrichDecisionRecordRuntimeTruth(record *logger.DecisionRe
 		TotalBalance:           account.AccountEquity,
 		TotalUnrealizedProfit:  account.UnrealizedPnL,
 	}
+}
+
+func (at *AutoTrader) currentDecisionRecordRuntimeCondition() runtimeConditionStateView {
+	if at == nil {
+		return runtimeConditionStateView{}
+	}
+
+	account := at.currentLatestAccountSummary()
+	gate := at.currentTradingGateDecision(false, account)
+	orderRecon := at.currentOrderReconciliationSummary()
+	positionRecon := at.currentPositionReconciliationSummary()
+	dataQuality := at.currentDataQualitySummary()
+	restartRecovery := at.currentRestartRecoverySummary()
+	brokerTruth := at.currentBrokerTruthSummary()
+	killSwitch := at.currentKillSwitchSummary()
+	brokerStatus := at.brokerRuntimeStatus()
+
+	return at.currentRuntimeConditionState(
+		gate,
+		brokerTruth,
+		dataQuality,
+		positionRecon,
+		orderRecon,
+		restartRecovery,
+		killSwitch,
+		brokerStatus,
+	)
 }
 
 func (at *AutoTrader) buildDecisionAuditRecord(record *logger.DecisionRecord, ctx *decision.Context) audit.DecisionRecord {

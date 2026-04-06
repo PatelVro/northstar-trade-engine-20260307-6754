@@ -101,3 +101,51 @@ func TestGetOperatorStatus_IncludesRiskSupervisorSummary(t *testing.T) {
 		t.Fatalf("expected trading gate mode reduce_only, got %s", status.TradingGate.Mode)
 	}
 }
+
+func TestCurrentTradingGateDecision_ReadinessFailureOutranksRestartRecovery(t *testing.T) {
+	at := &AutoTrader{
+		id:       "risk_supervisor_readiness_priority",
+		name:     "Risk Supervisor Readiness Priority",
+		exchange: "ibkr",
+		config: AutoTraderConfig{
+			ID:             "risk_supervisor_readiness_priority",
+			Name:           "Risk Supervisor Readiness Priority",
+			Mode:           "paper",
+			Broker:         "ibkr",
+			DataProvider:   "ibkr",
+			InstrumentType: "equity",
+			InitialBalance: 100000,
+		},
+		initialBalance: 100000,
+		isRunning:      true,
+	}
+	maintenance := "IBKR nightly reset window is active; broker_bootstrap account-state endpoints are temporarily unavailable and trading will remain paused until broker truth returns"
+	at.setReadinessSummary(ReadinessSummary{
+		Status:         ReadinessFail,
+		Message:        "1 blocking readiness check(s) failed",
+		CheckedAt:      time.Now(),
+		TradingAllowed: false,
+		Checks: []ReadinessCheck{
+			readinessFail("broker_bootstrap", maintenance),
+			readinessWarn("restart_recovery", "durable runtime state restored; broker reconciliation must confirm orders and positions before trading resumes"),
+		},
+	})
+	at.restartRecoveryState = restartRecoverySummary{
+		Available:             true,
+		Restored:              true,
+		PendingReconciliation: true,
+		TradingBlocked:        true,
+		Message:               "durable runtime state restored; broker reconciliation must confirm orders and positions before trading resumes",
+	}
+
+	gate := at.currentTradingGateDecision(false, nil)
+	if gate.TradingAllowed {
+		t.Fatalf("expected readiness failure to block trading")
+	}
+	if gate.BlockReason != maintenance {
+		t.Fatalf("expected readiness block reason to win, got %q", gate.BlockReason)
+	}
+	if len(gate.BlockingReasons) == 0 || gate.BlockingReasons[0] != maintenance {
+		t.Fatalf("expected readiness blocking reasons to lead, got %+v", gate.BlockingReasons)
+	}
+}

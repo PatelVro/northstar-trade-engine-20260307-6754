@@ -597,6 +597,22 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 			if config.DataProvider == "csv" {
 				provider = market.NewCSVProvider(config.CSVDataDir)
 				log.Printf(" [%s] Using CSV Data Provider from %s", config.Name, config.CSVDataDir)
+			} else if config.DataProvider == "ibkr_tws" {
+				twsHost := "127.0.0.1"
+				twsPort := 4002 // paper trading default
+				if strings.Contains(strings.ToLower(config.Mode), "live") {
+					twsPort = 4001
+				}
+				twsProvider, err := market.NewIBKRTWSProvider(twsHost, twsPort, 1, config.IBKRAccountID)
+				if err != nil {
+					log.Printf(" [%s] Failed to connect to IB Gateway TWS API: %v", config.Name, err)
+					log.Printf(" [%s] Falling back to Client Portal REST API", config.Name)
+					ibkrProvider := market.NewIBKRProvider(config.IBKRGatewayURL, config.IBKRAccountID, config.IBKRSessionCookie)
+					provider = ibkrProvider
+				} else {
+					provider = twsProvider
+					log.Printf(" [%s] Using IB Gateway TWS API Data Provider (port %d)", config.Name, twsPort)
+				}
 			} else if config.DataProvider == "ibkr" {
 				ibkrProvider := market.NewIBKRProvider(config.IBKRGatewayURL, config.IBKRAccountID, config.IBKRSessionCookie)
 				provider = ibkrProvider
@@ -611,6 +627,9 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 				if config.Broker == "sim" {
 					trader = NewSimTrader(config.InitialBalance, provider)
 					log.Printf(" [%s] Using Simulated Broker against IBKR Data", config.Name)
+				} else if twsProv, ok := provider.(*market.IBKRTWSProvider); ok {
+					trader = NewIBKRTWSTrader(twsProv, config.IBKRAccountID, config.InitialBalance)
+					log.Printf(" [%s] Using IB Gateway TWS API Execution Engine", config.Name)
 				} else {
 					trader = NewIBKRTrader(config.IBKRGatewayURL, config.IBKRAccountID, config.IBKRSessionCookie, provider.(*market.IBKRProvider), config.InitialBalance)
 					log.Printf(" [%s] Using Interactive Brokers Live Execution Engine", config.Name)
@@ -970,6 +989,9 @@ func (at *AutoTrader) ensureIBKRLiveReady() error {
 		return nil
 	}
 
+	if twsProv, ok := at.provider.(*market.IBKRTWSProvider); ok && twsProv != nil && twsProv.Client != nil {
+		return twsProv.Client.CheckLiveReadiness(at.config.IBKRAccountID)
+	}
 	ibkrProv, ok := at.provider.(*market.IBKRProvider)
 	if !ok || ibkrProv == nil || ibkrProv.Client == nil {
 		return fmt.Errorf("strict_live_mode requires an initialized IBKR provider")

@@ -311,15 +311,25 @@ func (at *AutoTrader) snapshotDurableRuntimeState() durableRuntimeState {
 }
 
 func writeDurableRuntimeState(path string, state durableRuntimeState) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create runtime state directory: %w", err)
 	}
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal runtime state: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("write runtime state: %w", err)
+
+	// Atomic write: write to a temporary file first, then rename.
+	// This prevents corruption if the process crashes mid-write.
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		return fmt.Errorf("write runtime state temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		// Clean up the temp file on rename failure.
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("rename runtime state temp file: %w", err)
 	}
 	return nil
 }

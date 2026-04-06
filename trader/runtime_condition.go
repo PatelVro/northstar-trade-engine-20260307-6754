@@ -48,6 +48,16 @@ func isMarketClosedReason(reason string) bool {
 		strings.Contains(lower, "market closed")
 }
 
+func isBrokerMaintenanceReason(reason string) bool {
+	lower := strings.ToLower(strings.TrimSpace(reason))
+	if lower == "" {
+		return false
+	}
+	return strings.Contains(lower, "nightly reset window") ||
+		strings.Contains(lower, "maintenance window") ||
+		strings.Contains(lower, "brokerage reset")
+}
+
 func isAwaitingReconciliationReason(reason string) bool {
 	lower := strings.ToLower(strings.TrimSpace(reason))
 	if lower == "" {
@@ -71,6 +81,10 @@ func classifyBlockedCycleReason(reason string) blockedCycleState {
 	switch {
 	case isMarketClosedReason(reason):
 		state.State = RuntimeConditionMarketClosed
+		state.Severity = incidents.SeverityInfo
+		state.ExpectedNonTradable = true
+	case isBrokerMaintenanceReason(reason):
+		state.State = RuntimeConditionBlocked
 		state.Severity = incidents.SeverityInfo
 		state.ExpectedNonTradable = true
 	case isAwaitingReconciliationReason(reason):
@@ -147,6 +161,7 @@ func (at *AutoTrader) currentRuntimeConditionState(
 	killSwitch killSwitchSummary,
 	brokerStatus brokerRuntimeSnapshot,
 ) runtimeConditionStateView {
+	readiness := at.getReadinessSummary()
 	recentBlocked := at.currentBlockedCycle()
 	view := runtimeConditionStateView{
 		State:         RuntimeConditionHealthy,
@@ -162,6 +177,32 @@ func (at *AutoTrader) currentRuntimeConditionState(
 		view.CycleTradable = false
 		view.Reason = firstNonEmpty(strings.TrimSpace(killSwitch.Message), "kill switch active")
 		view.Causes = []string{view.Reason}
+		return view
+	}
+
+	if readiness.CheckedAt.After(time.Time{}) && !readiness.TradingAllowed {
+		reasons := make([]string, 0, len(readiness.Checks))
+		for _, check := range readiness.Checks {
+			if check.Status == ReadinessPass && check.TradingAllowed {
+				continue
+			}
+			reason := strings.TrimSpace(check.Message)
+			if reason == "" {
+				continue
+			}
+			reasons = append(reasons, reason)
+		}
+		if len(reasons) == 0 {
+			reasons = []string{firstNonEmpty(strings.TrimSpace(readiness.Message), "startup readiness is blocking trading")}
+		}
+		classified := classifyBlockedCycleReason(reasons[0])
+		view.State = classified.State
+		view.Severity = classified.Severity
+		view.CycleTradable = false
+		view.ExpectedNonTradable = classified.ExpectedNonTradable
+		view.AwaitingReconciliation = classified.AwaitingReconciliation
+		view.Reason = reasons[0]
+		view.Causes = append([]string(nil), reasons...)
 		return view
 	}
 

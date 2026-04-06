@@ -202,6 +202,7 @@ func TestEnrichDecisionRecordRuntimeTruthAddsConditionAndLatestAccount(t *testin
 
 	at.enrichDecisionRecordExecutionTruth(record)
 	at.enrichDecisionRecordRuntimeTruth(record)
+	status := at.GetOperatorStatus()
 
 	if record.RuntimeState != string(RuntimeConditionAwaitingReconciliation) {
 		t.Fatalf("expected awaiting reconciliation runtime state, got %+v", record)
@@ -211,5 +212,13 @@ func TestEnrichDecisionRecordRuntimeTruthAddsConditionAndLatestAccount(t *testin
 	}
 	if !record.AccountState.HasCanonicalAccounting() {
 		t.Fatalf("expected latest account snapshot to be backfilled into decision record")
+	}
+	if record.RuntimeState != string(status.RuntimeCondition.State) ||
+		record.RuntimeSeverity != string(status.RuntimeCondition.Severity) ||
+		record.CycleTradable != status.RuntimeCondition.CycleTradable ||
+		record.ExpectedNonTradable != status.RuntimeCondition.ExpectedNonTradable ||
+		record.AwaitingReconciliation != status.RuntimeCondition.AwaitingReconciliation ||
+		record.RuntimeReason != status.RuntimeCondition.Reason {
+		t.Fatalf("expected decision record runtime truth to match operator status core fields, record=%+v status=%+v", record, status.RuntimeCondition)
 	}
 }
