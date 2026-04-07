@@ -173,18 +173,19 @@ func (w *twsWrapper) NextValidID(reqID int64) {
 }
 
 func (w *twsWrapper) Error(reqID int64, errorTime int64, errCode int64, errString string, advancedOrderRejectJson string) {
-	// Codes 2104, 2106, 2107, 2108, 2119, 2158 are informational data farm messages
-	if errCode == 2104 || errCode == 2106 || errCode == 2107 || errCode == 2108 || errCode == 2158 || errCode == 2119 {
+	// Informational / transient connectivity messages — don't push to errChan.
+	// 1100 = connectivity lost (weekend maintenance), 1101 = connectivity restored (pending restart)
+	// 1102 = connectivity fully restored, 2100 = unsubscribed from account data
+	// 2104/2106/2107/2108/2119/2158 = data farm status messages
+	switch errCode {
+	case 1100, 1101, 1102:
+		log.Printf(" TWS connectivity [%d]: %s", errCode, errString)
+		return
+	case 2100, 2104, 2106, 2107, 2108, 2119, 2158:
 		log.Printf(" TWS info [%d]: %s", errCode, errString)
 		return
-	}
-	// Suppress 504 spam — only log once per batch (handled by reconnect monitor)
-	if errCode == 504 {
-		return
-	}
-	// 2100 = "API client has been unsubscribed from account data" — informational
-	if errCode == 2100 {
-		log.Printf(" TWS info [%d]: %s", errCode, errString)
+	case 504:
+		// Suppress "Not connected" spam — handled by reconnect monitor
 		return
 	}
 	log.Printf(" TWS error [reqID=%d code=%d]: %s", reqID, errCode, errString)
@@ -676,8 +677,9 @@ func (c *IBKRTWSClient) GetHistoricalBars(symbol string, conID int, barSize stri
 	reqID := c.getReqID()
 	drainHistoricalData(c.wrapper)
 
-	// Empty end date = current time; useRTH=true; formatDate=1 (yyyyMMdd HH:mm:ss)
-	c.client.ReqHistoricalData(reqID, &contract, "", duration, barSize, "TRADES", true, 1, false, nil)
+	// Empty end date = current time; useRTH=false to include extended hours + current session;
+	// formatDate=1 (yyyyMMdd HH:mm:ss)
+	c.client.ReqHistoricalData(reqID, &contract, "", duration, barSize, "TRADES", false, 1, false, nil)
 
 	var bars []HistoricalBarResult
 	timeout := time.After(30 * time.Second)

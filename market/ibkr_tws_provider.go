@@ -2,6 +2,7 @@ package market
 
 import (
 	"fmt"
+	"log"
 	"northstar/broker"
 	"strings"
 	"time"
@@ -37,7 +38,9 @@ func (p *IBKRTWSProvider) GetBars(symbols []string, interval string, limit int) 
 	for _, symbol := range symbols {
 		conID, err := p.Client.ResolveContract(symbol)
 		if err != nil {
-			return nil, fmt.Errorf("failed to resolve contract for %s: %w", symbol, err)
+			log.Printf(" TWS bars: skipping %s — contract resolve failed: %v", symbol, err)
+			result[symbol] = nil
+			continue
 		}
 
 		// Small delay between symbols to avoid pacing violations
@@ -47,7 +50,9 @@ func (p *IBKRTWSProvider) GetBars(symbols []string, interval string, limit int) 
 
 		bars, err := p.Client.GetHistoricalBars(symbol, conID, barSize, duration, limit)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get historical bars for %s: %w", symbol, err)
+			log.Printf(" TWS bars: skipping %s — historical data unavailable: %v", symbol, err)
+			result[symbol] = nil
+			continue
 		}
 
 		klines := twsBarsToKlines(bars, barSize)
@@ -125,20 +130,27 @@ func parseTWSDate(dateStr string) int64 {
 		return 0
 	}
 
-	// TWS intraday format: "20240102 09:30:00" or epoch seconds
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		loc = time.UTC
+	}
+
+	// TWS returns dates like "20260402 09:30:00 US/Eastern" — strip timezone suffix.
+	// The timezone is always US/Eastern for US equities, which we handle via loc.
+	cleaned := dateStr
+	if idx := strings.Index(cleaned, " US/"); idx > 0 {
+		cleaned = cleaned[:idx]
+	}
+
+	// TWS intraday format: "20240102 09:30:00" or "20240102" for daily
 	layouts := []string{
 		"20060102 15:04:05",
 		"20060102  15:04:05", // double space variant
 		"20060102",
 	}
 
-	loc, err := time.LoadLocation("America/New_York")
-	if err != nil {
-		loc = time.UTC
-	}
-
 	for _, layout := range layouts {
-		if t, err := time.ParseInLocation(layout, dateStr, loc); err == nil {
+		if t, err := time.ParseInLocation(layout, cleaned, loc); err == nil {
 			return t.UnixMilli()
 		}
 	}

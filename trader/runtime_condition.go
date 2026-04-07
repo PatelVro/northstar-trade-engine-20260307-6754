@@ -48,6 +48,15 @@ func isMarketClosedReason(reason string) bool {
 		strings.Contains(lower, "market closed")
 }
 
+func isDataQualityBlockReason(reason string) bool {
+	lower := strings.ToLower(strings.TrimSpace(reason))
+	if lower == "" {
+		return false
+	}
+	return strings.Contains(lower, "data quality blocked") ||
+		strings.Contains(lower, "no bars available")
+}
+
 func isBrokerMaintenanceReason(reason string) bool {
 	lower := strings.ToLower(strings.TrimSpace(reason))
 	if lower == "" {
@@ -84,6 +93,10 @@ func classifyBlockedCycleReason(reason string) blockedCycleState {
 		state.Severity = incidents.SeverityInfo
 		state.ExpectedNonTradable = true
 	case isBrokerMaintenanceReason(reason):
+		state.State = RuntimeConditionBlocked
+		state.Severity = incidents.SeverityInfo
+		state.ExpectedNonTradable = true
+	case isDataQualityBlockReason(reason):
 		state.State = RuntimeConditionBlocked
 		state.Severity = incidents.SeverityInfo
 		state.ExpectedNonTradable = true
