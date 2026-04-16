@@ -167,6 +167,14 @@ type AutoTraderConfig struct {
 	BenchmarkSymbols                    []string
 	MaxCycles                           int
 	ReplayWarmupBars                    int
+
+	// Session guard (#13)
+	AllowExtendedHours bool   // Permit pre-market/after-hours equity entry (default false)
+	SessionTimezone    string // IANA timezone for session guard (default "America/New_York")
+
+	// Order throttle (#14)
+	OrderThrottleMaxBurst  int // Token bucket burst capacity (default 10)
+	OrderThrottlePerMinute int // Steady-state refill rate in orders per minute (default 20)
 }
 
 // AutoTrader The automatic trader engine
@@ -301,6 +309,11 @@ type AutoTrader struct {
 	brokerLastStateLogKey                 string
 	brokerLastStateLogAt                  time.Time
 	timeNow                               func() time.Time
+
+	// #13 exchange session guard — non-nil for equity instrument type
+	sessionGuard *sessionGuard
+	// #14 order submission throttle — always non-nil after init
+	orderThrottle *orderThrottle
 }
 
 // NewAutoTrader Creates a new automatic trader
@@ -773,6 +786,31 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 	}
 	at.restoreDurableRuntimeState()
 
+	// #13 — session guard: only required for equity instrument type.
+	if config.InstrumentType == "equity" {
+		tz := config.SessionTimezone
+		if tz == "" {
+			tz = "America/New_York"
+		}
+		sg, err := NewSessionGuard(tz, config.AllowExtendedHours)
+		if err != nil {
+			log.Printf(" [%s] session guard init failed (timezone=%q): %v; session guard disabled", config.Name, tz, err)
+		} else {
+			at.sessionGuard = sg
+		}
+	}
+
+	// #14 — order throttle: always initialized.
+	throttleBurst := config.OrderThrottleMaxBurst
+	if throttleBurst <= 0 {
+		throttleBurst = 10
+	}
+	throttleRate := config.OrderThrottlePerMinute
+	if throttleRate <= 0 {
+		throttleRate = 20
+	}
+	at.orderThrottle = NewOrderThrottle(throttleBurst, throttleRate)
+
 	return at, nil
 }
 
@@ -807,6 +845,10 @@ func (at *AutoTrader) Run() error {
 		return err
 	}
 	at.startKillSwitchMonitor()
+	// Run startup self-check for actionable diagnostics before the readiness gate.
+	// This is informational only — it does not block startup.
+	selfCheckReport := RunStartupSelfCheck(at)
+	LogStartupCheckReport(at, selfCheckReport)
 	if err := at.waitForStartupReadiness(); err != nil {
 		return err
 	}
@@ -1880,6 +1922,20 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 
 // executeDecisionWithRecord MAP Lists lists Arrays targets Tracker Array string maps Limit map permutations Mapper targeting strings limitations arrays map Limit LIMIT Maps Tracking
 func (at *AutoTrader) executeDecisionWithRecord(decision *decision.Decision, actionRecord *logger.DecisionAction) error {
+	// #13 — session guard: block accidental after-hours equity entries.
+	if at.sessionGuard != nil && (decision.Action == "open_long" || decision.Action == "open_short") {
+		now := time.Now()
+		if !at.sessionGuard.AllowsTrading(now) {
+			log.Printf(" [%s] session guard: skipping %s %s — market not open at %s (extended_hours=%v)",
+				at.name, decision.Action, decision.Symbol, now.Format("15:04:05 MST"), at.config.AllowExtendedHours)
+			if actionRecord != nil {
+				actionRecord.OrderStatus = "blocked"
+				actionRecord.Error = "session guard: market closed"
+			}
+			return fmt.Errorf("session guard: market not open for %s %s", decision.Symbol, decision.Action)
+		}
+	}
+
 	var preTrade *preTradeRiskContext
 	if decision.Action != "hold" && decision.Action != "wait" {
 		riskCtx, err := at.evaluatePreTradeRisk(decision)

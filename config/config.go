@@ -48,6 +48,16 @@ type TraderConfig struct {
 	AlpacaSecretKey    string `json:"alpaca_secret_key,omitempty"`
 	AlpacaPaperTrading bool   `json:"alpaca_paper_trading,omitempty"`
 
+	// Session and throttle config
+	AllowExtendedHours    bool   `json:"allow_extended_hours,omitempty"`     // Permit pre-market/after-hours equity trading (default false)
+	SessionTimezone       string `json:"session_timezone,omitempty"`          // IANA timezone for session guard (default "America/New_York")
+	OrderThrottleMaxBurst int    `json:"order_throttle_max_burst,omitempty"`  // Token bucket burst capacity for order rate limiting (default 10)
+	OrderThrottlePerMinute int   `json:"order_throttle_per_minute,omitempty"` // Token bucket refill rate in orders per minute (default 20)
+
+	// Execution reliability config
+	MaxOrderStalenessSeconds int `json:"max_order_staleness_seconds,omitempty"` // Auto-cancel submitted/accepted orders older than this (default 120)
+	OrderDedupWindowSeconds  int `json:"order_dedup_window_seconds,omitempty"`  // Client-side broker-level dedup window TTL in seconds (default 60)
+
 	// IBKR config
 	IBKRGatewayURL              string `json:"ibkr_gateway_url,omitempty"`
 	IBKRAccountID               string `json:"ibkr_account_id,omitempty"`

@@ -12,16 +12,16 @@ Legend:
 2. [x] Surface IBKR order reject signals as hard errors instead of silent success.
 3. [x] Confirm suppressable IBKR warnings explicitly and validate confirm responses.
 4. [x] Make IBKR HTTP retries safe for POST bodies by rebuilding request body per attempt.
-5. [ ] Add idempotency key support for order submit retries.
-6. [ ] Add client-side order de-duplication window by `(symbol, side, qty, ts bucket)`.
-7. [ ] Add timeout budget per execution phase (submit, confirm, fill-poll, bracket).
-8. [ ] Add configurable max order-staleness auto-cancel.
+5. [x] Add idempotency key support for order submit retries.
+6. [x] Add client-side order de-duplication window by `(symbol, side, qty, ts bucket)`.
+7. [x] Add timeout budget per execution phase (submit, confirm, fill-poll, bracket).
+8. [x] Add configurable max order-staleness auto-cancel.
 9. [ ] Add partial-fill aware bracket sizing.
 10. [ ] Add retry policy matrix by endpoint class (quote/order/portfolio/auth).
 11. [ ] Add bulk cancellation fallback for stuck order storms.
 12. [ ] Add side/quantity normalization utility for all broker adapters.
-13. [ ] Add exchange-session guard to prevent accidental after-hours entry.
-14. [ ] Add order throttling token bucket to avoid pacing rejects.
+13. [x] Add exchange-session guard to prevent accidental after-hours entry.
+14. [x] Add order throttling token bucket to avoid pacing rejects.
 15. [ ] Add per-symbol lock to avoid concurrent conflicting orders.
 16. [ ] Add “pending close” lock to prevent reopen before close settlement.
 17. [ ] Add adaptive sleep after 429 based on Retry-After header.

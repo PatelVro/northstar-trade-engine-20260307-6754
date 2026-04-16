@@ -183,6 +183,10 @@ func (tm *TraderManager) AddTrader(cfg config.TraderConfig, defaultSymbols []str
 		DynamicPositionSizing:               dynamicSizing,
 		RegimeRiskScaling:                   regimeRiskScaling,
 		BenchmarkSymbols:                    cfg.BenchmarkSymbols,
+		AllowExtendedHours:                  cfg.AllowExtendedHours,
+		SessionTimezone:                     cfg.SessionTimezone,
+		OrderThrottleMaxBurst:               cfg.OrderThrottleMaxBurst,
+		OrderThrottlePerMinute:              cfg.OrderThrottlePerMinute,
 	}
 
 	// Create new AutoTrader execution wrapper

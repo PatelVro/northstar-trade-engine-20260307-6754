@@ -1,7 +1,9 @@
 package trader
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"northstar/decision"
 	"northstar/execution"
 	"northstar/logger"
@@ -115,6 +117,23 @@ func (at *AutoTrader) buildExecutionIntent(d *decision.Decision, actionRecord *l
 }
 
 func (at *AutoTrader) submitExecutionIntent(d *decision.Decision, actionRecord *logger.DecisionAction, quantity float64) (execution.Result, error) {
+	// #14 — order throttle: ensure we don't exceed broker pacing limits.
+	if at.orderThrottle != nil {
+		if !at.orderThrottle.Allow() {
+			log.Printf(" [%s] order throttle: bucket empty for %s %s; waiting up to 5s", at.name, d.Action, d.Symbol)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := at.orderThrottle.Wait(ctx); err != nil {
+				log.Printf(" [%s] order throttle: wait expired for %s %s: %v", at.name, d.Action, d.Symbol, err)
+				if actionRecord != nil {
+					actionRecord.OrderStatus = "blocked"
+					actionRecord.Error = "order throttle: rate limit reached"
+				}
+				return execution.Result{Status: execution.StatusBlocked, Symbol: d.Symbol, ActionType: d.Action, Error: "order throttle: rate limit reached"}, fmt.Errorf("order throttle: rate limit reached for %s %s", d.Symbol, d.Action)
+			}
+		}
+	}
+
 	manager := at.ensureExecutionManager()
 	_ = at.ensureBrokerTruthReadyForTrading()
 	gate := at.currentTradingGateDecision(true, at.currentLatestAccountSummary())
