@@ -2,6 +2,7 @@ package trader
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -18,6 +19,19 @@ import (
 	"time"
 )
 
+// Per-phase execution timeout budgets.
+const (
+	orderSubmitTimeout   = 10 * time.Second
+	orderConfirmTimeout  = 15 * time.Second
+	fillPollTimeout      = 45 * time.Second
+	bracketSubmitTimeout = 10 * time.Second
+)
+
+type idempotencyRecord struct {
+	result    map[string]interface{}
+	expiresAt time.Time
+}
+
 type IBKRTrader struct {
 	BaseURL       string
 	AccountID     string
@@ -30,6 +44,16 @@ type IBKRTrader struct {
 	fallbackCash  float64
 	protectMu     sync.Mutex
 	protectiveOCA map[string]string
+
+	// Idempotency key map: key -> prior result, for 2-minute TTL retry dedup (#5)
+	idempotencyMu  sync.Mutex
+	idempotencyMap map[string]idempotencyRecord
+
+	// Client-side broker-level order dedup guard (#6)
+	orderDedup *orderDedupWindow
+
+	// Max order staleness auto-cancel threshold (#8); 0 means use default (120s)
+	maxOrderStaleness time.Duration
 }
 
 type IBKRBrokerSnapshot struct {
@@ -57,10 +81,13 @@ func NewIBKRTrader(baseURL, accountID, sessionCookie string, provider *market.IB
 			Transport: tr,
 			Timeout:   10 * time.Second,
 		},
-		Provider:      provider,
-		orderStore:    orders.NewStore(),
-		fallbackCash:  initialBalance,
-		protectiveOCA: make(map[string]string),
+		Provider:          provider,
+		orderStore:        orders.NewStore(),
+		fallbackCash:      initialBalance,
+		protectiveOCA:     make(map[string]string),
+		idempotencyMap:    make(map[string]idempotencyRecord),
+		orderDedup:        NewOrderDedupWindow(60 * time.Second),
+		maxOrderStaleness: 120 * time.Second,
 	}
 
 	go trader.reconcilerLoop()
@@ -268,14 +295,66 @@ func (t *IBKRTrader) GetPositions() ([]map[string]interface{}, error) {
 	return positions, nil
 }
 
-func (t *IBKRTrader) CreateOrder(symbol string, side string, intent orders.Intent, positionSide string, price float64, quantity float64, leverage int, takeProfit string, stopLoss string) (map[string]interface{}, error) {
-	// First resolve ConID using our central IBKRClient cache
-	cID, err := t.Provider.Client.ResolveContract(symbol)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve ConID for %s: %w", symbol, err)
-	}
+// idempotencyKey builds a deterministic key for (symbol, side, qty, 30s bucket).
+func (t *IBKRTrader) idempotencyKey(symbol, side string, qty float64) string {
+	tsBucket := time.Now().Unix() / 30
+	return fmt.Sprintf("%s_%s_%s_%.2f_%d", t.AccountID, strings.ToUpper(strings.TrimSpace(symbol)), strings.ToUpper(strings.TrimSpace(side)), qty, tsBucket)
+}
 
-	// Format Northstar long/short to IBKR BUY/SELL
+// checkIdempotency returns a prior result if the same key was submitted within the 2-minute TTL.
+func (t *IBKRTrader) checkIdempotency(key string) (map[string]interface{}, bool) {
+	t.idempotencyMu.Lock()
+	defer t.idempotencyMu.Unlock()
+	if t.idempotencyMap == nil {
+		return nil, false
+	}
+	rec, ok := t.idempotencyMap[key]
+	if !ok {
+		return nil, false
+	}
+	if time.Now().After(rec.expiresAt) {
+		delete(t.idempotencyMap, key)
+		return nil, false
+	}
+	return rec.result, true
+}
+
+// recordIdempotency stores the result for the key with a 2-minute TTL.
+func (t *IBKRTrader) recordIdempotency(key string, result map[string]interface{}) {
+	t.idempotencyMu.Lock()
+	defer t.idempotencyMu.Unlock()
+	if t.idempotencyMap == nil {
+		t.idempotencyMap = make(map[string]idempotencyRecord)
+	}
+	// Sweep expired entries to avoid unbounded growth.
+	now := time.Now()
+	for k, rec := range t.idempotencyMap {
+		if now.After(rec.expiresAt) {
+			delete(t.idempotencyMap, k)
+		}
+	}
+	t.idempotencyMap[key] = idempotencyRecord{
+		result:    result,
+		expiresAt: now.Add(2 * time.Minute),
+	}
+}
+
+// SetMaxOrderStaleness configures the threshold after which submitted/accepted orders are auto-cancelled.
+func (t *IBKRTrader) SetMaxOrderStaleness(d time.Duration) {
+	if d > 0 {
+		t.maxOrderStaleness = d
+	}
+}
+
+// SetOrderDedupTTL configures the client-side broker dedup window TTL.
+func (t *IBKRTrader) SetOrderDedupTTL(d time.Duration) {
+	if d > 0 && t.orderDedup != nil {
+		t.orderDedup.SetTTL(d)
+	}
+}
+
+func (t *IBKRTrader) CreateOrder(symbol string, side string, intent orders.Intent, positionSide string, price float64, quantity float64, leverage int, takeProfit string, stopLoss string) (map[string]interface{}, error) {
+	// Format Northstar long/short to IBKR BUY/SELL first (needed for keys below)
 	ibkrSide := "BUY"
 	if strings.EqualFold(strings.TrimSpace(side), "short") {
 		ibkrSide = "SELL"
@@ -291,6 +370,25 @@ func (t *IBKRTrader) CreateOrder(symbol string, side string, intent orders.Inten
 		return nil, fmt.Errorf("quantity too small after whole-share normalization: %.4f", quantity)
 	}
 	qtyValue := int64(wholeQty)
+
+	// #5 Idempotency check — skip re-submission and return prior result if same key seen within 2-minute TTL.
+	idemKey := t.idempotencyKey(symbol, ibkrSide, float64(qtyValue))
+	if priorResult, isDupe := t.checkIdempotency(idemKey); isDupe {
+		log.Printf("IBKR: idempotency hit for %s %s qty=%d — returning prior submission result", symbol, ibkrSide, qtyValue)
+		return priorResult, nil
+	}
+
+	// #6 Broker-level dedup guard — prevent duplicate orders for the same (symbol, side, qty) within the dedup window.
+	if t.orderDedup != nil && t.orderDedup.IsDuplicate(symbol, ibkrSide, float64(qtyValue)) {
+		log.Printf("IBKR: order dedup suppressed duplicate submission for %s %s qty=%d", symbol, ibkrSide, qtyValue)
+		return nil, fmt.Errorf("duplicate order suppressed: %s %s qty=%d already submitted within dedup window", symbol, ibkrSide, qtyValue)
+	}
+
+	// First resolve ConID using our central IBKRClient cache
+	cID, err := t.Provider.Client.ResolveContract(symbol)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve ConID for %s: %w", symbol, err)
+	}
 
 	// Phase 1 - Submit Entry Order
 	entryOrder := map[string]interface{}{
@@ -312,10 +410,20 @@ func (t *IBKRTrader) CreateOrder(symbol string, side string, intent orders.Inten
 	log.Printf("IBKR: Placing entry order for %d %s %s...", qtyValue, symbol, ibkrSide)
 
 	entryLocalID := t.registerLocalOrder(intent, symbol, ibkrSide, positionSide, float64(qtyValue), time.Now())
-	if err := t.submitIBKROrders([]interface{}{entryOrder}); err != nil {
+
+	// #7 Submit phase timeout budget.
+	submitCtx, submitCancel := context.WithTimeout(context.Background(), orderSubmitTimeout)
+	defer submitCancel()
+	if err := t.submitIBKROrdersCtx(submitCtx, []interface{}{entryOrder}); err != nil {
 		t.recordLocalOrderReject(entryLocalID, err)
 		return nil, fmt.Errorf("entry order failed: %w", err)
 	}
+
+	// #6 Mark successful submission in dedup window.
+	if t.orderDedup != nil {
+		t.orderDedup.Mark(symbol, ibkrSide, float64(qtyValue))
+	}
+
 	reconcileErr := t.reconcileOrderLifecycle()
 	if reconcileErr != nil {
 		log.Printf(" IBKR: order submitted for %s %s, but lifecycle reconciliation is still pending: %v", symbol, ibkrSide, reconcileErr)
@@ -326,13 +434,22 @@ func (t *IBKRTrader) CreateOrder(symbol string, side string, intent orders.Inten
 		result["protection_message"] = "protective orders must wait for broker-confirmed entry fill"
 	}
 	log.Printf(" IBKR: Entry order for %s %s submitted with status=%s; awaiting lifecycle/reconciliation truth before any fill-dependent action", symbol, ibkrSide, toString(result["status"]))
+
+	// #5 Record idempotency result.
+	t.recordIdempotency(idemKey, result)
 	return result, nil
 }
 
-// submitIBKROrders is a helper to transmit the REST payload and handle reply confirmation loops
-func (t *IBKRTrader) submitIBKROrders(orders []interface{}) error {
+// submitIBKROrders is a helper to transmit the REST payload and handle reply confirmation loops.
+// It uses a background context. Prefer submitIBKROrdersCtx when a timeout budget is needed.
+func (t *IBKRTrader) submitIBKROrders(orderList []interface{}) error {
+	return t.submitIBKROrdersCtx(context.Background(), orderList)
+}
+
+// submitIBKROrdersCtx transmits the REST payload with per-phase context timeouts (#7).
+func (t *IBKRTrader) submitIBKROrdersCtx(ctx context.Context, orderList []interface{}) error {
 	payload := map[string]interface{}{
-		"orders": orders,
+		"orders": orderList,
 	}
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
@@ -340,13 +457,13 @@ func (t *IBKRTrader) submitIBKROrders(orders []interface{}) error {
 	}
 	url := fmt.Sprintf("%s/iserver/account/%s/orders", t.BaseURL, t.AccountID)
 
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := t.Provider.Client.Do(req)
+	resp, err := t.Provider.Client.DoForClass(ctx, broker.EndpointClassOrder, req)
 	if err != nil {
 		return err
 	}
@@ -374,14 +491,18 @@ func (t *IBKRTrader) submitIBKROrders(orders []interface{}) error {
 			continue
 		}
 
+		// #7 Confirm phase timeout budget.
+		confirmCtx, confirmCancel := context.WithTimeout(context.Background(), orderConfirmTimeout)
 		confirmURL := fmt.Sprintf("%s/iserver/reply/%s", t.BaseURL, reply.ID)
-		reqConfirm, err := http.NewRequest("POST", confirmURL, strings.NewReader(`{"confirmed":true}`))
+		reqConfirm, err := http.NewRequestWithContext(confirmCtx, "POST", confirmURL, strings.NewReader(`{"confirmed":true}`))
 		if err != nil {
+			confirmCancel()
 			return fmt.Errorf("failed to build IBKR confirm request: %w", err)
 		}
 		reqConfirm.Header.Set("Content-Type", "application/json")
 
-		confirmResp, err := t.Provider.Client.Do(reqConfirm)
+		confirmResp, err := t.Provider.Client.DoForClass(confirmCtx, broker.EndpointClassOrder, reqConfirm)
+		confirmCancel()
 		if err != nil {
 			return fmt.Errorf("ibkr confirm %s failed: %w", reply.ID, err)
 		}
@@ -745,7 +866,7 @@ func (t *IBKRTrader) CancelAllOrders(symbol string) error {
 		return err
 	}
 
-	resp, err := t.Provider.Client.Do(req)
+	resp, err := t.Provider.Client.DoForClass(req.Context(), broker.EndpointClassOrder, req)
 	if err != nil {
 		return err
 	}
@@ -827,7 +948,9 @@ func (t *IBKRTrader) SetStopLoss(symbol string, positionSide string, quantity, s
 		"ocaGroup":   ocaGroup,
 	}
 	localID := t.registerLocalOrder(protectiveIntent(strings.ToLower(positionSide), "stop"), symbol, exitSide, strings.ToLower(positionSide), float64(qtyValue), time.Now())
-	if err := t.submitIBKROrders([]interface{}{order}); err != nil {
+	bracketCtx, bracketCancel := context.WithTimeout(context.Background(), bracketSubmitTimeout)
+	defer bracketCancel()
+	if err := t.submitIBKROrdersCtx(bracketCtx, []interface{}{order}); err != nil {
 		t.recordLocalOrderReject(localID, err)
 		return fmt.Errorf("failed to submit stop-loss for %s: %w", symbol, err)
 	}
@@ -866,7 +989,9 @@ func (t *IBKRTrader) SetTakeProfit(symbol string, positionSide string, quantity,
 		"ocaGroup":   ocaGroup,
 	}
 	localID := t.registerLocalOrder(protectiveIntent(strings.ToLower(positionSide), "target"), symbol, exitSide, strings.ToLower(positionSide), float64(qtyValue), time.Now())
-	if err := t.submitIBKROrders([]interface{}{order}); err != nil {
+	bracketCtx, bracketCancel := context.WithTimeout(context.Background(), bracketSubmitTimeout)
+	defer bracketCancel()
+	if err := t.submitIBKROrdersCtx(bracketCtx, []interface{}{order}); err != nil {
 		t.recordLocalOrderReject(localID, err)
 		return fmt.Errorf("failed to submit take-profit for %s: %w", symbol, err)
 	}
@@ -999,7 +1124,61 @@ func (t *IBKRTrader) reconcileOrderLifecycle() error {
 			log.Printf(" IBKR order issue [%s]: %s", issue.Type, issue.Message)
 		}
 	}
+
+	// #8 Stale order auto-cancel: cancel any submitted/accepted order older than maxOrderStaleness.
+	t.cancelStaleOrders()
+
 	t.notifyLifecyclePersistence()
+	return nil
+}
+
+// cancelStaleOrders auto-cancels orders in Submitted/Accepted state older than maxOrderStaleness (#8).
+func (t *IBKRTrader) cancelStaleOrders() {
+	if t.orderStore == nil {
+		return
+	}
+	staleness := t.maxOrderStaleness
+	if staleness <= 0 {
+		staleness = 120 * time.Second
+	}
+	now := time.Now()
+	for _, record := range t.orderStore.ActiveOrders() {
+		if record.Status != orders.StatusSubmitted && record.Status != orders.StatusAccepted {
+			continue
+		}
+		age := now.Sub(record.SubmittedAt)
+		if age < staleness {
+			continue
+		}
+		brokerOrderID := strings.TrimSpace(record.BrokerOrderID)
+		ageSecs := int(age.Seconds())
+		log.Printf("[%s] Order %s for %s is stale (%ds) — auto-cancelling", t.AccountID, record.LocalID, record.Symbol, ageSecs)
+		if brokerOrderID != "" {
+			if err := t.cancelOrderByBrokerID(brokerOrderID); err != nil {
+				log.Printf("[%s] Failed to auto-cancel stale order %s (broker=%s): %v", t.AccountID, record.LocalID, brokerOrderID, err)
+			}
+		} else {
+			log.Printf("[%s] Stale order %s has no broker ID yet — cannot cancel at broker; will retry next reconciliation", t.AccountID, record.LocalID)
+		}
+	}
+}
+
+// cancelOrderByBrokerID cancels a single order via the IBKR cancel endpoint.
+func (t *IBKRTrader) cancelOrderByBrokerID(brokerOrderID string) error {
+	cancelURL := fmt.Sprintf("%s/iserver/account/%s/order/%s", t.BaseURL, t.AccountID, brokerOrderID)
+	req, err := http.NewRequest("DELETE", cancelURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := t.Provider.Client.DoForClass(req.Context(), broker.EndpointClassOrder, req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return broker.NewIBKRHTTPError("DELETE", req.URL.Path, resp.StatusCode, string(body))
+	}
 	return nil
 }
 
