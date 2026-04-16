@@ -74,6 +74,157 @@ func TestHandleHealthReturnsLivenessPayload(t *testing.T) {
 	}
 }
 
+// --- GET /readiness endpoint tests ---
+
+func TestHandleReadiness_EmptyTraderManager(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := &Server{
+		router:        gin.New(),
+		traderManager: manager.NewTraderManager(),
+		startedAt:     time.Now().Add(-time.Minute),
+	}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/readiness", nil)
+
+	s.handleReadiness(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 for empty manager, got %d", w.Code)
+	}
+	var resp ReadinessResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode readiness response: %v", err)
+	}
+	if resp.Status != "ok" {
+		t.Fatalf("expected status 'ok' for empty trader list, got %q", resp.Status)
+	}
+	if resp.CheckedAt == "" {
+		t.Fatal("expected non-empty checked_at")
+	}
+	if resp.Traders == nil {
+		t.Fatal("expected non-nil traders slice")
+	}
+}
+
+func TestBuildReadinessResponse_AllOk(t *testing.T) {
+	traders := map[string]*trader.AutoTrader{}
+	now := time.Date(2026, 4, 16, 1, 0, 0, 0, time.UTC)
+	resp := buildReadinessResponse(traders, now, 3600)
+
+	if resp.Status != "ok" {
+		t.Fatalf("expected 'ok' for empty traders map, got %q", resp.Status)
+	}
+	if resp.UptimeSeconds != 3600 {
+		t.Fatalf("expected uptime 3600, got %d", resp.UptimeSeconds)
+	}
+	if resp.CheckedAt != "2026-04-16T01:00:00Z" {
+		t.Fatalf("unexpected checked_at: %q", resp.CheckedAt)
+	}
+}
+
+func TestBuildReadinessResponse_RollupDegraded(t *testing.T) {
+	// Single trader with a degraded broker state — rollup should be "degraded"
+	ops := trader.OperatorStatusSummary{
+		TraderID:   "t1",
+		TraderName: "Trader One",
+		Mode:       "paper",
+		BrokerRuntime: trader.OperatorBrokerRuntimeSummary{
+			Managed: true,
+			State:   trader.BrokerRuntimeDegraded,
+			Reason:  "gateway unreachable",
+		},
+		RiskSupervisor: trader.OperatorRiskSupervisorSummary{
+			TradingAllowed: true,
+			Summary:        "no incidents",
+		},
+	}
+	tr := buildTraderReadiness(nil, ops)
+	if tr.Checks.Broker.Status != "degraded" {
+		t.Fatalf("expected broker check 'degraded', got %q", tr.Checks.Broker.Status)
+	}
+	if tr.Status != "degraded" {
+		t.Fatalf("expected overall trader status 'degraded', got %q", tr.Status)
+	}
+}
+
+func TestBuildReadinessResponse_RollupDown(t *testing.T) {
+	// Broker state other than healthy/degraded should map to "down"
+	ops := trader.OperatorStatusSummary{
+		TraderID:   "t1",
+		TraderName: "Trader One",
+		Mode:       "paper",
+		BrokerRuntime: trader.OperatorBrokerRuntimeSummary{
+			Managed: true,
+			State:   trader.BrokerRuntimeState("paused"),
+			Reason:  "auth failed",
+		},
+		RiskSupervisor: trader.OperatorRiskSupervisorSummary{
+			TradingAllowed: true,
+		},
+	}
+	tr := buildTraderReadiness(nil, ops)
+	if tr.Checks.Broker.Status != "down" {
+		t.Fatalf("expected broker check 'down' for unknown state, got %q", tr.Checks.Broker.Status)
+	}
+	if tr.Status != "down" {
+		t.Fatalf("expected overall trader status 'down', got %q", tr.Status)
+	}
+}
+
+func TestBuildReadinessResponse_AICheckFromReadinessGate(t *testing.T) {
+	ops := trader.OperatorStatusSummary{
+		TraderID: "t1",
+		AIProvider: "DeepSeek",
+		Readiness: trader.OperatorReadinessSummary{
+			Checks: []trader.ReadinessCheck{
+				{Name: "ai_readiness", Status: trader.ReadinessFail, Message: "DeepSeek key missing"},
+			},
+		},
+		BrokerRuntime: trader.OperatorBrokerRuntimeSummary{Managed: false},
+		RiskSupervisor: trader.OperatorRiskSupervisorSummary{TradingAllowed: true},
+	}
+	tr := buildTraderReadiness(nil, ops)
+	if tr.Checks.AI.Status != "down" {
+		t.Fatalf("expected AI check 'down' when readiness gate fails, got %q", tr.Checks.AI.Status)
+	}
+}
+
+func TestBuildReadinessResponse_RiskSupervisorCriticalIncident(t *testing.T) {
+	ops := trader.OperatorStatusSummary{
+		TraderID:      "t1",
+		BrokerRuntime: trader.OperatorBrokerRuntimeSummary{Managed: false},
+		RiskSupervisor: trader.OperatorRiskSupervisorSummary{
+			TradingAllowed:        false,
+			CriticalIncidentCount: 1,
+			Summary:               "daily loss limit exceeded",
+		},
+	}
+	tr := buildTraderReadiness(nil, ops)
+	if tr.Checks.RiskSupervisor.Status != "degraded" {
+		t.Fatalf("expected risk_supervisor 'degraded' with critical incident, got %q", tr.Checks.RiskSupervisor.Status)
+	}
+}
+
+func TestRollupStatus(t *testing.T) {
+	cases := []struct {
+		statuses []string
+		want     string
+	}{
+		{[]string{"ok", "ok"}, "ok"},
+		{[]string{"ok", "degraded"}, "degraded"},
+		{[]string{"degraded", "down"}, "down"},
+		{[]string{"ok", "ok", "down", "degraded"}, "down"},
+		{[]string{}, "ok"},
+	}
+	for _, tc := range cases {
+		got := rollupStatus(tc.statuses...)
+		if got != tc.want {
+			t.Errorf("rollupStatus(%v) = %q, want %q", tc.statuses, got, tc.want)
+		}
+	}
+}
+
 func TestBuildOperatorStatusResponseIncludesClearOperatorSummary(t *testing.T) {
 	now := time.Date(2026, 3, 15, 17, 30, 0, 0, time.UTC)
 	resp := buildOperatorStatusResponse(trader.OperatorStatusSummary{

@@ -17,7 +17,7 @@ Legend:
 7. [x] Add timeout budget per execution phase (submit, confirm, fill-poll, bracket).
 8. [x] Add configurable max order-staleness auto-cancel.
 9. [ ] Add partial-fill aware bracket sizing.
-10. [ ] Add retry policy matrix by endpoint class (quote/order/portfolio/auth).
+10. [x] Add retry policy matrix by endpoint class (quote/order/portfolio/auth).
 11. [ ] Add bulk cancellation fallback for stuck order storms.
 12. [ ] Add side/quantity normalization utility for all broker adapters.
 13. [x] Add exchange-session guard to prevent accidental after-hours entry.
@@ -118,10 +118,10 @@ Legend:
 
 91. [ ] Add structured logging with consistent event IDs.
 92. [ ] Add per-order lifecycle timeline events in API and UI.
-93. [ ] Add readiness endpoint with broker/data/news health matrix.
+93. [x] Add readiness endpoint with broker/data/news health matrix.
 94. [ ] Add dashboards for drawdown, heat, slippage, reject rate, latency.
 95. [ ] Add alerting rules (email/Telegram/webhook) for risk and connectivity.
-96. [ ] Add startup self-check pipeline and actionable diagnostics.
+96. [x] Add startup self-check pipeline and actionable diagnostics.
 97. [ ] Add runbook docs for market-open, halt, and recovery procedures.
 98. [ ] Add one-click paper session report export.
 99. [ ] Add immutable audit log for compliance-grade traceability.

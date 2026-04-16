@@ -236,6 +236,44 @@ func (c *IBKRClient) DoPreflight(method, endpoint string) ([]byte, int, error) {
 	return c.doPreflight(method, endpoint)
 }
 
+// DoForClass executes req with the retry policy for the given EndpointClass.
+//
+// It wraps the existing Do() method (which handles session cookies, pacing, and
+// error classification) with DoWithRetry so that per-class backoff and attempt
+// limits are honoured on top of the base transport handling.
+//
+// Usage:
+//
+//	resp, err := client.DoForClass(ctx, EndpointClassQuote, req)
+//	resp, err := client.DoForClass(ctx, EndpointClassOrder, req)
+//	resp, err := client.DoForClass(ctx, EndpointClassPortfolio, req)
+//	resp, err := client.DoForClass(ctx, EndpointClassAuth, req)  // no retry
+func (c *IBKRClient) DoForClass(ctx context.Context, class EndpointClass, req *http.Request) (*http.Response, error) {
+	// Capture body bytes once so each retry attempt can rebuild the body.
+	var bodyBytes []byte
+	if req.Body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(req.Body)
+		if err != nil {
+			return nil, fmt.Errorf("DoForClass: failed to read request body: %w", err)
+		}
+		_ = req.Body.Close()
+	}
+
+	return DoWithRetry(ctx, class, func() (*http.Response, error) {
+		// Rebuild the request for each attempt so Do() can re-read the body.
+		attemptReq := req.Clone(ctx)
+		if bodyBytes != nil {
+			attemptReq.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+			attemptReq.ContentLength = int64(len(bodyBytes))
+			attemptReq.GetBody = func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(bodyBytes)), nil
+			}
+		}
+		return c.Do(attemptReq)
+	})
+}
+
 func (c *IBKRClient) logRateLimited(key, format string, args ...interface{}) {
 	if key == "" {
 		key = format

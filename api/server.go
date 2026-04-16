@@ -156,8 +156,11 @@ func corsMiddleware() gin.HandlerFunc {
 
 // setupRoutes configuration
 func (s *Server) setupRoutes() {
-	// health check
+	// health check (shallow liveness only)
 	s.router.Any("/health", s.handleHealth)
+
+	// readiness check (deep broker/data/ai health matrix)
+	s.router.GET("/readiness", s.handleReadiness)
 
 	// WebSocket endpoint
 	s.router.GET("/ws", s.handleWebSocket)
@@ -188,6 +191,19 @@ func (s *Server) setupRoutes() {
 // handleHealth reports shallow service liveness and build diagnostics only.
 func (s *Server) handleHealth(c *gin.Context) {
 	c.JSON(http.StatusOK, s.buildHealthResponse(time.Now()))
+}
+
+// handleReadiness returns a deep per-trader health matrix covering broker, data, AI, and
+// risk supervisor status. HTTP 200 for "ok"/"degraded", HTTP 503 when any trader is "down".
+func (s *Server) handleReadiness(c *gin.Context) {
+	now := time.Now().UTC()
+	traders := s.traderManager.GetAllTraders()
+	resp := buildReadinessResponse(traders, now, s.uptimeSeconds(now))
+	status := http.StatusOK
+	if resp.Status == "down" {
+		status = http.StatusServiceUnavailable
+	}
+	c.JSON(status, resp)
 }
 
 // getTraderFromQuery extracts trader from query parameter
@@ -580,6 +596,7 @@ func (s *Server) Start() error {
 	log.Printf("   GET  /api/equity-history?trader_id=xxx - specified trader's equity history")
 	log.Printf("   GET  /api/performance?trader_id=xxx - specified trader's AI learning performance analysis")
 	log.Printf("   GET  /health               - liveness and build diagnostics only (not a trading-ready signal)")
+	log.Printf("   GET  /readiness            - deep broker/data/AI/risk health matrix per trader")
 	log.Println()
 
 	return s.router.Run(addr)

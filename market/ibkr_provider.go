@@ -1,6 +1,7 @@
 package market
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -66,7 +67,7 @@ func (p *IBKRProvider) GetBars(symbols []string, interval string, limit int) (ma
 			return nil, err
 		}
 
-		resp, err := p.Client.Do(req)
+		resp, err := p.Client.DoForClass(context.Background(), broker.EndpointClassQuote, req)
 		if err != nil {
 			return nil, err
 		}
@@ -252,7 +253,7 @@ func (p *IBKRProvider) GetLatestQuote(symbol string) (*Quote, error) {
 		return nil, err
 	}
 
-	resp, err := p.Client.Do(req)
+	resp, err := p.Client.DoForClass(context.Background(), broker.EndpointClassQuote, req)
 	if err != nil {
 		return nil, err
 	}

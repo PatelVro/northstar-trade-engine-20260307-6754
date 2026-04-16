@@ -127,6 +127,10 @@ func (at *AutoTrader) startIBKRRecoveryLoop() {
 	go at.runIBKRRecoveryLoop()
 }
 
+// ibkrMaxConsecutiveFailures is the number of consecutive reconnect failures
+// that triggers a runtime degradation escalation incident.
+const ibkrMaxConsecutiveFailures = 5
+
 func (at *AutoTrader) runIBKRRecoveryLoop() {
 	defer func() {
 		at.brokerStateMu.Lock()
@@ -134,12 +138,18 @@ func (at *AutoTrader) runIBKRRecoveryLoop() {
 		at.brokerStateMu.Unlock()
 	}()
 
+	consecutiveFailures := 0
+
 	for attempt := 1; at.isRunning; attempt++ {
 		backoff := ibkrRecoveryBackoff(attempt)
 		nextRetryAt := time.Now().Add(backoff)
 
+		log.Printf(" [%s] IBKR recovery: attempt=%d next_retry=%s backoff=%s",
+			at.name, attempt, nextRetryAt.Format(time.RFC3339), backoff)
+
 		at.setBrokerReconnectState(attempt, nextRetryAt)
 		if err := at.checkIBKRSessionReadiness(); err != nil {
+			consecutiveFailures++
 			at.setBrokerRuntimeState(
 				BrokerRuntimeDegraded,
 				fmt.Sprintf("reconnect attempt %d failed: %v", attempt, err),
@@ -147,11 +157,28 @@ func (at *AutoTrader) runIBKRRecoveryLoop() {
 				true,
 				nextRetryAt,
 			)
+
+			if consecutiveFailures >= ibkrMaxConsecutiveFailures {
+				log.Printf(" [%s] IBKR recovery: %d consecutive failures — escalating to runtime degradation incident",
+					at.name, consecutiveFailures)
+				at.setBrokerRuntimeState(
+					BrokerRuntimeDegraded,
+					fmt.Sprintf("escalated: %d consecutive reconnect failures; last error: %v", consecutiveFailures, err),
+					err,
+					true,
+					nextRetryAt,
+				)
+				at.alertRuntimeDegraded(BrokerRuntimeDegraded,
+					fmt.Sprintf("IBKR broker unreachable after %d consecutive reconnect attempts", consecutiveFailures))
+			}
+
 			if !at.sleepWhileRunning(backoff) {
 				return
 			}
 			continue
 		}
+
+		consecutiveFailures = 0
 
 		at.setBrokerRuntimeState(
 			BrokerRuntimeReconciling,
@@ -161,6 +188,7 @@ func (at *AutoTrader) runIBKRRecoveryLoop() {
 			time.Time{},
 		)
 		if err := at.reconcileIBKRRuntime(); err != nil {
+			consecutiveFailures++
 			at.alertReconciliationFailure("recovery_loop", err)
 			at.setBrokerRuntimeState(
 				BrokerRuntimeDegraded,
@@ -349,15 +377,27 @@ func (at *AutoTrader) sleepWhileRunning(delay time.Duration) bool {
 	}
 }
 
+// ibkrRecoveryBackoff returns the exponential backoff duration for reconnect attempt n.
+// Starts at 5 s, doubles each attempt, caps at 60 s.
+//
+//	attempt 1 →  5 s
+//	attempt 2 → 10 s
+//	attempt 3 → 20 s
+//	attempt 4 → 40 s
+//	attempt 5+ → 60 s
 func ibkrRecoveryBackoff(attempt int) time.Duration {
+	const (
+		initial = 5 * time.Second
+		maximum = 60 * time.Second
+	)
 	if attempt <= 1 {
-		return 2 * time.Second
+		return initial
 	}
-	backoff := 2 * time.Second
+	backoff := initial
 	for i := 1; i < attempt; i++ {
 		backoff *= 2
-		if backoff >= 30*time.Second {
-			return 30 * time.Second
+		if backoff >= maximum {
+			return maximum
 		}
 	}
 	return backoff
