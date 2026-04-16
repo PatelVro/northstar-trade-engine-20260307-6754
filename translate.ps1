@@ -193,7 +193,7 @@ $translations = @{
 }
 
 # Get all Go files with Chinese characters
-$files = Get-ChildItem -Path "c:\Users\Hill\Documents\AegisTrade" -Recurse -Filter *.go | 
+$files = Get-ChildItem -Path "." -Recurse -Filter *.go |
     Where-Object { (Get-Content $_.FullName -Raw) -match '[\u4e00-\u9fff]' }
 
 Write-Host "Found $($files.Count) files with Chinese text"

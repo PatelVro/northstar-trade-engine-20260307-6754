@@ -72,6 +72,9 @@ test_jar_output.txt
 # Generated local data
 data/csv/
 
+# Graphify knowledge graph outputs
+graphify-out/
+
 # Local certs and vendor/workspace copies
 nginx_certs/
 walmart-dashboard/
