@@ -988,6 +988,9 @@ func (at *AutoTrader) writePaperSessionReport(tracker *paperSessionTracker, reas
 		return
 	}
 
+	// Auto-export Markdown and CSV alongside the JSON report (#89)
+	writeSessionReportExports(path, report)
+
 	at.sessionReportMu.Lock()
 	at.lastSessionReportPath = path
 	at.lastSessionReportAt = report.GeneratedAt
@@ -1006,6 +1009,9 @@ func (at *AutoTrader) writePaperSessionReport(tracker *paperSessionTracker, reas
 		report.RiskRejectedOrders,
 		report.RiskReducedOrders,
 	)
+
+	// Generate daily scorecard on session finalization (#100)
+	at.maybeGenerateDailyScorecard(report)
 }
 
 func sessionReportPath(traderID string, sessionStart time.Time, sessionDate string) string {
@@ -1298,4 +1304,72 @@ func formatNullableFloat(value *float64) string {
 
 func isPendingReadinessSummary(summary ReadinessSummary) bool {
 	return !summary.TradingAllowed && strings.EqualFold(strings.TrimSpace(summary.Message), "startup readiness pending")
+}
+
+// maybeGenerateDailyScorecard generates a daily scorecard after a session
+// report is finalized. It collects all session reports from the same calendar
+// day by scanning the session reports directory and builds an aggregated
+// scorecard.
+func (at *AutoTrader) maybeGenerateDailyScorecard(report PaperSessionReport) {
+	sessionDate := report.SessionDate
+	if sessionDate == "" {
+		return
+	}
+
+	sessions := collectSessionReportsForDate(at.id, sessionDate)
+	if len(sessions) == 0 {
+		return
+	}
+
+	dateTime, err := time.ParseInLocation("2006-01-02", sessionDate, time.Local)
+	if err != nil {
+		log.Printf(" [%s] Failed to parse session date for scorecard: %v", at.name, err)
+		return
+	}
+
+	sc := BuildDailyScorecard(at.id, dateTime, sessions)
+	if err := writeDailyScorecard(sc); err != nil {
+		log.Printf(" [%s] Failed to write daily scorecard: %v", at.name, err)
+		return
+	}
+
+	log.Printf(" [%s] Daily scorecard written: date=%s grade=%s return=%.2f%% sessions=%d",
+		at.name, sc.Date, sc.Grade, sc.TotalReturnPct, sc.SessionCount)
+}
+
+// collectSessionReportsForDate scans the session reports directory for a given
+// trader and date, and returns all valid session reports found. It reads the
+// JSON files that match the naming convention: {traderID}_session_{YYYYMMDD}_*.json
+func collectSessionReportsForDate(traderID string, dateKey string) []*PaperSessionReport {
+	dir := filepath.Join("output", "session_reports", traderID)
+	dateCompact := strings.ReplaceAll(dateKey, "-", "")
+	prefix := traderID + "_session_" + dateCompact + "_"
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+
+	var reports []*PaperSessionReport
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var report PaperSessionReport
+		if err := json.Unmarshal(data, &report); err != nil {
+			continue
+		}
+		reports = append(reports, &report)
+	}
+
+	return reports
 }

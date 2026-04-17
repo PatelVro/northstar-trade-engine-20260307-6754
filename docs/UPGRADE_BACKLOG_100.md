@@ -111,7 +111,7 @@ Legend:
 86. [ ] Add benchmark comparison (SPY/QQQ + risk parity baseline).
 87. [ ] Add confidence intervals for all key metrics via bootstrap.
 88. [ ] Add backtest reproducibility manifest (inputs, seed, commit hash).
-89. [ ] Add auto-report generation in Markdown and CSV.
+89. [x] Add auto-report generation in Markdown and CSV.
 90. [ ] Add regression guard: fail CI when performance degrades beyond threshold.
 
 ## 7) Observability, Ops, and Product UX
@@ -125,5 +125,5 @@ Legend:
 97. [ ] Add runbook docs for market-open, halt, and recovery procedures.
 98. [ ] Add one-click paper session report export.
 99. [ ] Add immutable audit log for compliance-grade traceability.
-100. [ ] Add continuous paper-trading evaluation job with daily scorecards.
+100. [x] Add continuous paper-trading evaluation job with daily scorecards.
 
