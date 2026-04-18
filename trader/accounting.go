@@ -2,7 +2,10 @@ package trader
 
 import (
 	"math"
+	"northstar/decision"
+	"northstar/logger"
 	"strconv"
+	"strings"
 )
 
 const accountingVersion = 2
@@ -195,4 +198,96 @@ func sanitizeFloat(value float64) float64 {
 		return 0
 	}
 	return value
+}
+
+func (at *AutoTrader) restoreStrategyAccountingState() {
+	records, err := at.decisionLogger.GetLatestRecords(1)
+	if err != nil || len(records) == 0 {
+		return
+	}
+	snapshot := records[len(records)-1].AccountState
+	if snapshot.AccountingVersion < accountingVersion {
+		return
+	}
+	at.strategyRealizedPnL = snapshot.RealizedPnL
+}
+
+func (at *AutoTrader) buildAccountSummaryFromRaw(balance map[string]interface{}, positions []map[string]interface{}) AccountSummary {
+	broker := normalizeBrokerAccount(balance, positions)
+	return buildAccountSummary(broker, at.initialBalance, at.strategyRealizedPnL, at.dailyPnL)
+}
+
+func (at *AutoTrader) applyActionAccountingMetadata(actionRecord *logger.DecisionAction, order map[string]interface{}) {
+	if actionRecord == nil || order == nil {
+		return
+	}
+	if localID := strings.TrimSpace(toString(firstPresent(order["localOrderId"], order["local_order_id"]))); localID != "" {
+		actionRecord.LocalOrderID = localID
+	}
+	if brokerOrderID := strings.TrimSpace(toString(firstPresent(order["brokerOrderId"], order["broker_order_id"], order["orderId"], order["order_id"], order["id"]))); brokerOrderID != "" {
+		actionRecord.BrokerOrderID = brokerOrderID
+		if numericOrderID, ok := parseFloat(brokerOrderID); ok {
+			actionRecord.OrderID = int64(numericOrderID)
+		}
+	}
+	if status := strings.TrimSpace(toString(firstPresent(order["status"], order["orderStatus"], order["order_status"]))); status != "" {
+		actionRecord.OrderStatus = status
+	}
+	if filledQty, ok := parseFloat(order["filled_qty"]); ok && filledQty > 0 {
+		actionRecord.Quantity = filledQty
+	}
+	if price, ok := parseFloat(order["price"]); ok && price > 0 {
+		actionRecord.Price = price
+	}
+	if fees, ok := parseFloat(order["fees"]); ok {
+		actionRecord.FeesUSD = fees
+	}
+	if pnl, ok := parseFloat(order["pnl"]); ok {
+		actionRecord.RealizedPnL = pnl
+	}
+}
+
+func positionActionKey(symbol, side string) string {
+	return strings.ToUpper(strings.TrimSpace(symbol)) + "_" + strings.ToLower(strings.TrimSpace(side))
+}
+
+func (at *AutoTrader) updateStrategyAccountingFromAction(actionRecord *logger.DecisionAction, positionsByKey map[string]decision.PositionInfo) {
+	if actionRecord == nil || !actionHasImmediatePositionEffect(*actionRecord) {
+		return
+	}
+
+	switch actionRecord.Action {
+	case "open_long", "open_short":
+		if actionRecord.FeesUSD != 0 {
+			at.strategyRealizedPnL -= actionRecord.FeesUSD
+		}
+	case "close_long", "close_short":
+		if actionRecord.RealizedPnL == 0 {
+			side := "long"
+			if actionRecord.Action == "close_short" {
+				side = "short"
+			}
+			pos, exists := positionsByKey[positionActionKey(actionRecord.Symbol, side)]
+			if !exists {
+				return
+			}
+			quantity := actionRecord.Quantity
+			if quantity <= 0 || quantity > pos.Quantity {
+				quantity = pos.Quantity
+			}
+			exitPrice := actionRecord.Price
+			if exitPrice <= 0 {
+				exitPrice = pos.MarkPrice
+			}
+			if side == "long" {
+				actionRecord.RealizedPnL = (exitPrice - pos.EntryPrice) * quantity
+			} else {
+				actionRecord.RealizedPnL = (pos.EntryPrice - exitPrice) * quantity
+			}
+			if actionRecord.FeesUSD != 0 {
+				actionRecord.RealizedPnL -= actionRecord.FeesUSD
+			}
+		}
+		at.strategyRealizedPnL += actionRecord.RealizedPnL
+	}
 }

@@ -252,3 +252,101 @@ func (at *AutoTrader) persistTradingUniverseManifest() {
 	at.universeState.ManifestLastError = ""
 	at.universeMu.Unlock()
 }
+
+func loadSymbolSetFromFile(path string) (map[string]struct{}, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	set := make(map[string]struct{})
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if idx := strings.Index(line, "#"); idx >= 0 {
+			line = strings.TrimSpace(line[:idx])
+		}
+		parts := strings.FieldsFunc(line, func(r rune) bool {
+			return r == ',' || r == ';' || r == '\t' || r == ' '
+		})
+		for _, token := range parts {
+			symbol := strings.ToUpper(strings.Trim(strings.TrimSpace(token), "\"'"))
+			if symbol != "" {
+				set[symbol] = struct{}{}
+			}
+		}
+	}
+	if len(set) == 0 {
+		return nil, fmt.Errorf("no symbols found")
+	}
+	return set, nil
+}
+
+func filterTradableEquitySymbols(symbols []string, trusted map[string]struct{}) []string {
+	filtered := make([]string, 0, len(symbols))
+	seen := make(map[string]struct{}, len(symbols))
+	for _, raw := range symbols {
+		symbol := strings.ToUpper(strings.TrimSpace(raw))
+		if !isLikelyTradableEquitySymbol(symbol) {
+			continue
+		}
+		if len(trusted) > 0 {
+			if _, ok := trusted[symbol]; !ok {
+				continue
+			}
+		}
+		if _, ok := seen[symbol]; ok {
+			continue
+		}
+		seen[symbol] = struct{}{}
+		filtered = append(filtered, symbol)
+	}
+	return filtered
+}
+
+func isLikelyTradableEquitySymbol(symbol string) bool {
+	if symbol == "" {
+		return false
+	}
+	if strings.Contains(symbol, "/") {
+		return false
+	}
+	if strings.HasSuffix(symbol, ".WS") || strings.HasSuffix(symbol, ".WT") || strings.HasSuffix(symbol, ".U") || strings.HasSuffix(symbol, ".R") {
+		return false
+	}
+	if strings.HasSuffix(symbol, "WS") || strings.HasSuffix(symbol, "WT") || strings.HasSuffix(symbol, "RT") {
+		return false
+	}
+
+	dotCount := strings.Count(symbol, ".")
+	if dotCount > 1 {
+		return false
+	}
+	if dotCount == 1 {
+		parts := strings.Split(symbol, ".")
+		if len(parts) != 2 || len(parts[0]) == 0 || len(parts[0]) > 5 || len(parts[1]) != 1 {
+			return false
+		}
+	}
+
+	base := strings.ReplaceAll(symbol, ".", "")
+	if len(base) == 0 || len(base) > 5 {
+		return false
+	}
+	if len(base) == 5 {
+		last := base[len(base)-1]
+		if last == 'W' || last == 'U' || last == 'R' {
+			return false
+		}
+	}
+
+	for _, ch := range symbol {
+		if (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
