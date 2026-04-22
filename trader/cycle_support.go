@@ -52,30 +52,46 @@ func classifyExpectedMarketDataBlock(err error) (string, bool) {
 }
 
 func (at *AutoTrader) getDecision(ctx *decision.Context) (*decision.FullDecision, error) {
-	if at.usesCanonicalEquityPipeline() {
+	usesCanonical := at.usesCanonicalEquityPipeline()
+	if usesCanonical {
 		if err := at.prepareCanonicalEquityContext(ctx); err != nil {
 			return nil, err
 		}
-		switch at.config.StrategyMode {
-		case "momentum_only":
-			return at.buildMomentumOnlyDecision(ctx), nil
-		case "multi_factor":
-			return at.buildMultiFactorDecision(ctx), nil
-		case "hybrid_ai":
-			fullDecision, err := decision.GetFullDecision(ctx, at.mcpClient)
-			if err != nil {
-				// Keep the system autonomous: fallback to local factors when AI API is unavailable.
-				if len(ctx.MarketDataMap) > 0 {
-					log.Printf(" Hybrid AI fallback activated: switching to local multi-factor engine (%v)", err)
-					return at.buildMultiFactorDecision(ctx), nil
-				}
-				return nil, err
-			}
-			if len(ctx.MarketDataMap) > 0 {
-				at.applyHybridFactorFilter(ctx, fullDecision)
-			}
-			return fullDecision, nil
+	}
+
+	// Local strategies (momentum_only / multi_factor) work across equity and
+	// crypto — they only need ctx.MarketDataMap populated. For non-canonical
+	// (crypto) pipelines, load market data here since prepareCanonicalEquityContext
+	// is a no-op outside the canonical path.
+	needsLocalMarketData := at.config.StrategyMode == "momentum_only" || at.config.StrategyMode == "multi_factor"
+	if needsLocalMarketData && !usesCanonical && len(ctx.MarketDataMap) == 0 {
+		if err := at.loadMomentumMarketData(ctx); err != nil {
+			return nil, err
 		}
+	}
+
+	switch at.config.StrategyMode {
+	case "momentum_only":
+		return at.buildMomentumOnlyDecision(ctx), nil
+	case "multi_factor":
+		return at.buildMultiFactorDecision(ctx), nil
+	case "hybrid_ai":
+		if !usesCanonical {
+			return decision.GetFullDecision(ctx, at.mcpClient)
+		}
+		fullDecision, err := decision.GetFullDecision(ctx, at.mcpClient)
+		if err != nil {
+			// Keep the system autonomous: fallback to local factors when AI API is unavailable.
+			if len(ctx.MarketDataMap) > 0 {
+				log.Printf(" Hybrid AI fallback activated: switching to local multi-factor engine (%v)", err)
+				return at.buildMultiFactorDecision(ctx), nil
+			}
+			return nil, err
+		}
+		if len(ctx.MarketDataMap) > 0 {
+			at.applyHybridFactorFilter(ctx, fullDecision)
+		}
+		return fullDecision, nil
 	}
 	return decision.GetFullDecision(ctx, at.mcpClient)
 }

@@ -129,6 +129,13 @@ type AutoTraderConfig struct {
 	MaxParticipationRate                float64
 	DrawdownThrottleStartPct            float64
 	DrawdownThrottleMinScale            float64
+	PortfolioKillSwitchDDPct            float64 // Hard halt on new entries when equity DD >= this fraction
+	PortfolioKillSwitchCooldownCycles   int     // Cycles of halt after kill switch fires
+	FundingRateLongFilterPct            float64 // Skip longs when funding rate > this (per 8h)
+	FundingRateShortFilterPct           float64 // Skip shorts when funding rate < -this (per 8h)
+	MLShadowEnabled                     bool    // Log ML signal alongside rule-based
+	MLRequireAgreement                  bool    // Skip rule-based entries when ML disagrees
+	MLSidecarURL                        string  // Override ML sidecar URL; empty = default
 	MaxPortfolioHeatPct                 float64
 	MaxNetExposurePct                   float64
 	MaxSectorExposurePct                float64
@@ -210,6 +217,7 @@ type AutoTrader struct {
 	symbolTradeCount                      map[string]int
 	openEntryBlockedUntil                 int
 	consecutiveLossCloses                 int
+	mlShadowClient                        *MLSignalClient // lazy-initialized when NORTHSTAR_ML_SHADOW=1
 	recentClosePnLPct                     []float64
 	closePnLEMA                           float64
 	recentEquity                          []float64
@@ -574,10 +582,22 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 				return nil, fmt.Errorf("failed to initialize Hyperliquid trader: %w", err)
 			}
 		case "aster":
-			log.Printf(" [%s] Using Aster", config.Name)
-			trader, err = NewAsterTrader(config.AsterUser, config.AsterSigner, config.AsterPrivateKey)
-			if err != nil {
-				return nil, fmt.Errorf("failed to initialize Aster trader: %w", err)
+			// Paper mode for Aster: simulate execution via SimTrader against
+			// Binance market data (Aster perpetuals share tickers and
+			// price-feeds with Binance Futures, so signals match mainnet).
+			// This validates the full signal → allocator → execute →
+			// learning pipeline with zero live-order risk. Flip to live only
+			// after a clean paper run confirms the flow.
+			if strings.EqualFold(config.Mode, "paper") {
+				log.Printf(" [%s] Aster PAPER mode — SimTrader + Binance market data (no live orders)", config.Name)
+				paperProvider := market.NewBinanceProvider()
+				trader = NewSimTrader(config.InitialBalance, paperProvider)
+			} else {
+				log.Printf(" [%s] Using Aster LIVE (mainnet)", config.Name)
+				trader, err = NewAsterTrader(config.AsterUser, config.AsterSigner, config.AsterPrivateKey)
+				if err != nil {
+					return nil, fmt.Errorf("failed to initialize Aster trader: %w", err)
+				}
 			}
 		case "ibkr":
 			log.Printf(" [%s] Using Interactive Brokers", config.Name)

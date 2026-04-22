@@ -1,13 +1,13 @@
 export type Language = 'en';
 
 const translations = {
-  appTitle: 'Northstar Trade Dashboard',
-  subtitle: 'AI Trading Operations',
+  appTitle: 'Cirelay',
+  subtitle: 'Multi-Strategy Algorithmic Trading',
   competition: 'Competition',
   details: 'Details',
   running: 'RUNNING',
   stopped: 'STOPPED',
-  footerTitle: 'Northstar Trade Engine',
+  footerTitle: 'Cirelay Trading Platform',
   footerWarning: 'Trading involves risk. Use at your own discretion.',
   totalEquity: 'Total Equity',
   availableBalance: 'Available Balance',

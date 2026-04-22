@@ -48,6 +48,10 @@ type Input struct {
 	Config            Config
 	ATR14Pct          float64
 	RealizedVol20     float64
+	// FractionalQuantity disables the "cannot buy one share" capacity check
+	// for instruments (crypto, perps) where sub-unit positions are allowed.
+	// For equity this stays false; one-share minimum remains enforced.
+	FractionalQuantity bool
 }
 
 type Result struct {

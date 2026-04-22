@@ -454,7 +454,10 @@ func (at *AutoTrader) requiresAIReadiness() bool {
 	if at.demoMode {
 		return false
 	}
-	if at.config.InstrumentType == "equity" && (at.config.StrategyMode == "momentum_only" || at.config.StrategyMode == "multi_factor") {
+	// momentum_only and multi_factor produce decisions locally without any
+	// external AI call (see trader/cycle_support.go getDecision). This holds
+	// for equity, crypto, and crypto_perp instrument types.
+	if at.config.StrategyMode == "momentum_only" || at.config.StrategyMode == "multi_factor" {
 		return false
 	}
 	return true

@@ -106,6 +106,13 @@ type TraderConfig struct {
 	MaxParticipationRate                float64 `json:"max_participation_rate,omitempty"`                  // Max fill participation per bar in simulator (0-1]
 	DrawdownThrottleStartPct            float64 `json:"drawdown_throttle_start,omitempty"`                 // Drawdown threshold for risk throttling
 	DrawdownThrottleMinScale            float64 `json:"drawdown_throttle_min_scale,omitempty"`             // Min risk scale under drawdown throttling
+	PortfolioKillSwitchDDPct            float64 `json:"portfolio_kill_switch_dd_pct,omitempty"`            // Hard halt on new entries when equity DD from peak >= this (e.g. 0.12). Complements DrawdownThrottle — throttling reduces size, kill switch stops trading entirely.
+	PortfolioKillSwitchCooldownCycles   int     `json:"portfolio_kill_switch_cooldown_cycles,omitempty"`  // Cycles of halt after kill switch fires. Default: 14 days worth at current scan interval.
+	FundingRateLongFilterPct            float64 `json:"funding_rate_long_filter_pct,omitempty"`            // Skip LONG entries when funding rate > this fraction per 8h (e.g. 0.0004 = 0.04%/8h ≈ 44%/yr). 0 disables filter.
+	FundingRateShortFilterPct           float64 `json:"funding_rate_short_filter_pct,omitempty"`           // Skip SHORT entries when funding rate < -this fraction per 8h. 0 disables filter.
+	MLShadowEnabled                     bool    `json:"ml_shadow_enabled,omitempty"`                       // When true, log ML signal comparison per trade (no behavior change)
+	MLRequireAgreement                  bool    `json:"ml_require_agreement,omitempty"`                    // When true, skip rule-based entries where ML disagrees (ML-Confirmed mode)
+	MLSidecarURL                        string  `json:"ml_sidecar_url,omitempty"`                          // Override for the ML sidecar (default http://127.0.0.1:9091)
 	MaxPortfolioHeatPct                 float64 `json:"max_portfolio_heat_pct,omitempty"`                  // Max estimated stop-risk budget as a fraction of equity
 	MaxNetExposurePct                   float64 `json:"max_net_exposure_pct,omitempty"`                    // Max absolute net (long-short) exposure as a fraction of equity
 	MaxSectorExposurePct                float64 `json:"max_sector_exposure_pct,omitempty"`                 // Max gross exposure per sector as a fraction of equity
@@ -971,9 +978,11 @@ func (c *Config) Validate() error {
 			}
 		}
 
-		isLocalOnlyEquityStrategy := trader.InstrumentType == "equity" &&
-			(trader.StrategyMode == "momentum_only" || trader.StrategyMode == "multi_factor")
-		requiresAIKeys := !trader.DemoMode && !isLocalOnlyEquityStrategy
+		// momentum_only and multi_factor run entirely on local signals — no external AI
+		// call. This holds for both equity and crypto instrument types (see
+		// trader/cycle_support.go getDecision).
+		isLocalOnlyStrategy := trader.StrategyMode == "momentum_only" || trader.StrategyMode == "multi_factor"
+		requiresAIKeys := !trader.DemoMode && !isLocalOnlyStrategy
 		if requiresAIKeys {
 			if trader.AIModel == "qwen" && trader.QwenKey == "" {
 				return fmt.Errorf("trader[%d]: Qwen model requires qwen_key or NORTHSTAR_QWEN_API_KEY", i)

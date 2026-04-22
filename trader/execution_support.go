@@ -383,7 +383,14 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *decision.Decision, act
 	if quantity <= 0 && marketData.CurrentPrice > 0 {
 		quantity = approvedNotional / marketData.CurrentPrice
 	}
-	if approvedNotional < marketData.CurrentPrice {
+	// The "one share" check is only meaningful for indivisible instruments
+	// (equities). Crypto perps trade at sub-unit quantities (0.001 BTC,
+	// 0.05 ETH) — the allocator already accounts for this via FractionalQuantity.
+	// Without this guard, any notional below the current ETH/BTC price
+	// incorrectly fails pre-trade risk even though the position is sizable.
+	instrument := strings.ToLower(strings.TrimSpace(at.config.InstrumentType))
+	fractional := instrument == "crypto" || instrument == "crypto_perp" || instrument == "perp"
+	if !fractional && approvedNotional < marketData.CurrentPrice {
 		return fmt.Errorf("approved notional %.2f is below one share price %.2f for %s", approvedNotional, marketData.CurrentPrice, decision.Symbol)
 	}
 	actionRecord.Quantity = quantity
@@ -453,7 +460,14 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *decision.Decision, ac
 	if quantity <= 0 && marketData.CurrentPrice > 0 {
 		quantity = approvedNotional / marketData.CurrentPrice
 	}
-	if approvedNotional < marketData.CurrentPrice {
+	// The "one share" check is only meaningful for indivisible instruments
+	// (equities). Crypto perps trade at sub-unit quantities (0.001 BTC,
+	// 0.05 ETH) — the allocator already accounts for this via FractionalQuantity.
+	// Without this guard, any notional below the current ETH/BTC price
+	// incorrectly fails pre-trade risk even though the position is sizable.
+	instrument := strings.ToLower(strings.TrimSpace(at.config.InstrumentType))
+	fractional := instrument == "crypto" || instrument == "crypto_perp" || instrument == "perp"
+	if !fractional && approvedNotional < marketData.CurrentPrice {
 		return fmt.Errorf("approved notional %.2f is below one share price %.2f for %s", approvedNotional, marketData.CurrentPrice, decision.Symbol)
 	}
 	actionRecord.Quantity = quantity

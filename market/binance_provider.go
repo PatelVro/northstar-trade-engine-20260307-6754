@@ -5,14 +5,28 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
 )
 
-// BinanceProvider implements the BarsProvider interface using Binance Futures API.
+// BinanceProvider implements the BarsProvider interface using a Binance-compatible
+// klines endpoint. By default hits Binance Futures directly; set
+// CRYPTO_KLINES_URL (e.g. "https://fapi.asterdex.com") to override when the
+// deployment environment can't reach Binance (geo-blocks from US data centers
+// like Hostinger are common; Aster serves the exact same API shape).
 type BinanceProvider struct{}
 
 // NewBinanceProvider creates a new BinanceProvider.
 func NewBinanceProvider() *BinanceProvider {
 	return &BinanceProvider{}
+}
+
+// klinesBaseURL returns the configured crypto klines base URL.
+// Override via CRYPTO_KLINES_URL env var (no trailing slash).
+func (p *BinanceProvider) klinesBaseURL() string {
+	if v := os.Getenv("CRYPTO_KLINES_URL"); v != "" {
+		return v
+	}
+	return "https://fapi.binance.com"
 }
 
 // GetBars fetches historical OHLCV data from Binance.
@@ -34,8 +48,8 @@ func (p *BinanceProvider) GetBars(symbols []string, interval string, limit int) 
 
 // getKlines is the original Binance implementation.
 func (p *BinanceProvider) getKlines(symbol, interval string, limit int) ([]Kline, error) {
-	url := fmt.Sprintf("https://fapi.binance.com/fapi/v1/klines?symbol=%s&interval=%s&limit=%d",
-		symbol, interval, limit)
+	url := fmt.Sprintf("%s/fapi/v1/klines?symbol=%s&interval=%s&limit=%d",
+		p.klinesBaseURL(), symbol, interval, limit)
 
 	resp, err := http.Get(url)
 	if err != nil {

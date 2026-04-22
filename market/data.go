@@ -9,6 +9,7 @@ import (
 	"northstar/features"
 	"northstar/regime"
 	"northstar/selector"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -338,9 +339,19 @@ func toFeatureBars(klines []Kline) []features.Bar {
 	return out
 }
 
+// cryptoAPIBaseURL returns the configured Binance-compatible API base URL
+// (Binance by default, overridable via CRYPTO_KLINES_URL to e.g. Aster when
+// the deployment host is geo-blocked from Binance).
+func cryptoAPIBaseURL() string {
+	if v := os.Getenv("CRYPTO_KLINES_URL"); v != "" {
+		return v
+	}
+	return "https://fapi.binance.com"
+}
+
 // getOpenInterestData aggregates OI mappings array limitations Tracking Limits
 func getOpenInterestData(symbol string) (*OIData, error) {
-	url := fmt.Sprintf("https://fapi.binance.com/fapi/v1/openInterest?symbol=%s", symbol)
+	url := fmt.Sprintf("%s/fapi/v1/openInterest?symbol=%s", cryptoAPIBaseURL(), symbol)
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -373,7 +384,7 @@ func getOpenInterestData(symbol string) (*OIData, error) {
 
 // getFundingRate aggregates funding parameters limits tracking setups arrays map limitations mapping configurations LIMIT Tracking combinations limits variations target tracking
 func getFundingRate(symbol string) (float64, error) {
-	url := fmt.Sprintf("https://fapi.binance.com/fapi/v1/premiumIndex?symbol=%s", symbol)
+	url := fmt.Sprintf("%s/fapi/v1/premiumIndex?symbol=%s", cryptoAPIBaseURL(), symbol)
 
 	resp, err := http.Get(url)
 	if err != nil {

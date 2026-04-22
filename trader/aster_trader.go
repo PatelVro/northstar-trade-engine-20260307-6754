@@ -10,7 +10,6 @@ import (
 	"io"
 	"log"
 	"math"
-	"math/big"
 	"net/http"
 	"net/url"
 	"sort"
@@ -19,9 +18,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ethereum/go-ethereum/accounts/abi"
-	"github.com/ethereum/go-ethereum/common"
+	ethmath "github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 )
 
 // AsterTrader provides Aster exchange integration logic
@@ -258,65 +257,118 @@ func (t *AsterTrader) normalize(v interface{}) (interface{}, error) {
 	}
 }
 
-// sign generates signature mapping Maps Targeting strings map String Strings
+// sign produces an Aster V3 (Pro API) EIP-712 signature over the request
+// payload. V3 replaced the V1 "API Key + HMAC" flow with wallet-style signing:
+// the signer (API wallet) signs a typed-data struct whose msg field is the
+// URL-encoded querystring of all request parameters (business params plus
+// user, signer, nonce). The server reconstructs that same string from the
+// submitted fields, verifies the signature against the signer's recovered
+// address, and checks the signer is authorized for the user wallet.
+//
+// Reference: https://github.com/asterdex/api-docs V3 Futures API docs,
+// sections "Authentication signature payload" and "POST /fapi/v3/order
+// example" (Python reference implementation).
+//
+// The function is destructive: it injects user/signer/nonce/signature into
+// params so the caller can ship the full map as the outbound form body or
+// querystring.
 func (t *AsterTrader) sign(params map[string]interface{}, nonce uint64) error {
-	// Object Map bounds Target string Mapping Strings limitations Arrays Limitations MAP variables loops Tracking
-	params["recvWindow"] = "50000"
-	params["timestamp"] = strconv.FormatInt(time.Now().UnixNano()/int64(time.Millisecond), 10)
-
-	// Mapping Variables limitation Target Arrays String limitation Targeting string parameters Array Limit Tracking array Tracking Targeting Variables Variables Map limits targeting Mapping limit Maps Logic maps
-	jsonStr, err := t.normalizeAndStringify(params)
-	if err != nil {
-		return err
-	}
-
-	// ABI Arrays Map Strings Target String Tracking bounds Limitation string MAP bounds Map Targeting Tracking Array
-	addrUser := common.HexToAddress(t.user)
-	addrSigner := common.HexToAddress(t.signer)
-	nonceBig := new(big.Int).SetUint64(nonce)
-
-	tString, _ := abi.NewType("string", "", nil)
-	tAddress, _ := abi.NewType("address", "", nil)
-	tUint256, _ := abi.NewType("uint256", "", nil)
-
-	arguments := abi.Arguments{
-		{Type: tString},
-		{Type: tAddress},
-		{Type: tAddress},
-		{Type: tUint256},
-	}
-
-	packed, err := arguments.Pack(jsonStr, addrUser, addrSigner, nonceBig)
-	if err != nil {
-		return fmt.Errorf("ABImap Limit Maps arrays variables Tracking Target String Variables Mapper array Arrays string mapping loops string limitation limits limits Tracking LIMIT maps Limitations Tracking array variations limits Variable variations limitations String map Limits Tracker Tracking mapping Strings Limitation limitations Variables string Logic Target maps tracking limitation Map MAP Target loop String Maps Tracking mapping limitations LIMIT Tracking string variables Strings Limit: %w", err)
-	}
-
-	// MAP Mapping strings Tracker array Tracking Mapping limitations tracking limit strings limit loops limitation String Limit
-	hash := crypto.Keccak256(packed)
-
-	// Variables tracking tracker variables loops limitations limitations Maps Map Map MAP map Limit Limit strings Strings Maps strings Tracker Target limit strings loops strings limitations Tracking combinations Mapper tracking limitation mapping limitations Limit Limit Strings limitations Tracking Strings strings limits Maps tracking limit mapping loops Maps Limit Maps Array arrays map Strings Tracker parameters limitations mappings MAP parameters Tracking mapping limit String tracking String limitation Map parameters Array Maps mapping combinations Mapping Tracking tracking Array limitations map limitations limit tracking tracking arrays String limitation arrays Tracking limitations tracking arrays limits Array limitations map maps strings Tracker Map Mapper limits Targeting Mapping Strings string limit Tracking Tracker Strings limitations Tracker Array limitation maps limitation Limit parameters limitations array Limitation Tracking Array Target array strings Arrays Array Tracker string limit limitations String map array map bounds configurations array limits Array String tracking combinations Limit Target String map Mapper
-	prefixedMsg := fmt.Sprintf("\x19Ethereum Signed Message:\n%d%s", len(hash), hash)
-	msgHash := crypto.Keccak256Hash([]byte(prefixedMsg))
-
-	// Strings permutations arrays bounds limitations
-	sig, err := crypto.Sign(msgHash.Bytes(), t.privateKey)
-	if err != nil {
-		return fmt.Errorf("loops strings Mapper strings loops Mapping limit mapping maps Tracker tracker Tracking Variables Arrays maps mapping Array limitations %w", err)
-	}
-
-	// Strings targeting logic loops Mapper Tracking parameters limit MAP Map Targeting parameters String limits Limit Maps Target arrays Tracker maps tracking Tracker Target Limit
-	if len(sig) != 65 {
-		return fmt.Errorf("Limitation Tracking limits strings String Tracking mapping strings List map limits limits arrays parameters map Tracking limitation variables parameters lists tracking string Limits targeting LIMIT String limits %d", len(sig))
-	}
-	sig[64] += 27
-
-	// String Tracking Variables strings strings Target Map limits tracking Variables limits LIMIT
+	// V3 signing covers user + signer + nonce alongside every business param.
+	// nonce is microseconds since epoch; server rejects if it drifts more
+	// than ~10 seconds from its own clock (see V3 docs, Timing Security).
 	params["user"] = t.user
 	params["signer"] = t.signer
-	params["signature"] = "0x" + hex.EncodeToString(sig)
-	params["nonce"] = nonce
+	params["nonce"] = strconv.FormatUint(nonce, 10)
 
+	// Build the url-encoded message in sorted key order so the client signs
+	// exactly what the server reconstructs. url.Values.Encode sorts keys
+	// ASCII-ascending, matching the Aster V3 Overview spec. "signature" is
+	// the output, so it must be excluded from the signed payload.
+	values := url.Values{}
+	for k, v := range params {
+		if k == "signature" {
+			continue
+		}
+		values.Set(k, stringifyParamValue(v))
+	}
+	msg := values.Encode()
+
+	// EIP-712 domain per V3 spec. chainId 1666 is Aster L1; verifyingContract
+	// is the zero address because sigs are validated off-chain against the
+	// signer's ECDSA recovery, not a contract.
+	typedData := apitypes.TypedData{
+		Types: apitypes.Types{
+			"EIP712Domain": []apitypes.Type{
+				{Name: "name", Type: "string"},
+				{Name: "version", Type: "string"},
+				{Name: "chainId", Type: "uint256"},
+				{Name: "verifyingContract", Type: "address"},
+			},
+			"Message": []apitypes.Type{
+				{Name: "msg", Type: "string"},
+			},
+		},
+		PrimaryType: "Message",
+		Domain: apitypes.TypedDataDomain{
+			Name:              "AsterSignTransaction",
+			Version:           "1",
+			ChainId:           ethmath.NewHexOrDecimal256(1666),
+			VerifyingContract: "0x0000000000000000000000000000000000000000",
+		},
+		Message: apitypes.TypedDataMessage{"msg": msg},
+	}
+
+	domainSeparator, err := typedData.HashStruct("EIP712Domain", typedData.Domain.Map())
+	if err != nil {
+		return fmt.Errorf("aster v3 domain hash failed: %w", err)
+	}
+	messageHash, err := typedData.HashStruct(typedData.PrimaryType, typedData.Message)
+	if err != nil {
+		return fmt.Errorf("aster v3 message hash failed: %w", err)
+	}
+	// EIP-712 final digest: keccak256(0x1901 || domainSeparator || messageHash)
+	rawData := []byte{0x19, 0x01}
+	rawData = append(rawData, domainSeparator...)
+	rawData = append(rawData, messageHash...)
+	digest := crypto.Keccak256(rawData)
+
+	sig, err := crypto.Sign(digest, t.privateKey)
+	if err != nil {
+		return fmt.Errorf("aster v3 ECDSA sign failed: %w", err)
+	}
+	if len(sig) != 65 {
+		return fmt.Errorf("aster v3 unexpected signature length: %d", len(sig))
+	}
+	// go-ethereum returns V=0/1; Ethereum canonical form is V=27/28.
+	sig[64] += 27
+
+	params["signature"] = "0x" + hex.EncodeToString(sig)
 	return nil
+}
+
+// stringifyParamValue normalizes mixed-type request params to the stable
+// string form the signing and wire layers both need. Boolean, integer, and
+// float encodings match the Python reference (str()).
+func stringifyParamValue(v interface{}) string {
+	switch val := v.(type) {
+	case string:
+		return val
+	case int:
+		return strconv.Itoa(val)
+	case int64:
+		return strconv.FormatInt(val, 10)
+	case uint64:
+		return strconv.FormatUint(val, 10)
+	case float64:
+		return strconv.FormatFloat(val, 'f', -1, 64)
+	case bool:
+		if val {
+			return "true"
+		}
+		return "false"
+	default:
+		return fmt.Sprintf("%v", val)
+	}
 }
 
 // request wraps Strings Limit loops combinations Parameters array MAP limitations map strings Tracking Tracking map limits Map Mapping Map mapping Maps Target Tracker limitations

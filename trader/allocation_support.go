@@ -20,14 +20,18 @@ func (at *AutoTrader) suggestAllocation(ctx *decision.Context, symbol, action st
 		peakEquity = ctx.Account.StrategyEquity
 	}
 
+	instrument := strings.ToLower(strings.TrimSpace(at.config.InstrumentType))
+	fractional := instrument == "crypto" || instrument == "crypto_perp" || instrument == "perp"
+
 	input := allocator.Input{
-		Symbol:            strings.ToUpper(strings.TrimSpace(symbol)),
-		Action:            strings.ToLower(strings.TrimSpace(action)),
-		EntryPrice:        entryPrice,
-		CurrentPrice:      entryPrice,
-		StopLoss:          stopLoss,
-		IncreasesExposure: action == "open_long" || action == "open_short",
-		Selection:         selection,
+		Symbol:             strings.ToUpper(strings.TrimSpace(symbol)),
+		Action:             strings.ToLower(strings.TrimSpace(action)),
+		EntryPrice:         entryPrice,
+		CurrentPrice:       entryPrice,
+		StopLoss:           stopLoss,
+		IncreasesExposure:  action == "open_long" || action == "open_short",
+		Selection:          selection,
+		FractionalQuantity: fractional,
 		Account: allocator.AccountSnapshot{
 			StrategyEquity:        ctx.Account.StrategyEquity,
 			AccountEquity:         ctx.Account.AccountEquity,
@@ -47,7 +51,7 @@ func (at *AutoTrader) suggestAllocation(ctx *decision.Context, symbol, action st
 			CashBufferPct:            0.95,
 			DrawdownThrottleStartPct: at.config.DrawdownThrottleStartPct,
 			DrawdownThrottleMinScale: at.config.DrawdownThrottleMinScale,
-			MinTradeNotional:         100,
+			MinTradeNotional:         25,
 		},
 	}
 	if marketData != nil && marketData.CurrentPrice > 0 {

@@ -103,7 +103,10 @@ func (a *PortfolioAllocator) Allocate(input Input) Result {
 		result.SizingReason = "allocation blocked because portfolio or cash capacity is exhausted"
 		return finalizeResult(result)
 	}
-	if maxAllowed < capOneShare {
+	// The "one share" checks below are meaningful only for indivisible instruments
+	// like cash equities. Crypto and perps can size positions at fractional units
+	// (e.g. 0.001 BTC), so we skip these checks when FractionalQuantity is set.
+	if !input.FractionalQuantity && maxAllowed < capOneShare {
 		result.Warnings = append(result.Warnings, "insufficient_capacity_for_one_share")
 		result.SizingReason = "allocation blocked because capacity is below one share notional"
 		return finalizeResult(result)
@@ -116,7 +119,7 @@ func (a *PortfolioAllocator) Allocate(input Input) Result {
 		result.SizingReason = fmt.Sprintf("allocation blocked because final notional %.2f is below minimum %.2f", finalNotional, cfg.MinTradeNotional)
 		return finalizeResult(result)
 	}
-	if finalNotional < capOneShare {
+	if !input.FractionalQuantity && finalNotional < capOneShare {
 		result.Warnings = append(result.Warnings, "below_one_share_notional")
 		result.SizingReason = fmt.Sprintf("allocation blocked because final notional %.2f is below one share price %.2f", finalNotional, capOneShare)
 		return finalizeResult(result)

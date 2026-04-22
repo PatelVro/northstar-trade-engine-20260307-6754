@@ -1,9 +1,11 @@
 package trader
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -184,11 +186,26 @@ func checkStartupBrokerConnectivity(at *AutoTrader) StartupCheck {
 	}
 
 	// Lightweight ping: use /tickle which IBKR Gateway exposes for session keep-alive.
-	tickleURL := strings.TrimRight(gatewayURL, "/") + "/v1/api/tickle"
+	// The gatewayURL typically already contains the /v1/api suffix (our default), but
+	// may not if the operator configured a bare host. Handle both by only appending
+	// the /v1/api path when missing.
+	trimmed := strings.TrimRight(gatewayURL, "/")
+	var tickleURL string
+	if strings.HasSuffix(trimmed, "/v1/api") {
+		tickleURL = trimmed + "/tickle"
+	} else {
+		tickleURL = trimmed + "/v1/api/tickle"
+	}
+	// IBKR Client Portal Gateway (and IBeam wrapper) use a self-signed localhost
+	// cert. We explicitly skip verification only when targeting 127.0.0.1/localhost.
+	// #nosec G402 – intentional for local gateway; public hosts still verify.
+	transport := &http.Transport{}
+	if u, perr := url.Parse(trimmed); perr == nil && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost") {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
 	client := &http.Client{
-		Timeout: 5 * time.Second,
-		// Skip TLS verification for the local IBKR gateway (self-signed cert).
-		// #nosec G402 – intentional: IBKR Client Portal Gateway uses a self-signed cert.
+		Timeout:   5 * time.Second,
+		Transport: transport,
 	}
 	resp, err := client.Get(tickleURL) //nolint:noctx
 	if err != nil {
